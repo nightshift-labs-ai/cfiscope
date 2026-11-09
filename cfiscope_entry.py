@@ -33,16 +33,19 @@ def report(text):
 
 class ScanAction(ida_kernwin.action_handler_t):
     def activate(self, ctx):
+        problem = None
         ida_kernwin.show_wait_box("CFIScope: scanning code segments")
         try:
             STATE["sites"] = None
             sites = ensure_scan()
             res = idalayer.annotate(sites)
         except RuntimeError as e:
-            ida_kernwin.warning(str(e))
-            return 0
+            problem = str(e)
         finally:
             ida_kernwin.hide_wait_box()
+        if problem:
+            ida_kernwin.warning(problem)
+            return 0
         report(json.dumps(STATE["stats"]))
         report(json.dumps(res))
         if not sites:
@@ -79,7 +82,7 @@ class CallersAction(ida_kernwin.action_handler_t):
         if not rows:
             ida_kernwin.warning("No kCFI call site can reach this function.")
             return 0
-        idalayer.Chooser("kCFI callers", rows).Show()
+        idalayer.Chooser("kCFI callers of %s" % idalayer.target_name(ea), rows).Show()
         return 1
 
     def update(self, ctx):
@@ -88,7 +91,7 @@ class CallersAction(ida_kernwin.action_handler_t):
 
 class RemoveAction(ida_kernwin.action_handler_t):
     def activate(self, ctx):
-        report("xrefs removed: %d" % idalayer.remove_annotations(ensure_scan()))
+        report("xrefs removal attempted: %d" % idalayer.remove_annotations(ensure_scan()))
         return 1
 
     def update(self, ctx):
@@ -104,7 +107,7 @@ ACTIONS = [
 
 
 class CFIScopePlugin(ida_idaapi.plugin_t):
-    flags = ida_idaapi.PLUGIN_KEEP
+    flags = 0
     comment = "Resolve kCFI indirect calls from their type hashes"
     help = comment
     wanted_name = "CFIScope"
