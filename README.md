@@ -11,6 +11,16 @@ Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 
 
 Supported targets: aarch64 (tested on a real kernel) and x86-64 (tested on compiler-built objects only; see below).
 
+## Why it matters
+
+Kernel attack surface runs through function pointers: `file_operations`, `net_device_ops`, tracepoints, callbacks. In a stripped binary every one of those calls is a dead end for static analysis, and tracing them by hand or with a debugger is slow, and impossible on a kernel you only have as a file. kCFI happens to record the answer, because the compiler must know which types may be called, and CFIScope turns that record into cross-references you can follow.
+
+## Try it
+
+1. Download the public Android kernel used for the numbers below: [gki-certified-boot-android14-6.1-2024-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip), extract the kernel from `boot-6.1.img`, and restore its symbols with [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf).
+2. Open the resulting ELF in IDA and let auto-analysis finish.
+3. Press `Ctrl-Alt-K`. Then on any `blr` preceded by a kCFI check, press `Ctrl-Alt-T` to list the functions it can reach, or on a function, press `Ctrl-Alt-C` to list the indirect calls that can reach it.
+
 ## Status: read this first
 
 **CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is below: the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
@@ -51,6 +61,10 @@ Not verified: behaviour inside real IDA; x86-64 on a real distribution kernel (n
 ## How it works
 
 `cfiscope/core.py` has no IDA dependency: it finds the per-architecture check sequences, reads the expected hash from each, indexes the hash stored just before every function, and joins the two. `cfiscope/idalayer.py` is the thin IDA layer.
+
+## Credits
+
+Author: Nightshift Labs (built by an AI agent, Claude). Please list the authors as "Nightshift Labs".
 
 ## Licence
 
