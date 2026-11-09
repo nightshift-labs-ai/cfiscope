@@ -1,0 +1,161 @@
+"""IDA side of CFIScope: read code segments, write comments and cross-references."""
+import ida_bytes
+import ida_funcs
+import ida_ida
+import ida_idaapi
+import ida_kernwin
+import ida_name
+import ida_segment
+import ida_xref
+
+from . import core
+
+COMMENT_TAG = "kCFI"
+DEFAULT_XREF_LIMIT = 16
+BADADDR = ida_idaapi.BADADDR
+
+
+def current_arch():
+    proc = ida_ida.inf_get_procname().lower()
+    if not ida_ida.inf_is_64bit():
+        return None
+    if proc in ("metapc", "pc"):
+        return "x86_64"
+    if proc.startswith("arm"):
+        return "aarch64"
+    return None
+
+
+def code_ranges():
+    """Executable or code segments; every segment if a raw load set neither."""
+    segments = [ida_segment.getnseg(i) for i in range(ida_segment.get_segm_qty())]
+    segments = [seg for seg in segments if seg is not None]
+    chosen = [seg for seg in segments
+              if seg.perm & ida_segment.SEGPERM_EXEC or seg.type == ida_segment.SEG_CODE]
+    out = []
+    for seg in chosen or segments:
+        data = ida_bytes.get_bytes(seg.start_ea, seg.end_ea - seg.start_ea)
+        if data:
+            out.append((seg.start_ea, data))
+    return out
+
+
+def scan():
+    arch = current_arch()
+    if arch is None:
+        raise RuntimeError("CFIScope supports 64-bit x86 and AArch64 databases only.")
+    return core.resolve(code_ranges(), arch)
+
+
+def is_address_taken(ea):
+    return ida_xref.get_first_dref_to(ea) != BADADDR
+
+
+def target_name(ea):
+    return ida_funcs.get_func_name(ea) or ida_name.get_ea_name(ea) or "0x%x" % ea
+
+
+def ranked(site):
+    """Address-taken candidates first: only they can really be stored in a pointer."""
+    return sorted(site.targets, key=lambda t: (not is_address_taken(t), t))
+
+
+def describe(site):
+    targets = ranked(site)
+    if not targets:
+        return "%s 0x%08X: no implementation in this image" % (COMMENT_TAG, site.hash)
+    names = ", ".join(target_name(t) for t in targets[:6])
+    more = len(targets) - 6
+    if more > 0:
+        names += ", +%d more" % more
+    return "%s 0x%08X: %d candidate(s): %s" % (COMMENT_TAG, site.hash, len(targets), names)
+
+
+def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT):
+    """Comment every check; add user xrefs where the candidate list is short."""
+    res = {"comments": 0, "xrefs": 0, "kept_user_comments": 0}
+    for s in sites:
+        ea = s.call_ea or s.check_ea
+        old = ida_bytes.get_cmt(ea, False)
+        if old and not old.startswith(COMMENT_TAG):
+            res["kept_user_comments"] += 1
+        else:
+            ida_bytes.set_cmt(ea, describe(s), False)
+            res["comments"] += 1
+        if s.call_ea and 0 < len(s.targets) <= xref_limit:
+            flow = ida_xref.fl_JN if s.is_tail else ida_xref.fl_CN
+            for t in s.targets:
+                if ida_xref.add_cref(s.call_ea, t, flow | ida_xref.XREF_USER):
+                    res["xrefs"] += 1
+    return res
+
+
+def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
+    removed = 0
+    for s in sites:
+        ea = s.call_ea or s.check_ea
+        old = ida_bytes.get_cmt(ea, False)
+        if old and old.startswith(COMMENT_TAG):
+            ida_bytes.set_cmt(ea, "", False)
+        if s.call_ea and 0 < len(s.targets) <= xref_limit:
+            for t in s.targets:
+                ida_xref.del_cref(s.call_ea, t, False)
+                removed += 1
+    return removed
+
+
+def define_functions(sites):
+    """A kCFI preamble marks a real entry point: create functions IDA missed."""
+    made = 0
+    for t in sorted({t for s in sites for t in s.targets}):
+        if ida_funcs.get_func(t) is None and ida_funcs.add_func(t):
+            made += 1
+    return made
+
+
+class Chooser(ida_kernwin.Choose):
+    def __init__(self, title, rows):
+        columns = [["Address", 18 | ida_kernwin.Choose.CHCOL_HEX],
+                   ["Name", 44], ["Note", 26]]
+        super().__init__(title, columns, flags=ida_kernwin.Choose.CH_RESTORE)
+        self.rows = rows
+
+    def OnGetSize(self):
+        return len(self.rows)
+
+    def OnGetLine(self, n):
+        ea, name, note = self.rows[n]
+        return ["0x%x" % ea, name, note]
+
+    def OnSelectLine(self, n):
+        ida_kernwin.jumpto(self.rows[n][0])
+        return (ida_kernwin.Choose.NOTHING_CHANGED, )
+
+
+def site_at(sites, ea):
+    func = ida_funcs.get_func(ea)
+    best = None
+    for s in sites:
+        end = (s.call_ea or s.check_ea) + 4
+        if s.check_ea <= ea < end:
+            return s
+        if func is not None and func.start_ea <= s.check_ea < func.end_ea:
+            if best is None or abs(s.check_ea - ea) < abs(best.check_ea - ea):
+                best = s
+    return best
+
+
+def targets_rows(site):
+    return [(t, target_name(t), "address taken" if is_address_taken(t) else "")
+            for t in ranked(site)]
+
+
+def callers_rows(sites, ea):
+    func = ida_funcs.get_func(ea)
+    start = func.start_ea if func is not None else ea
+    rows = []
+    for s in sites:
+        if start in s.targets:
+            at = s.call_ea or s.check_ea
+            rows.append((at, target_name(at), "%d candidate(s)" % len(s.targets)))
+    return rows
