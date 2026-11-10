@@ -4,7 +4,7 @@
     python3 tools/eval_gki_x86.py vmlinux System.map
 
 From https://android.googlesource.com/kernel/prebuilts/6.1/x86-64 (kernel-6.1 and System.map).
-kernel-6.1 is a bzImage: decompress its LZ4 payload to get vmlinux. Each function that kCFI
+kernel-6.1 is a bzImage: tools/extract_bzimage.py kernel-6.1 vmlinux decompresses it. Each function that kCFI
 protects has a __cfi_<name> symbol in System.map, so the map says exactly which addresses are real targets.
 """
 import os, struct, sys, time
@@ -17,6 +17,8 @@ PREAMBLES = (16, 5)
 def code(path):
     with open(path, "rb") as fh:
         d = fh.read()
+    if d[:4] != b"\x7fELF":
+        sys.exit("%s is not an ELF. kernel-6.1 is a bzImage: run tools/extract_bzimage.py kernel-6.1 vmlinux first" % path)
     phoff = struct.unpack_from("<Q", d, 0x20)[0]; n = struct.unpack_from("<H", d, 0x38)[0]
     out = []
     for i in range(n):
@@ -27,6 +29,8 @@ def code(path):
 
 
 def main():
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
     # Name collisions between static functions make names ambiguous, so go from each __cfi_ symbol to
     # its function by distance: usually 16 bytes (padded preamble), sometimes 5 (no padding).
     cfi = []

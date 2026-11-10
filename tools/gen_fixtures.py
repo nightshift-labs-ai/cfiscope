@@ -2,8 +2,8 @@
 """Build kCFI test objects with known answers.  Requires ziglang (pip install ziglang).
 
 The C file declares many function signatures, several implementations each and one
-indirect call per signature.  truth.json records, per signature, the function
-offsets the compiler produced, so the scanner can be scored against them.
+indirect call per signature.  truth.json records which functions this generator wrote
+for each signature, and their offsets in the compiled objects, so the scanner can be scored.
 """
 import json, os, random, struct, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))

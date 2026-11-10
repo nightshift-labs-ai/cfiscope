@@ -19,7 +19,7 @@ Kernel attack surface runs through function pointers: `file_operations`, `net_de
 
 ## Try it
 
-Quick try, no download (about a minute): the repository ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the compiler's own answer for every call in `tests/fixtures/truth.json`.
+Quick try, no download (about a minute): the repository ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`: the generator wrote each function-pointer type and its implementations into `t.c`, and Clang built the objects.
 
 1. Open `tests/fixtures/x86_64-kernel.o` (or `aarch64-kernel.o`) in IDA.
 2. Press `Ctrl-Alt-K`. It should find 21 kCFI call sites, one per function-pointer type in `t.c`, each with candidates.
@@ -80,7 +80,7 @@ CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
 hcli plugin install cfiscope
 ```
 
-Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later.
+Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later. The plugin index can lag behind the [GitHub releases](https://github.com/nightshift-labs-ai/cfiscope/releases); if `hcli plugin status` shows an older version, copy the folder from the latest release.
 
 
 ## Without IDA (scripts, other tools, CI)
@@ -91,7 +91,7 @@ The scanner is plain Python 3 with no dependencies, so the same answers are avai
 python3 -m cfiscope vmlinux                         # summary
 python3 -m cfiscope vmlinux --sites                 # every call site and its candidates
 python3 -m cfiscope vmlinux --callers tcp_sendmsg   # indirect calls that can reach a function
-python3 -m cfiscope vmlinux --targets 0xffffffc0081234a8
+python3 -m cfiscope vmlinux --targets 0xffffffc008cc55ac
 python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
 ```
 
@@ -99,7 +99,7 @@ Run it from this folder. Input is a 64-bit ELF (a `vmlinux`, a kernel with symbo
 
 ## Verification
 
-Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google download), aarch64, stripped. Reproduce with `tools/eval_gki.py`.
+Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google download), aarch64, stripped. Reproduce with `python3 tools/eval_gki.py Image gki.elf` (`Image` and `gki.elf` as in the walkthrough).
 
 | Measure | Result |
 |---|---|
@@ -112,7 +112,7 @@ Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google downlo
 
 The 1,936 sites with no candidate carry a hash that no function in this image has; a likely reason is callees that live in loadable modules, not checked one by one.
 
-Real x86-64 kernel: the public GKI prebuilt `kernel-6.1` from [kernel/prebuilts/6.1/x86-64](https://android.googlesource.com/kernel/prebuilts/6.1/x86-64) (6.1.84), scored against its own `System.map`, which names a `__cfi_` preamble for each protected function. Reproduce with `tools/eval_gki_x86.py`.
+Real x86-64 kernel: the public GKI prebuilt `kernel-6.1` from [kernel/prebuilts/6.1/x86-64](https://android.googlesource.com/kernel/prebuilts/6.1/x86-64) (6.1.84), scored against its own `System.map`, which names a `__cfi_` preamble for each protected function. Reproduce with `python3 tools/extract_bzimage.py kernel-6.1 vmlinux`, then `python3 tools/eval_gki_x86.py vmlinux System.map`.
 
 | Measure | Result |
 |---|---|
@@ -125,9 +125,9 @@ Real x86-64 kernel: the public GKI prebuilt `kernel-6.1` from [kernel/prebuilts/
 
 The other 622 candidates are not at any symbol in the map; many sit in unnamed syscall stubs, and they were not checked one by one. Only 63.50% of the protected functions appear as candidates, which is expected for a kernel image alone: a function's hash only matches when some call site in the image uses that type.
 
-Compiler ground truth: `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the signature table the compiler produced (`tools/gen_fixtures.py`). `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the compiler's candidate sets for the same objects, and that bad input gives a clear error.
+Known-answer objects: `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the table of signatures and implementations that `tools/gen_fixtures.py` wrote into the source; function offsets come from the compiled objects. `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the known candidate sets for the same objects, and that bad input gives a clear error.
 
-`tests/test_plugin_stub.py` runs the IDA layer against fake `ida_*` modules, and `tests/check_ida_api.py` confirms all 45 IDA API names used exist in the official stubs. Neither is a test in real IDA.
+`tests/test_plugin_stub.py` runs the IDA layer against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 44 IDA API names used exist in the official stubs. Neither is a test in real IDA.
 
 Not verified: behaviour inside real IDA.
 

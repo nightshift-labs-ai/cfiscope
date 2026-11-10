@@ -83,9 +83,9 @@ def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT):
             ida_bytes.set_cmt(ea, describe(s), False)
             res["comments"] += 1
         if s.call_ea and 0 < len(s.targets) <= xref_limit:
-            flow = ida_xref.fl_JN if s.is_tail else ida_xref.fl_CN
+            # Call-type even for tail calls: a jump xref could fold a target into the caller as a chunk.
             for t in s.targets:
-                if ida_xref.add_cref(s.call_ea, t, flow | ida_xref.XREF_USER):
+                if ida_xref.add_cref(s.call_ea, t, ida_xref.fl_CN | ida_xref.XREF_USER):
                     res["xrefs"] += 1
     return res
 

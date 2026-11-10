@@ -28,6 +28,8 @@ def functions(path):
                     out.add(val)
     return out
 
+if len(sys.argv) < 2:
+    sys.exit(__doc__)
 with open(sys.argv[1], "rb") as fh:
     image = fh.read()
 t0 = time.time()

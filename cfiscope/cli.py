@@ -3,7 +3,7 @@
     python3 -m cfiscope vmlinux                      # summary
     python3 -m cfiscope vmlinux --sites              # every call site and its candidates
     python3 -m cfiscope vmlinux --callers tcp_sendmsg
-    python3 -m cfiscope vmlinux --targets 0xffffffc0081234a8
+    python3 -m cfiscope vmlinux --targets 0xffffffc008cc55ac
     python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
 
 Input is a 64-bit little-endian ELF (a vmlinux, or a kernel whose symbols
