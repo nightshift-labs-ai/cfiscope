@@ -27,6 +27,25 @@ def ensure_scan():
     return STATE["sites"]
 
 
+def scan_or_warn():
+    """Run the scan once behind a wait box, or show the plugin's own warning (unsupported database) and return None."""
+    if STATE["sites"] is not None:
+        return STATE["sites"]
+    problem = None
+    sites = None
+    ida_kernwin.show_wait_box("CFIScope: scanning code segments")
+    try:
+        sites = ensure_scan()
+    except RuntimeError as e:
+        problem = str(e)
+    finally:
+        ida_kernwin.hide_wait_box()
+    if problem:
+        ida_kernwin.warning(problem)
+        return None
+    return sites
+
+
 def report(text):
     ida_kernwin.msg("[CFIScope] %s\n" % text)
 
@@ -62,7 +81,9 @@ class ScanAction(ida_kernwin.action_handler_t):
 
 class TargetsAction(ida_kernwin.action_handler_t):
     def activate(self, ctx):
-        sites = ensure_scan()
+        sites = scan_or_warn()
+        if sites is None:
+            return 0
         site = idalayer.site_at(sites, ida_kernwin.get_screen_ea())
         if site is None:
             ida_kernwin.warning("No kCFI check at or near the cursor.")
@@ -76,7 +97,9 @@ class TargetsAction(ida_kernwin.action_handler_t):
 
 class CallersAction(ida_kernwin.action_handler_t):
     def activate(self, ctx):
-        sites = ensure_scan()
+        sites = scan_or_warn()
+        if sites is None:
+            return 0
         ea = ida_kernwin.get_screen_ea()
         rows = idalayer.callers_rows(sites, ea)
         if not rows:
@@ -91,7 +114,10 @@ class CallersAction(ida_kernwin.action_handler_t):
 
 class RemoveAction(ida_kernwin.action_handler_t):
     def activate(self, ctx):
-        report("xrefs removal attempted: %d" % idalayer.remove_annotations(ensure_scan()))
+        sites = scan_or_warn()
+        if sites is None:
+            return 0
+        report("xrefs removal attempted: %d" % idalayer.remove_annotations(sites))
         return 1
 
     def update(self, ctx):
