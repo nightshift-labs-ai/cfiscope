@@ -133,6 +133,25 @@ Not verified: behaviour inside real IDA.
 
 ## How it works
 
+The two ends that kCFI leaves in the binary, from the bundled `tests/fixtures/x86_64-plain.o` (`objdump -d -M intel`; comments added):
+
+```
+do_call_2:                                  ; the indirect call
+  mov    r10d,0xecff1ed5                    ; minus the expected type hash 0x1300e12b
+  add    r10d,DWORD PTR [rax-0x4]           ; plus the hash stored 4 bytes before the target
+  je     ok                                 ; zero: same function type
+  ud2                                       ; otherwise trap
+ok:
+  jmp    rax                                ; the call itself (a tail call here)
+
+__cfi_impl_2_1:                             ; in front of every function of that type
+  nop ... nop
+  mov    eax,0x1300e12b                     ; the type hash; never executed, read by the checks
+impl_2_1:
+```
+
+CFIScope reads the hash from every check, indexes the hash stored in front of every function, and joins the two: this call gets `impl_2_0`, `impl_2_1`, `impl_2_2`. On aarch64 the check loads the 32-bit word in front of the target, compares it with the hash, and branches over a `brk` trap before the `blr`; CFIScope anchors on that `b.eq` + `brk` pair.
+
 `cfiscope/core.py` has no IDA dependency: it finds the per-architecture check sequences, reads the expected hash from each, indexes the hash stored just before every function, and joins the two. `cfiscope/idalayer.py` is the thin IDA layer.
 
 ## Credits
