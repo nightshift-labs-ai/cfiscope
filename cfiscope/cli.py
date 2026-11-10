@@ -148,7 +148,7 @@ def _site_dict(s, names, limit):
     return {
         "call": "0x%x" % s.call_ea if s.call_ea else None,
         "check": "0x%x" % s.check_ea,
-        "in": names(s.check_ea),
+        "in": names(s.call_ea or s.check_ea),
         "hash": "0x%08x" % s.hash,
         "tail_call": s.is_tail,
         "candidates": len(s.targets),
@@ -162,7 +162,7 @@ def _site_line(s, names, limit):
     more = " ..." if len(s.targets) > limit else ""
     kind = "jump" if s.is_tail else "call"
     return "%s  %-40s %s hash 0x%08x  %d candidate(s)%s%s" % (
-        where, names(s.check_ea), kind, s.hash, len(s.targets),
+        where, names(s.call_ea or s.check_ea), kind, s.hash, len(s.targets),
         ": " if shown else "", shown + more)
 
 

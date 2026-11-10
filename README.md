@@ -29,9 +29,9 @@ The same scan from the command line, real output:
 
 ```
 $ python3 -m cfiscope tests/fixtures/x86_64-kernel.o --sites --max-list 4
-0x108033  do_call_0+0x5   jump hash 0x7230bf2a  4 candidate(s): impl_0_0, impl_0_1, impl_0_2, impl_0_3
-0x116033  do_call_1+0x5   jump hash 0x36b1c5a6  6 candidate(s): impl_1_0, impl_1_1, impl_1_2, impl_1_3 ...
-0x11e03a  do_call_2+0xc   jump hash 0x1300e12b  3 candidate(s): impl_2_0, impl_2_1, impl_2_2
+0x108033  do_call_0+0x13  jump hash 0x7230bf2a  4 candidate(s): impl_0_0, impl_0_1, impl_0_2, impl_0_3
+0x116033  do_call_1+0x13  jump hash 0x36b1c5a6  6 candidate(s): impl_1_0, impl_1_1, impl_1_2, impl_1_3 ...
+0x11e03a  do_call_2+0x1a  jump hash 0x1300e12b  3 candidate(s): impl_2_0, impl_2_1, impl_2_2
 ...
 ```
 
@@ -51,7 +51,7 @@ Which functions can the indirect call in `sock_sendmsg` reach?
 
 ```
 $ python3 -m cfiscope gki.elf --sites --max-list 20 | grep sock_sendmsg+
-0xffffffc008cc55ac  sock_sendmsg+0x9c  call hash 0x1ebda935  14 candidate(s): tun_sendmsg, sock_no_sendmsg,
+0xffffffc008cc55ac  sock_sendmsg+0xb4  call hash 0x1ebda935  14 candidate(s): tun_sendmsg, sock_no_sendmsg,
     netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg,
     packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
 ```
@@ -61,9 +61,9 @@ Which indirect calls can reach `tcp_sendmsg`?
 ```
 $ python3 -m cfiscope gki.elf --callers tcp_sendmsg --max-list 3
 3 call site(s) can reach tcp_sendmsg
-0xffffffc008cc5778  kernel_sendmsg_locked+0x4c  call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
-0xffffffc008e433c8  inet_sendmsg+0x40           call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
-0xffffffc008ead820  inet6_sendmsg+0x40          call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008cc5778  kernel_sendmsg_locked+0x64  call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008e433c8  inet_sendmsg+0x58           call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008ead820  inet6_sendmsg+0x58          call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
 ```
 
 (Long lines wrapped by hand; spacing condensed.)
