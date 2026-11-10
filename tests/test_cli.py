@@ -85,5 +85,12 @@ class Cli(unittest.TestCase):
         self.assertIn("unknown function", err)
 
 
+class Version(unittest.TestCase):
+    def test_package_matches_manifest(self):
+        from cfiscope import __version__
+        with open(os.path.join(HERE, "..", "ida-plugin.json")) as fh:
+            self.assertEqual(json.load(fh)["plugin"]["version"], __version__)
+
+
 if __name__ == "__main__":
     unittest.main()

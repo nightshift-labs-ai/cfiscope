@@ -88,7 +88,8 @@ class TargetsAction(ida_kernwin.action_handler_t):
         if site is None:
             ida_kernwin.warning("No kCFI check at or near the cursor.")
             return 0
-        idalayer.Chooser("kCFI 0x%08X candidates" % site.hash, idalayer.targets_rows(site)).Show()
+        idalayer.Chooser("kCFI candidates for the call at 0x%X (hash 0x%08X)" % (site.call_ea or site.check_ea, site.hash),
+                         idalayer.targets_rows(site)).Show()
         return 1
 
     def update(self, ctx):

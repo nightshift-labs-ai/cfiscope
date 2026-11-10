@@ -2,14 +2,16 @@
 
 Resolve **indirect calls** in Linux and Android kernels built with kCFI, directly in IDA, from a stripped binary.
 
-Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 32-bit function-type hash in front of every function and checks it at every indirect call. Both ends survive stripping. CFIScope matches them, so an unresolved `blr x8` or `call rax` becomes a short list of functions it can actually reach.
+Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 32-bit function-type hash in front of every function and checks it at every indirect call. Both ends survive stripping. CFIScope matches them, so an unresolved `blr x8` or `call rax` becomes a list of the type-compatible functions it may reach, usually a short one.
 
 - **Scan kCFI calls** (`Ctrl-Alt-K`): finds every check, comments the call site with the type hash and candidate count, adds cross-references when the candidate list is short (at most 16), and offers to create functions at candidates IDA has not recognised. Your own comments are kept.
-- **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach.
+- **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach. If the cursor is not on a kCFI check or its call, the nearest check in the same function is used; the list's title names the call address it chose.
 - **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give.
 - **Remove annotations**: removes the comments and cross-references the scan added.
 
-Supported targets: aarch64 and x86-64, each tested on a real Android GKI kernel.
+Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that a given call ever reaches it. Most lists are short (median 4 on the GKI kernel below), but a few common types have hundreds or more (the largest list there has 1,458). Treat a long list as a type filter and a short one as a strong lead.
+
+Supported targets: aarch64 and x86-64. The scanner was scored on a real Android GKI kernel for each (numbers below); the IDA layer has not been run in IDA yet (see Status).
 
 ## Why it matters
 
@@ -35,7 +37,6 @@ hcli plugin install cfiscope
 
 Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later.
 
-Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that this call ever reaches it. Treat a long list as a type filter and a short one as a strong lead.
 
 ## Without IDA (scripts, other tools, CI)
 
@@ -62,7 +63,7 @@ Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google downlo
 | Sites with exactly one candidate | 1,694 |
 | Median candidates per resolved site | 4 |
 | Sites with 1 to 8 candidates / 1 to 16 | 7,092 / 8,999 |
-| Distinct candidate functions that start at a kallsyms symbol (symbols restored by [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf), used only to score) | 30,357 of 30,567 (99.31%) |
+| Candidate start precision: distinct candidates that begin exactly at a kallsyms function symbol (symbols restored by [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf), used only to score). This checks that candidates are real function starts, not that a call reaches them | 30,357 of 30,567 (99.31%) |
 
 The 1,936 sites with no candidate carry a hash that no function in this image has; a likely reason is callees that live in loadable modules, not checked one by one.
 
