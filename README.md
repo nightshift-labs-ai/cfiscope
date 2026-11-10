@@ -37,6 +37,20 @@ Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later.
 
 Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that this call ever reaches it. Treat a long list as a type filter and a short one as a strong lead.
 
+## Without IDA (scripts, other tools, CI)
+
+The scanner is plain Python 3 with no dependencies, so the same answers are available from the command line, for example to feed another disassembler or a pipeline:
+
+```
+python3 -m cfiscope vmlinux                         # summary
+python3 -m cfiscope vmlinux --sites                 # every call site and its candidates
+python3 -m cfiscope vmlinux --callers tcp_sendmsg   # indirect calls that can reach a function
+python3 -m cfiscope vmlinux --targets 0xffffffc0081234a8
+python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
+```
+
+Run it from this folder. Input is a 64-bit ELF (a `vmlinux`, a kernel with symbols restored by vmlinux-to-elf, or a `.o`/`.ko`) or, with `--raw`, a bare kernel image. Symbols are only used to print names. `--json` gives machine-readable output. On the GKI aarch64 `Image` from the walkthrough above, `--raw` prints the same totals as the table below in under a second.
+
 ## Verification
 
 Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google download), aarch64, stripped. Reproduce with `tools/eval_gki.py`.
@@ -65,7 +79,7 @@ Real x86-64 kernel: the public GKI prebuilt `kernel-6.1` from [kernel/prebuilts/
 
 The other 622 candidates are not at any symbol in the map; many sit in unnamed syscall stubs, and they were not checked one by one. Only 63.50% of the protected functions appear as candidates, which is expected for a kernel image alone: a function's hash only matches when some call site in the image uses that type.
 
-Compiler ground truth: `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the signature table the compiler produced (`tools/gen_fixtures.py`).
+Compiler ground truth: `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the signature table the compiler produced (`tools/gen_fixtures.py`). `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the compiler's candidate sets for the same objects, and that bad input gives a clear error.
 
 `tests/test_plugin_stub.py` runs the IDA layer against fake `ida_*` modules, and `tests/check_ida_api.py` confirms all 45 IDA API names used exist in the official stubs. Neither is a test in real IDA.
 
