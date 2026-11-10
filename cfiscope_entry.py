@@ -5,6 +5,7 @@ Edit > Plugins > CFIScope actions:
   * Candidates for this call / Callers of this function: jump lists.
   * Remove annotations.
 """
+import traceback
 import json
 import os
 import sys
@@ -50,7 +51,23 @@ def report(text):
     ida_kernwin.msg("[CFIScope] %s\n" % text)
 
 
+
+ISSUES_URL = "https://github.com/nightshift-labs-ai/cfiscope/issues"
+
+
+def guarded(activate):
+    """Any unexpected error becomes one warning plus the traceback in the Output window."""
+    def wrapper(self, ctx):
+        try:
+            return activate(self, ctx)
+        except Exception:  # noqa: BLE001  (last line of defence inside IDA)
+            ida_kernwin.msg("[CFIScope] unexpected error:\n%s\n" % traceback.format_exc())
+            ida_kernwin.warning("CFIScope: unexpected error, details are in the Output window.\nPlease report it: %s" % ISSUES_URL)
+            return 0
+    return wrapper
+
 class ScanAction(ida_kernwin.action_handler_t):
+    @guarded
     def activate(self, ctx):
         problem = None
         ida_kernwin.show_wait_box("CFIScope: scanning code segments")
@@ -80,6 +97,7 @@ class ScanAction(ida_kernwin.action_handler_t):
 
 
 class TargetsAction(ida_kernwin.action_handler_t):
+    @guarded
     def activate(self, ctx):
         sites = scan_or_warn()
         if sites is None:
@@ -97,6 +115,7 @@ class TargetsAction(ida_kernwin.action_handler_t):
 
 
 class CallersAction(ida_kernwin.action_handler_t):
+    @guarded
     def activate(self, ctx):
         sites = scan_or_warn()
         if sites is None:
@@ -114,6 +133,7 @@ class CallersAction(ida_kernwin.action_handler_t):
 
 
 class RemoveAction(ida_kernwin.action_handler_t):
+    @guarded
     def activate(self, ctx):
         sites = scan_or_warn()
         if sites is None:
