@@ -43,6 +43,31 @@ A real kernel:
 2. Open the resulting ELF in IDA and let auto-analysis finish.
 3. Press `Ctrl-Alt-K`. Then on any `blr` preceded by a kCFI check, press `Ctrl-Alt-T` to list the functions it can reach, or on a function, press `Ctrl-Alt-C` to list the indirect calls that can reach it.
 
+## What you will see (real output, not an IDA screenshot)
+
+We have no IDA, so this is the command-line tool, which runs the same scanner as the plugin, on the public GKI aarch64 kernel from the walkthrough with its symbols restored by vmlinux-to-elf (57,453 named functions). The plugin puts the same answers in its comments, cross-references and jump lists.
+
+Which functions can the indirect call in `sock_sendmsg` reach?
+
+```
+$ python3 -m cfiscope gki.elf --sites --max-list 20 | grep sock_sendmsg+
+0xffffffc008cc55ac  sock_sendmsg+0x9c  call hash 0x1ebda935  14 candidate(s): tun_sendmsg, sock_no_sendmsg,
+    netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg,
+    packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
+```
+
+Which indirect calls can reach `tcp_sendmsg`?
+
+```
+$ python3 -m cfiscope gki.elf --callers tcp_sendmsg --max-list 3
+3 call site(s) can reach tcp_sendmsg
+0xffffffc008cc5778  kernel_sendmsg_locked+0x4c  call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008e433c8  inet_sendmsg+0x40           call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008ead820  inet6_sendmsg+0x40          call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+```
+
+(Long lines wrapped by hand; spacing condensed.)
+
 ## Status: read this first
 
 **CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is below: the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
