@@ -2,6 +2,10 @@
 
 Taken from the GitHub release notes. Newest first.
 
+## v0.1.8 (2026-11-10)
+
+Command-line fixes from an independent review: each site is named by its call instruction (matching the address column), --json keeps every candidate unless --max-list is given, --callers covers every function of that name, piping into head exits quietly, malformed program headers give a clean error, and unreadable section headers on a linked file only lose the names. The README also gains a byte-level 'How it works' from a bundled test object and real output on the public GKI kernel (sock_sendmsg candidates, callers of tcp_sendmsg).
+
 ## v0.1.7 (2026-11-10)
 
 An unexpected error in any action now shows one warning, with the traceback in the Output window, instead of a traceback dialog.
