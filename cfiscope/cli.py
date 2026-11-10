@@ -75,7 +75,13 @@ def load_elf(d):
     arch = ARCH_BY_MACHINE.get(machine)
     if arch is None:
         raise InputError("unsupported ELF machine %d (x86-64 and AArch64 only)" % machine)
-    secs = _sections(d)
+    try:
+        secs = _sections(d)
+    except InputError:
+        if e_type == 1:
+            raise
+        print("cfiscope: section headers unreadable, names unavailable", file=sys.stderr)
+        secs = []
     ranges = []
     if e_type == 1:  # relocatable (.o / .ko): lay executable sections out one after another
         bases, base = {}, 0x100000
@@ -90,7 +96,7 @@ def load_elf(d):
     else:
         phoff = struct.unpack_from("<Q", d, 0x20)[0]
         phentsize, phnum = struct.unpack_from("<HH", d, 0x36)
-        if phoff and phentsize == 56:
+        if phoff and phentsize == 56 and phoff + 56 * phnum <= len(d):
             for i in range(phnum):
                 p_type, p_flags, p_offset, p_vaddr, _pa, p_filesz, _memsz, _al = \
                     struct.unpack_from("<IIQQQQQQ", d, phoff + 56 * i)
@@ -115,8 +121,8 @@ class Names:
         self.by_ea = symbols
         self.eas = sorted(symbols)
         self.by_name = {}
-        for ea, nm in symbols.items():
-            self.by_name.setdefault(nm, ea)
+        for ea, nm in sorted(symbols.items()):
+            self.by_name.setdefault(nm, []).append(ea)
 
     def __call__(self, ea):
         if ea in self.by_ea:
@@ -128,12 +134,13 @@ class Names:
 
 
 def parse_target(text, names):
+    """A set of addresses: one for a number, every function of that name for a name."""
     try:
-        return int(text, 0)
+        return {int(text, 0)}
     except ValueError:
         pass
     if text in names.by_name:
-        return names.by_name[text]
+        return set(names.by_name[text])
     raise InputError("unknown function %r (no such symbol; give an address instead)" % text)
 
 
@@ -170,7 +177,8 @@ def main(argv=None):
     mode.add_argument("--sites", action="store_true", help="list every call site with its candidates")
     mode.add_argument("--callers", metavar="FUNC", help="call sites that can reach FUNC (name or address)")
     mode.add_argument("--targets", metavar="ADDR", help="candidates for the call or check at ADDR")
-    ap.add_argument("--max-list", type=int, default=8, help="candidates shown per site (default 8)")
+    ap.add_argument("--max-list", type=int, default=None,
+                    help="candidates shown per site (default: 8 in text, all with --json)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     a = ap.parse_args(argv)
 
@@ -188,19 +196,22 @@ def main(argv=None):
         stats = dict(stats, arch=arch, named_functions=len(symbols))
         if a.callers or a.targets:
             want = parse_target(a.callers or a.targets, names)
-    except (OSError, InputError, ValueError, struct.error) as e:
+    except (OSError, InputError, ValueError, OverflowError, struct.error) as e:
         print("cfiscope: %s" % e, file=sys.stderr)
         return 2
 
     if a.callers:
-        chosen = [s for s in sites if want in s.targets]
-        header = "%d call site(s) can reach %s" % (len(chosen), names(want))
+        chosen = [s for s in sites if want & set(s.targets)]
+        label = a.callers if len(want) > 1 else names(min(want))
+        if len(want) > 1:
+            label += " (%d functions of that name)" % len(want)
+        header = "%d call site(s) can reach %s" % (len(chosen), label)
     elif a.targets:
-        chosen = [s for s in sites if want in (s.call_ea, s.check_ea)]
+        chosen = [s for s in sites if want & {s.call_ea, s.check_ea}]
         if not chosen:
-            print("cfiscope: no kCFI check or call at 0x%x" % want, file=sys.stderr)
+            print("cfiscope: no kCFI check or call at %s" % a.targets, file=sys.stderr)
             return 1
-        header = "candidates for the site at 0x%x" % want
+        header = "candidates for the site at %s" % a.targets
     elif a.sites:
         chosen, header = sites, None
     else:
@@ -209,7 +220,7 @@ def main(argv=None):
     if a.json:
         out = {"stats": stats}
         if chosen is not None:
-            limit = 1 << 30 if a.targets else a.max_list
+            limit = 1 << 30 if a.targets or a.max_list is None else a.max_list
             out["sites"] = [_site_dict(s, names, limit) for s in chosen]
         json.dump(out, sys.stdout, indent=1)
         print()
@@ -233,5 +244,5 @@ def main(argv=None):
                 print("    0x%x  %s" % (t, names(t)))
         return 0
     for s in chosen:
-        print(_site_line(s, names, a.max_list))
+        print(_site_line(s, names, 8 if a.max_list is None else a.max_list))
     return 0
