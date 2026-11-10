@@ -35,7 +35,7 @@ $ python3 -m cfiscope tests/fixtures/x86_64-kernel.o --sites --max-list 4
 ...
 ```
 
-(Addresses are where the command-line tool lays out the object's sections; IDA will place them elsewhere.)
+(Spacing condensed. Addresses are where the command-line tool lays out the object's sections; IDA will place them elsewhere.)
 
 A real kernel:
 
