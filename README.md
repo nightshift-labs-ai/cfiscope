@@ -19,6 +19,26 @@ Kernel attack surface runs through function pointers: `file_operations`, `net_de
 
 ## Try it
 
+Quick try, no download (about a minute): the repository ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the compiler's own answer for every call in `tests/fixtures/truth.json`.
+
+1. Open `tests/fixtures/x86_64-kernel.o` (or `aarch64-kernel.o`) in IDA.
+2. Press `Ctrl-Alt-K`. It should find 21 kCFI call sites, one per function-pointer type in `t.c`, each with candidates.
+3. In `do_call_2`, `Ctrl-Alt-T` should list `impl_2_0`, `impl_2_1`, `impl_2_2`; on `impl_2_1`, `Ctrl-Alt-C` should list that call in `do_call_2`.
+
+The same scan from the command line, real output:
+
+```
+$ python3 -m cfiscope tests/fixtures/x86_64-kernel.o --sites --max-list 4
+0x108033  do_call_0+0x5   jump hash 0x7230bf2a  4 candidate(s): impl_0_0, impl_0_1, impl_0_2, impl_0_3
+0x116033  do_call_1+0x5   jump hash 0x36b1c5a6  6 candidate(s): impl_1_0, impl_1_1, impl_1_2, impl_1_3 ...
+0x11e03a  do_call_2+0xc   jump hash 0x1300e12b  3 candidate(s): impl_2_0, impl_2_1, impl_2_2
+...
+```
+
+(Addresses are where the command-line tool lays out the object's sections; IDA will place them elsewhere.)
+
+A real kernel:
+
 1. Download the public aarch64 Android kernel used for the numbers below: [gki-certified-boot-android14-6.1-2024-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip), extract the kernel from `boot-6.1.img`, and restore its symbols with [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf).
 2. Open the resulting ELF in IDA and let auto-analysis finish.
 3. Press `Ctrl-Alt-K`. Then on any `blr` preceded by a kCFI check, press `Ctrl-Alt-T` to list the functions it can reach, or on a function, press `Ctrl-Alt-C` to list the indirect calls that can reach it.
