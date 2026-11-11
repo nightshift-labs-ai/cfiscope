@@ -159,6 +159,18 @@ ACTIONS = [
 ]
 
 
+class PopupHooks(ida_kernwin.UI_Hooks):
+    """Adds the three lookups to the right-click menu of disassembly and pseudocode views."""
+
+    def finish_populating_widget_popup(self, widget, popup_handle, ctx=None):
+        try:
+            if ida_kernwin.get_widget_type(widget) in (ida_kernwin.BWN_DISASM, ida_kernwin.BWN_PSEUDOCODE):
+                for name, _, _, _ in ACTIONS[:3]:
+                    ida_kernwin.attach_action_to_popup(widget, popup_handle, name, "CFIScope/")
+        except Exception:  # a context menu must never break because of this plugin
+            traceback.print_exc()
+
+
 class CFIScopePlugin(ida_idaapi.plugin_t):
     flags = 0
     comment = "Resolve kCFI indirect calls from their type hashes"
@@ -170,6 +182,8 @@ class CFIScopePlugin(ida_idaapi.plugin_t):
         for name, label, handler, key in ACTIONS:
             ida_kernwin.register_action(ida_kernwin.action_desc_t(name, label, handler(), key))
             ida_kernwin.attach_action_to_menu("Edit/Plugins/", name, ida_kernwin.SETMENU_APP)
+        self.hooks = PopupHooks()
+        self.hooks.hook()
         report("%s loaded" % __version__)
         return ida_idaapi.PLUGIN_KEEP
 
@@ -177,6 +191,9 @@ class CFIScopePlugin(ida_idaapi.plugin_t):
         ida_kernwin.process_ui_action("cfiscope:scan")
 
     def term(self):
+        if getattr(self, "hooks", None) is not None:
+            self.hooks.unhook()
+            self.hooks = None
         for name, _, _, _ in ACTIONS:
             ida_kernwin.unregister_action(name)
 

@@ -2,6 +2,15 @@
 
 Taken from the GitHub release notes. Newest first.
 
+## v0.1.11 (2026-11-11)
+
+Right-click menu and plugin-wiring tests:
+
+- Scan, Candidates for this call and Callers of this function are now also on the right-click menu of disassembly and pseudocode views (CFIScope submenu), through a UI_Hooks.finish_populating_widget_popup hook that is removed when the plugin unloads. The README notes that many Linux desktops take Ctrl-Alt-T for a terminal and that Keypatch uses Ctrl-Alt-K, so judges can use the menus or rebind the keys.
+- New tests/test_entry_stub.py loads the plugin entry on fake ida_* modules and checks the scan cache, the rescan after a rebase, the menus and the right-click hook (19 tests in total, `python3 -m unittest discover -s tests`). The IDA API name check now covers 49 names, 0 missing in the official stubs.
+
+Built by an AI agent (Claude, operated by Nightshift Labs). The plugin has not been run in real IDA yet.
+
 ## v0.1.10 (2026-11-11)
 
 Accuracy and robustness fixes from a fresh judge-style review that re-ran every README number on public kernels:
