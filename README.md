@@ -14,7 +14,7 @@ All four actions are under Edit > Plugins. Scan and the two lookups are also on 
 
 Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that a given call ever reaches it. Most lists are short (median 6 candidates per call that has any on both 6.1 GKI kernels below, 6 and 7 on the 6.6 and 6.12 ones), but a few common types have hundreds or more (the largest lists have 1,458 to 1,580). Treat a long list as a type filter and a short one as a strong lead.
 
-Supported targets: aarch64 and x86-64 kernels built by Clang with kCFI (`CONFIG_CFI_CLANG` on Linux 6.1 or later), for example Android GKI android14-6.1 and later. Not supported: GCC-built kernels (most desktop distribution kernels have no kCFI checks to read) and the older jump-table CFI of Linux 5.x Clang builds (Android 12/13 GKI 5.10/5.15); on those the scan finds 0 sites and says so. The scanner was scored on a real Android GKI kernel for each architecture (numbers below); the IDA layer has not been run in IDA yet (see Status).
+Supported targets: aarch64 and x86-64 kernels built by Clang with kCFI (`CONFIG_CFI_CLANG` on Linux 6.1 or later), for example Android GKI android14-6.1 and later. New on the `oldcfi` branch, not released: aarch64 kernels built with the older jump-table CFI of Linux 5.x, measured on one Android 13 GKI 5.15 kernel (see [Linux 5.x jump-table CFI](#linux-5x-jump-table-cfi-android-1213-gki-515) for what it reads and what it does not). Not supported: GCC-built kernels (most desktop distribution kernels have no kCFI checks to read) and x86-64 kernels with the jump-table CFI; on those the scan finds 0 sites and says so. The scanner was scored on a real Android GKI kernel for each architecture (numbers below); the IDA layer has not been run in IDA yet (see Status).
 
 ## Why it matters
 
@@ -142,9 +142,66 @@ The other 622 candidates: 244 sit at weak (`W`) symbols in the map, mostly sysca
 
 Known-answer objects: `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the table of signatures and implementations that `tools/gen_fixtures.py` wrote into the source; function offsets come from the compiled objects. `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the known candidate sets for the same objects, and that bad input gives a clear error.
 
-Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer and `tests/test_entry_stub.py` the plugin wiring (menus, right-click hooks, rescan after a rebase, pseudocode comments on a fake decompiler) against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 68 IDA API names used, including the decompiler methods the pseudocode hook calls, exist in the official stubs. None of these is a test in real IDA.
+Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer and `tests/test_entry_stub.py` the plugin wiring (menus, right-click hooks, rescan after a rebase, pseudocode comments on a fake decompiler) against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 71 IDA API names used, including the decompiler methods the pseudocode hook calls, exist in the official stubs. None of these is a test in real IDA.
 
 Not verified: behaviour inside real IDA.
+
+## Linux 5.x jump-table CFI (Android 12/13 GKI 5.15)
+
+Before kCFI, Clang's CFI for the kernel (`CONFIG_CFI_CLANG` on Linux 5.x, used by Android 12 and 13 GKI) worked differently: every function whose address is taken gets an 8-byte entry `bti c; b <function>` in one jump table, the functions of one type sit next to each other in it, and a checked call tests that the pointer lies in its type's run of entries before calling it:
+
+```
+adrp x8, ... ; add x8, x8, #0x3a8     ; first entry of the type's run
+sub  x8, x23, x8 ; ror x8, x8, #3      ; index of the pointer's entry
+cmp  x8, #0xa6                         ; 166 entries
+b.hs slow_path                         ; otherwise __cfi_slowpath_diag(type id, pointer, ...)
+blr  x23
+```
+
+So the candidates of a call are written in the code: CFIScope reads the base and the count, then each entry's branch target. This is the compiler's own list of the functions of that type in the image that the check lets through, with no hash collisions. When there are no kCFI checks in an aarch64 image, the scan looks for this form instead; the actions, comments (`jtCFI <type>: N candidate(s): ...`), cross-references, lists and pseudocode comments are the same as for kCFI. Supported shapes: range checks (`b.hs`/`b.hi` with the call on the fall-through, `b.lo`/`b.ls` with the call at the branch target, count as an immediate or in a register), single-member types (`cmp; b.ne`), checks whose subtract and rotate were hoisted out of a loop, and calls checked only through `__cfi_slowpath`/`__cfi_slowpath_diag`. Each site also gets the type's 64-bit id (passed to the slow path; it is the first 8 bytes of MD5 of the mangled type name), and, when the kernel's symbols include the `__typeid_<type>_global_addr` names that kallsyms keeps, the type itself, for example `int (file*, int)`.
+
+Command line, on the Android 13 GKI kernel below with symbols restored by vmlinux-to-elf (real output, spacing condensed, long line cut):
+
+```
+$ python3 -m cfiscope gki515.elf --sites --max-list 4 | grep vfs_read+
+0xffffffc00853ffbc  vfs_read+0xe8   call range int (file*, int)  2 candidate(s): vfs_fsync, selinux_file_permission
+0xffffffc0085400c0  vfs_read+0x1ec  call range long (file*, char*, unsigned long, long long*)  166 candidate(s): kvm_vm_stats_read, ...
+```
+
+Measured on `gki-certified-boot-android13-5.15-2024-01_r1` ([zip](https://dl.google.com/android/gki/gki-certified-boot-android13-5.15-2024-01_r1.zip), kernel extracted with `python3 tools/extract_bootimg.py boot-5.15.img Image`, symbols restored by vmlinux-to-elf), with `python3 tools/eval_gki_oldcfi.py --cxxfilt Image gki515.elf`. The symbols are only used to score: which words are kernel text, where functions start, the names of the jump-table entries, and the `__typeid` symbols.
+
+| Measure | Result |
+|---|---|
+| Jump table found from the code alone | 33,773 entries; same bounds as `__cfi_jt_start` / `__cfi_jt_end` |
+| `blr` in kernel text (`_stext`..`_etext` without the jump table, plus init text) with candidates | 14,000 of 21,738 (64.4%) |
+| Candidates per resolved `blr` | median 6, mean 29.2, largest 1,310; exactly one: 2,142 |
+| Distinct candidates that start exactly at a kallsyms function | 24,912 of 24,912 |
+| Jump-table entries used whose name matches the target (`foo.cfi_jt` branches to `foo`) | 24,912 of 24,912 |
+| Checks whose first entry is the `__typeid` symbol of the id their own slow path passes | range 12,076 of 12,076; single 2,155 of 2,155 |
+| Linked check and call in the same function | 15,953 of 15,953 |
+| Type names equal to `c++filt` | 2,777 of 2,777 |
+
+The last four rows check consistency (the base and count read from the code, the type id from the slow path and the kernel's own symbols agree); they do not prove that a call can reach every candidate. A candidate list is a type filter, as with kCFI.
+
+Limits, read before relying on it:
+
+- **Only this one kernel was measured.** Android 12 GKI 5.10 has not been tested. The scanner reads only 8-byte `bti c; b` jump-table entries; a build without BTI lays its jump table out differently (we expect 4-byte `b` entries, not checked), and CFIScope does not look for that. x86-64 kernels with this CFI are not read.
+- **Module targets are not listed.** A call whose type has no function in the kernel image is checked only by `__cfi_slowpath`; CFIScope shows its type and "no candidate in this image" (2,111 slow-path-only sites on this kernel, the two cases below included). The same applies to a copy of a call that the compiler placed on a check's slow path: it runs only when the pointer is not one of the image's functions of that type. When symbols are available, 265 of these slow-path sites belong to a type that does have functions in the image, which means an inline check was not decoded; those are marked "candidates unknown".
+- **Tracepoint and vendor-hook calls are not checked by design** (the kernel calls them without CFI), so there is nothing to read and they stay unresolved, like assembly and `__nocfi` code. These, the slow-path-only calls and the checks this scanner does not decode make up the 7,738 unresolved `blr`; the split between them has not been measured.
+- **Linking is linear.** A check is linked to the first `blr` of its register on the straight path after it (following up to two unconditional branches), or to a later call that reuses it. The register holding the type's first entry is found by walking back from the check, stopping at function starts and at code that does not fall through. Checks whose base or call is found only through the control-flow graph are missed (on this kernel, 54 checks have no range and 166 no linked call, including the leaf checks inside `__cfi_check`).
+- **Not run in IDA.** Like the rest of CFIScope, the IDA side was tested only against fake `ida_*` modules (`tests/test_plugin_stub.py`, `tests/test_entry_stub.py`). The scanner is the same code as the command line.
+
+Known-answer test: `tests/fixtures/aarch64-jtcfi.elf` is assembled by `tools/gen_fixtures.py --jtcfi-only` (no compiler): a 4-entry jump table and six calls (a `b.hs` range check, a `b.lo` check with the base in a register copy and the count in a register, a `b.hi` check, a check hoisted out of a loop, a single-member check and a slow-path-only call). `tests/test_oldcfi.py` checks each call's kind, type id, type name and exact candidates against `tests/fixtures/jtcfi_truth.json`. The command line gives (spacing condensed):
+
+```
+$ python3 -m cfiscope tests/fixtures/aarch64-jtcfi.elf --sites
+0xffffffc008000078  call_hs+0x28       call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080000ec  call_lo+0x48       call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000120  call_hi+0x24       call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000178  call_hoisted+0x2c  call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080001cc  call_single+0x20   call single void (void*)  1 candidate(s): g_one
+0xffffffc008000220  call_slow+0x28     call slowpath type id 0x07ff5a213d37b1a6  no candidate in this image (module functions only)
+```
 
 ## How it works
 

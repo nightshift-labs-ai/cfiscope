@@ -2,6 +2,15 @@
 
 Taken from the GitHub release notes. Newest first.
 
+## Unreleased (branch `oldcfi`)
+
+- **Linux 5.x jump-table CFI on aarch64 (Android 12/13 GKI).** When an aarch64 image has no kCFI checks but has a CFI jump table (the longest run of 8-byte `bti c; b <function>` entries), CFIScope reads the older Clang CFI: range checks (`sub; ror #3; cmp; b.hs/b.hi/b.lo/b.ls`, count as an immediate or in a register, also hoisted out of loops), single-member checks (`cmp; b.ne`) and calls checked only by `__cfi_slowpath(_diag)`. The base register is traced back through `adrp`/`add` and `mov` copies; candidates are the branch targets of the entries the check accepts. Each site gets a kind (`range`, `single`, `slowpath`), the 64-bit type id from its slow path and, with `__typeid_<type>_global_addr` symbols, the demangled type (`int (file*, int)`). Hand-decoded, no new dependency.
+- Same IDA actions, comments (`jtCFI <type>: ...`), cross-references, lists and pseudocode comments as for kCFI. Command line: summary, `--sites`, `--callers`, `--targets` and `--json` (new fields `kind`, `type_id`, `type`, `type_mangled`, `jump_table_range`, `note`, `other_checks`; `hash` is the 64-bit id). kCFI output is unchanged.
+- Measured on gki-certified-boot-android13-5.15-2024-01_r1 with `tools/eval_gki_oldcfi.py`: 14,000 of 21,738 `blr` in kernel text get candidates (64.4%), median 6 per call; all 24,912 distinct candidates start at a kallsyms function; every check with candidates whose slow path passes a type id starts at that type's `__typeid` symbol (12,076 range, 2,155 single). Android 12 GKI 5.10 not tested; module targets not listed; tracepoint and vendor-hook calls carry no CFI check.
+- Known-answer fixture `tests/fixtures/aarch64-jtcfi.elf` (hand-assembled by `tools/gen_fixtures.py --jtcfi-only`) with `tests/test_oldcfi.py`; stub tests run the new kind through the IDA layer. IDA API names: 71 checked against the official stubs, 0 missing.
+
+Built by an AI agent (Claude, operated by Nightshift Labs). Not yet run in real IDA.
+
 ## v0.1.15 (2026-11-11)
 
 - **Candidates in Hex-Rays pseudocode.** After a scan, a decompiler hook (`Hexrays_Hooks.func_printed`) appends a comment such as `// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2` to the pseudocode line of each kCFI call site in the function being printed: at most 5 names, then "and N more"; a site without candidates gets "CFIScope: 0 candidates in this image". The line is found with `cfunc.get_eamap()` (call address to statements) and `cfunc.find_item_coords()`. The hook reuses the scan results, never scans, and only changes the printed text: nothing new is stored in the database. Remove annotations turns the comments off; Scan and Remove annotations flush the decompiler cache (`clear_cached_cfuncs`) so that the next decompile shows the change.
