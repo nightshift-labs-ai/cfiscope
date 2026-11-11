@@ -149,6 +149,18 @@ def is_bl(p, target):
     return w & 0xfc000000 == 0x94000000 and p + 4 * (((w & 0x3ffffff) ^ 0x2000000) - 0x2000000) == target
 
 
+def tracepoint_probe_call(a):
+    """blr xR whose xR was read with ldar from [xM] and x0 from [xM, #8] in the 6 words before: the probe loop of an
+    inlined tracepoint (struct tracepoint_func: func at 0, data at 8). A pattern match, not a proof."""
+    word = lambda p: struct.unpack_from("<I", image, p - BASE)[0]
+    r, m = (word(a) >> 5) & 31, None
+    for p in range(a - 4, a - 28, -4):
+        if word(p) & 0xfffffc00 == 0xc8dffc00 and word(p) & 31 == r:
+            m = (word(p) >> 5) & 31
+            break
+    return m is not None and any(word(p) == 0xf9400400 | (m << 5) for p in range(a - 4, a - 28, -4))
+
+
 by_call = {}
 for s in sites:
     if s.call_ea:
@@ -164,6 +176,8 @@ for a in sorted(blr - {s.call_ea for s in resolved}):
         key = "in Android vendor-hook iterators (__traceiter_android_[r]vh_*, called without a CFI check)"
     elif name.startswith("__traceiter_"):
         key = "in tracepoint iterators (__traceiter_*, called without a CFI check)"
+    elif tracepoint_probe_call(a):
+        key = "inlined tracepoint loops elsewhere (ldar xR, [xM]; ldr x0, [xM, #8]; blr xR: probe func/data pair)"
     else:
         key = "elsewhere, no extr/ror #3 and no __cfi_slowpath call in the 32 words before"
         for p in range(a - 4, max(fn(a), a - 128) - 4, -4):
