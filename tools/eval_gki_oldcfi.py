@@ -173,7 +173,7 @@ for a in sorted(blr - {s.call_ea for s in resolved}):
     if a in by_call:
         key = "linked to a check without candidates in the image (slow-path-only types, ranges not found)"
     elif find_check is not None and any(is_bl(p, find_check) for p in range(a - 4, max(fn(a), a - 64) - 4, -4)):
-        key = "inlined CFI slow path: bl find_check_fn, then blr to the module's __cfi_check (part of a check, not a program call)"
+        key = "inlined CFI slow path: bl find_check_fn, then blr to __cfi_check of the kernel or module holding the pointer (part of a check, not a program call)"
     elif name.startswith(("__traceiter_android_vh_", "__traceiter_android_rvh_")):
         key = "in Android vendor-hook iterators (__traceiter_android_[r]vh_*, called without a CFI check)"
     elif name.startswith("__traceiter_"):

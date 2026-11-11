@@ -140,7 +140,7 @@ def jtcfi_program():
         a.emit(BTI_C, movw(0, k + 1), RET, NOP)
     a.label("__cfi_slowpath_diag")
     a.emit(BTI_C, RET, NOP, NOP)
-    a.label("find_check_fn")                                   # stands in for the runtime's lookup of a module's __cfi_check
+    a.label("find_check_fn")                                   # stands in for the runtime's lookup of the __cfi_check to call
     a.emit(BTI_C, RET, NOP, NOP)
     prologue, epilogue = [PACIASP, PUSH], [POP, AUTIASP, RET]
 
@@ -239,7 +239,7 @@ def jtcfi_program():
     a.emit(*load_id(_type_id(T_FILE)))
     a.emit(mov(1, 20), bl("__cfi_slowpath_diag"), b("back_gapcopy"))
 
-    # 9. range check whose slow path is inlined: find the module's __cfi_check, then call it with the type id (the
+    # 9. range check whose slow path is inlined: find the __cfi_check to call, then call it with the type id (the
     #    CFI runtime's own indirect call, not a program call)
     a.label("call_inline")
     a.emit(*prologue)

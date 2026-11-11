@@ -174,7 +174,7 @@ def pseudocode_text(site, limit=5):
 
 def runtime_calls(sites):
     """{address: site} of the CFI runtime's own calls (jump-table CFI): the blr of a check's inlined slow path,
-    which calls a module's __cfi_check with the type id. Not program calls, so they get a note, not candidates."""
+    which calls __cfi_check of the kernel or module holding the pointer, with the type id. Not program calls, so they get a note, not candidates."""
     out = {}
     for s in sites:
         for x in [s] + list(s.extra_checks):
@@ -184,7 +184,7 @@ def runtime_calls(sites):
 
 
 def describe_runtime(site):
-    return ("%s runtime: calls the module's __cfi_check for %s (slow path of the check at 0x%X); not a program call"
+    return ("%s runtime: calls __cfi_check (kernel's or the pointer's module's) for %s (slow path of the check at 0x%X); not a program call"
             % (JT_COMMENT_TAG, core.type_label(site) or "this type", site.check_ea))
 
 

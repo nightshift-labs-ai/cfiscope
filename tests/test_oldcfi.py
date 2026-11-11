@@ -57,7 +57,7 @@ class Fixture(unittest.TestCase):
         self.assertEqual(self.stats["indirect_calls"], 10)
         # call_gap: a mov between sub and ror; read as one range check that starts at its sub (call_gap+0x14),
         # not only through the slow path as a hoisted check starting at the cmp.
-        # The inlined slow path's blr is the CFI runtime calling a module's __cfi_check: recorded, never a call site.
+        # The inlined slow path's blr is the CFI runtime calling __cfi_check (kernel's or a module's): recorded, never a call site.
         for want in self.t["sites"]:
             s = by_call[int(want["call"], 16)]
             self.assertEqual(s.runtime_call_ea, int(want["runtime_call"], 16) if "runtime_call" in want else 0)

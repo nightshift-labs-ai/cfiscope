@@ -34,7 +34,7 @@ class Site:
     jt_base: int = 0       # first jump-table entry the check accepts
     jt_count: int = 0      # number of entries it accepts
     jt_range_from: str = None  # "code" (read at this check), or "same-id check" (copied from another check of its id)
-    runtime_call_ea: int = 0   # blr of this check's inlined slow path: the CFI runtime calling a module's __cfi_check
+    runtime_call_ea: int = 0   # blr of this check's inlined slow path: the CFI runtime calling __cfi_check (kernel's or a module's)
     extra_checks: list = field(default_factory=list)   # other checks guarding the same call (their own Sites)
     note: str = None       # caveat for the user, e.g. a slow-path-only site whose type does have functions here
 
