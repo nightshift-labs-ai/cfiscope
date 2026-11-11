@@ -131,6 +131,39 @@ linked = [s for s in sites if s.call_ea]
 print("linked sites whose check and call are in the same kallsyms function: %s"
       % pct(sum(1 for s in linked if fn(s.call_ea) == fn(s.check_ea)), len(linked)))
 
+# Where the unresolved blr are. Function = nearest preceding kallsyms function (assembly without a symbol of its own
+# is counted under the symbol before it). The last two rows are a heuristic: an extr/ror #3 of a register by itself or a
+# bl to __cfi_slowpath(_diag) in the 32 words before the call, inside the same function, suggests a check this scanner
+# does not decode; none of them suggests a call without a CFI check (assembly, __nocfi code, BPF dispatch...).
+fname = {a: n for a, n, t in syms if a in func_starts and t == 2}
+slowfns = {addr[n] for n in ("__cfi_slowpath", "__cfi_slowpath_diag") if n in addr}
+by_call = {}
+for s in sites:
+    if s.call_ea:
+        by_call.setdefault(s.call_ea, s)
+split = {}
+for a in sorted(blr - {s.call_ea for s in resolved}):
+    name = fname.get(fn(a), "")
+    if a in by_call:
+        key = "linked to a check without candidates in the image (slow-path-only types, ranges not found)"
+    elif name.startswith(("__traceiter_android_vh_", "__traceiter_android_rvh_")):
+        key = "in Android vendor-hook iterators (__traceiter_android_[r]vh_*, called without a CFI check)"
+    elif name.startswith("__traceiter_"):
+        key = "in tracepoint iterators (__traceiter_*, called without a CFI check)"
+    else:
+        key = "elsewhere, no extr/ror #3 and no __cfi_slowpath call in the 32 words before"
+        for p in range(a - 4, max(fn(a), a - 128) - 4, -4):
+            w = struct.unpack_from("<I", image, p - BASE)[0]
+            off = ((w & 0x3ffffff) ^ 0x2000000) - 0x2000000
+            if (w & 0xffe0fc00 == 0x93c00c00 and (w >> 16 & 31) == (w >> 5 & 31)) or \
+                    (w & 0xfc000000 == 0x94000000 and p + 4 * off in slowfns):
+                key = "elsewhere, with an extr/ror #3 or a __cfi_slowpath call in the 32 words before (likely undecoded checks)"
+                break
+    split[key] = split.get(key, 0) + 1
+print("unresolved blr in kernel text: %d" % sum(split.values()))
+for key, n in sorted(split.items(), key=lambda kv: -kv[1]):
+    print("  %5d  %s" % (n, key))
+
 named = core.name_jt_types(sites, [(a, n) for a, n, _ in syms])
 sp = [s for s in sites if s.kind == "slowpath"]
 print("checks named from __typeid symbols: %d; slow-path-only sites %d: call linked %d, flagged 'candidates unknown' %d,"
