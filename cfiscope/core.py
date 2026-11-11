@@ -33,6 +33,7 @@ class Site:
     type_mangled: str = None  # e.g. "_ZTSFiP4fileiE"
     jt_base: int = 0       # first jump-table entry the check accepts
     jt_count: int = 0      # number of entries it accepts
+    extra_checks: list = field(default_factory=list)   # other checks guarding the same call (their own Sites)
 
 
 def _s8(v):
@@ -548,19 +549,114 @@ def _single_check(c, i, jt):
     return _Check("single", c, i, xF, v, 1, jt.entry_size, i + 2, i + 1 + _imm19(bc), 1)
 
 
-def _slow_call(c, k, limit=32):
-    """(word, type id) of the first call on the straight path from word k that receives a 64-bit constant in x0:
-    the slow path's bl __cfi_slowpath(_diag), or the blr of an inlined copy of it. (None, None) if none."""
+def _slow_call(codes, c, k, limit=32, hops=2):
+    """(code, word, type id) of the first call on the straight path from word k that receives a 64-bit constant
+    in x0 (built by movz/movn + movk): the slow path's bl __cfi_slowpath(_diag), or the blr of an inlined copy
+    of it.  Follows up to two unconditional b (slow paths often share their call).  None if there is none."""
+    W, end, h, x0 = c.w, k + limit, 0, None
+    while k < end and k < len(W):
+        w = W[k]
+        op = w & 0xff80001f
+        if op == 0xd2800000 or op == 0x92800000:                  # movz / movn x0
+            x0 = ((w >> 5) & 0xffff) << (16 * ((w >> 21) & 3))
+            if op == 0x92800000:
+                x0 = ~x0 & 0xffffffffffffffff
+        elif op == 0xf2800000:                                    # movk x0
+            if x0 is not None:
+                sh = 16 * ((w >> 21) & 3)
+                x0 = (x0 & ~(0xffff << sh)) | (((w >> 5) & 0xffff) << sh)
+        elif _is_bl(w) or w & 0xfffffc1f == 0xd63f0000:
+            if x0 is not None and x0 >> 32:
+                return c, k, x0
+            x0 = None
+        elif _is_b(w):
+            if h == hops:
+                return None
+            loc = _locate(codes, c.ea(k) + 4 * _imm26(w))
+            if loc is None:
+                return None
+            c, k = loc
+            W, end, h = c.w, k + limit, h + 1
+            continue
+        elif _ends_flow(w):
+            return None
+        elif 0 in _written(w):
+            x0 = None
+        k += 1
+    return None
+
+
+def _def_of(c, i, r, limit):
+    """Word that last wrote xr on the straight path before word i, or None."""
     W = c.w
-    for j in range(k, min(k + limit, len(W))):
+    for k in range(i - 1, max(i - limit, 0) - 1, -1):
+        w = W[k]
+        if _stops_walk(w, k, i):
+            return None
+        if r in _written(w):
+            return k
+    return None
+
+
+def _check_at_branch(c, j, slow_bl):
+    """A range check whose cmp; b.cond sit at words j-1, j, with the rotate and subtract anywhere before
+    (hoisted out of a loop, say).  The register holding the pointer comes from `mov x1, xR` on the slow path."""
+    W = c.w
+    if j < 1:
+        return None
+    q, bc = W[j - 1], W[j]
+    xT = (q >> 5) & 31
+    if q & 0xff80001f == 0xf100001f:
+        n = ((q >> 10) & 0xfff) << (12 if (q >> 22) & 1 else 0)
+    elif q & 0xffe0fc1f == 0xeb00001f:
+        n = _mov_imm(c, j - 1, (q >> 16) & 31)
+    else:
+        return None
+    r = _def_of(c, j - 1, xT, 400)
+    if n is None or r is None:
+        return None
+    ror = W[r]
+    xS = (ror >> 5) & 31
+    if ror & 0xffe00000 != 0x93c00000 or (ror >> 16) & 31 != xS or (ror >> 10) & 63 not in (2, 3):
+        return None
+    sb = _def_of(c, r, xS, 64)
+    if sb is None or W[sb] & 0xffe0fc00 != 0xcb000000:
+        return None
+    xF, xB = (W[sb] >> 5) & 31, (W[sb] >> 16) & 31
+    ptr = _x1_source(slow_bl[0], slow_bl[1])
+    if ptr is None:
+        ptr = xF if _def_of(c, j - 1, xF, j - sb) is None else None
+    if ptr is None or 31 in (xF, xB):
+        return None
+    cond = bc & 15
+    taken = j + _imm19(bc)
+    call_at, slow_at = (j + 1, taken) if cond in (2, 8) else (taken, j + 1)
+    chk = _Check("range", c, j - 1, ptr, _const_reg(c, sb, xB, 400), n + 1 if cond in (8, 9) else n,
+                 1 << ((ror >> 10) & 63), call_at, slow_at, cond)
+    return chk
+
+
+def _hoisted_check(c, k):
+    """For a slow-path call at word k that no parsed check owns: the check that branches to its block."""
+    W = c.w
+    start = fall = None
+    for j in range(k - 1, max(k - 24, 0) - 1, -1):
         w = W[j]
-        if _is_bl(w) or w & 0xfffffc1f == 0xd63f0000:
-            tid = _type_id_before(c, j)
-            if tid is not None:
-                return j, tid
-        elif _ends_flow(w) or _is_b(w):
+        if _is_bcond(w):
+            start, fall = j + 1, j
             break
-    return None, None
+        if _ends_flow(w) or _is_b(w):
+            start = j + 1
+            break
+    if start is None:
+        return None
+    if fall is not None:
+        return _check_at_branch(c, fall, (c, k)) if W[fall] & 15 in (3, 9) else None
+    for j in range(start - 1, max(start - 2048, 0) - 1, -1):
+        w = W[j]
+        if _is_bcond(w) and w & 15 in (2, 8) and j + _imm19(w) == start:
+            return _check_at_branch(c, j, (c, k))
+    return None
 
 
 def _bl_target(c, k):
@@ -628,17 +724,38 @@ def resolve_jump_table_cfi(ranges):
             chk = _single_check(c, m.start() >> 2, jt)
             if chk is not None:
                 checks.append(chk)
-    # The slow-path function (__cfi_slowpath or __cfi_slowpath_diag) is what the checks' slow paths call.
+    # Each check's slow path passes the 64-bit type id; the function most of them call is __cfi_slowpath(_diag).
     called = Counter()
     for chk in checks:
-        if 0 <= chk.slow_at < len(chk.code.w):
-            chk.slow_bl, chk.type_id = _slow_call(chk.code, chk.slow_at)
-        if chk.slow_bl is not None and _is_bl(chk.code.w[chk.slow_bl]):
-            called[_bl_target(chk.code, chk.slow_bl)] += 1
+        _slow_path(codes, chk)
+        if chk.slow_bl is not None and _is_bl(chk.slow_bl[0].w[chk.slow_bl[1]]):
+            called[_bl_target(*chk.slow_bl)] += 1
     top = max(called.values()) if called else 0
     slow_fns = {t for t, n in called.items() if 4 * n >= top}
     if not slow_fns:
         return None
+    all_calls, slow_calls = [], []
+    for c in codes:
+        all_calls.extend((c, m.start() >> 2) for m in _aligned(_BRANCH_REG, c.mem))
+        for m in _aligned(_BL, c.mem):
+            k = m.start() >> 2
+            if _bl_target(c, k) in slow_fns:
+                slow_calls.append((c, k))
+    # Slow-path calls no check owns: a check hoisted apart (rotate before a loop, compare inside), or a type
+    # with no function in this image, whose call goes to the slow path unconditionally.
+    owned = {(id(chk.slow_bl[0]), chk.slow_bl[1]) for chk in checks if chk.slow_bl is not None}
+    lone = []
+    for c, k in slow_calls:
+        if (id(c), k) in owned:
+            continue
+        chk = _hoisted_check(c, k)
+        if chk is not None:
+            _slow_path(codes, chk)
+            checks.append(chk)
+            if chk.slow_bl is not None:
+                owned.add((id(chk.slow_bl[0]), chk.slow_bl[1]))
+        if (id(c), k) not in owned:
+            lone.append((c, k))
     # Checks whose base register was not found: the same type id elsewhere names the range.
     base_of = defaultdict(set)
     for chk in checks:
@@ -647,69 +764,81 @@ def resolve_jump_table_cfi(ranges):
     for chk in checks:
         if chk.base is None and len(base_of.get(chk.type_id, ())) == 1:
             chk.base = next(iter(base_of[chk.type_id]))
-    # Link each check to the call it guards.
-    calls = {}                                     # (code id, word) -> check
+    # Link each check to the call it guards: forward along the straight path, then calls that reuse an earlier check.
+    guards = defaultdict(list)                     # (code id, word) -> checks guarding that call
+    where = {}
     for chk in checks:
         loc = _link_forward(codes, chk.code, chk.call_at, {chk.xF}) if 0 <= chk.call_at < len(chk.code.w) else None
         if loc is not None:
-            chk.calls.append(loc)
-            calls.setdefault((id(loc[0]), loc[1]), chk)
-    all_calls, slow_calls = [], []
-    for c in codes:
-        all_calls.extend((c, m.start() >> 2) for m in _aligned(_BRANCH_REG, c.mem))
-        for m in _aligned(_BL, c.mem):
-            k = m.start() >> 2
-            if _bl_target(c, k) in slow_fns:
-                slow_calls.append((c, k))
+            guards[(id(loc[0]), loc[1])].append(chk)
+            where[(id(loc[0]), loc[1])] = loc
     by_word = {(id(chk.code), chk.i): chk for chk in checks}
-    for c, k in all_calls:                         # a call after a check that guards an earlier call too
-        if (id(c), k) in calls:
+    for c, k in all_calls:
+        if (id(c), k) in guards:
             continue
         r = (c.w[k] >> 5) & 31
         W = c.w
         for j in range(k - 1, max(k - 160, 0) - 1, -1):
             chk = by_word.get((id(c), j))
             if chk is not None and chk.xF == r:
-                chk.calls.append((c, k))
-                calls[(id(c), k)] = chk
+                guards[(id(c), k)].append(chk)
+                where[(id(c), k)] = (c, k)
                 break
             w = W[j]
-            if _ends_flow(w) or _is_b(w) or w == _BTI_C or w == _PACIASP or r in _written(w):
+            if _stops_walk(w, j, k) or r in _written(w):
                 break
-    sites = []
+    sites, linked = [], set()
+    for key, chks in guards.items():
+        c, k = where[key]
+        chks.sort(key=lambda x: x.code.ea(x.i))
+        parts = [_check_site(jt, x, c.ea(k), not c.w[k] & 0x00200000) for x in chks]
+        site = parts[0]
+        if len(parts) > 1:                         # one call reached from several checks (calls merged by the compiler)
+            site.targets = sorted({t for p in parts for t in p.targets})
+            site.extra_checks = parts[1:]
+        sites.append(site)
+        linked.update(id(x) for x in chks)
+    sites.extend(_check_site(jt, x, 0, False) for x in checks if id(x) not in linked)
+    # A type id names one range: every parsed check of that id accepts the same entries.
+    ranges_of = defaultdict(set)
     for chk in checks:
-        cands = _candidates(jt, chk)
-        for cc, k in chk.calls or [(None, 0)]:
-            s = Site(chk.code.ea(chk.i), cc.ea(k) if cc else 0, chk.type_id or 0, 0,
-                     bool(cc) and not cc.w[k] & 0x00200000, sorted(set(cands or ())))
-            s.kind, s.type_id = chk.kind, chk.type_id
-            s.jt_base, s.jt_count = (chk.base or 0), chk.count
-            sites.append(s)
-    # Slow path only: the type has no function in this image's jump table (its targets can only be in modules).
-    own = {(id(chk.code), chk.slow_bl) for chk in checks if chk.slow_bl is not None}
-    for c, k in slow_calls:
-        if (id(c), k) in own:
-            continue
+        if chk.type_id is not None and _candidates(jt, chk) is not None:
+            ranges_of[chk.type_id].add((chk.base, chk.count))
+    lone_at = {}
+    for c, k in lone:
         tid = _type_id_before(c, k)
         r = _x1_source(c, k)
         loc = None
         if r is not None and r not in _CALLER_SAVED:
             loc = _link_forward(codes, c, k + 1, {r}, limit=24)
-            if loc is not None and (id(loc[0]), loc[1]) in calls:
+            if loc is not None and (id(loc[0]), loc[1]) in guards:
                 loc = None                         # an inline check already covers that call
         s = Site(c.ea(k), loc[0].ea(loc[1]) if loc else 0, tid or 0, 0,
                  bool(loc) and not loc[0].w[loc[1]] & 0x00200000)
         s.kind, s.type_id = "slowpath", tid
+        if len(ranges_of.get(tid, ())) == 1:
+            # The type has functions here, so an inline check exists that was not recognised; another check
+            # of the same id gives its entries.
+            s.jt_base, s.jt_count = next(iter(ranges_of[tid]))
+            first = jt.entry_index(s.jt_base)
+            s.targets = sorted(set(jt.targets[first:first + s.jt_count]))
+        prev = lone_at.get(s.call_ea) if s.call_ea else None
+        if prev is not None:                       # two slow-path calls before one call: one site
+            prev.extra_checks.append(s)
+            prev.targets = sorted(set(prev.targets) | set(s.targets))
+            continue
+        if s.call_ea:
+            lone_at[s.call_ea] = s
         sites.append(s)
     sites.sort(key=lambda s: (s.call_ea or s.check_ea, s.check_ea))
     counts = sorted(len(s.targets) for s in sites)
     n = len(sites)
     kinds = Counter(s.kind for s in sites)
-    resolved_calls = {s.call_ea for s in sites if s.call_ea and s.targets}
     stats = {
         "scheme": "jump-table CFI",
         "sites": n,
-        "hashes": len({s.type_id for s in sites if s.type_id is not None}),
+        "hashes": len({x.type_id for x in checks if x.type_id is not None} |
+                      {s.type_id for s in sites if s.type_id is not None}),
         "resolved": sum(1 for c in counts if c),
         "unresolved": sum(1 for c in counts if not c),
         "single_target": sum(1 for c in counts if c == 1),
@@ -721,11 +850,200 @@ def resolve_jump_table_cfi(ranges):
         "single_sites": kinds["single"],
         "slowpath_sites": kinds["slowpath"],
         "checks": len(checks),
-        "checks_without_range": sum(1 for chk in checks if _candidates(jt, chk) is None),
+        "checks_without_range": sum(1 for x in checks if _candidates(jt, x) is None),
+        "checks_without_call": sum(1 for s in sites if not s.call_ea and s.kind != "slowpath"),
         "indirect_calls": len(all_calls),
-        "calls_with_candidates": len(resolved_calls),
+        "calls_with_candidates": len({s.call_ea for s in sites if s.call_ea and s.targets}),
         "jump_table": {"start": "0x%x" % jt.start, "end": "0x%x" % jt.end,
                        "entries": len(jt.targets), "entry_size": jt.entry_size},
         "slowpath_functions": ["0x%x" % t for t in sorted(slow_fns)],
     }
     return sites, stats
+
+
+def _slow_path(codes, chk):
+    """Find the check's slow-path call and type id."""
+    chk.slow_bl = None
+    if not 0 <= chk.slow_at < len(chk.code.w):
+        return
+    found = _slow_call(codes, chk.code, chk.slow_at)
+    if found is not None:
+        chk.slow_bl, chk.type_id = (found[0], found[1]), found[2]
+
+
+def _check_site(jt, chk, call_ea, tail):
+    s = Site(chk.code.ea(chk.i), call_ea, chk.type_id or 0, 0, tail, sorted(set(_candidates(jt, chk) or ())))
+    s.kind, s.type_id = chk.kind, chk.type_id
+    s.jt_base, s.jt_count = chk.base or 0, chk.count
+    return s
+
+
+# ---- type names (jump-table CFI) ----
+
+_TYPEID_SYMBOL = re.compile(r"^__typeid_(_ZTS.+)_global_addr$")
+_BUILTIN = {"v": "void", "w": "wchar_t", "b": "bool", "c": "char", "a": "signed char", "h": "unsigned char",
+            "s": "short", "t": "unsigned short", "i": "int", "j": "unsigned int", "l": "long",
+            "m": "unsigned long", "x": "long long", "y": "unsigned long long", "n": "__int128",
+            "o": "unsigned __int128", "f": "float", "d": "double", "e": "long double", "g": "__float128",
+            "z": "..."}
+
+
+def cfi_type_id(mangled):
+    """The 64-bit cross-DSO CFI id of a mangled type name: the first 8 bytes of its MD5, little-endian."""
+    data = mangled.encode("utf-8")
+    try:
+        digest = hashlib.md5(data, usedforsecurity=False).digest()
+    except TypeError:                     # Python 3.8
+        digest = hashlib.md5(data).digest()
+    return int.from_bytes(digest[:8], "little")
+
+
+class _Demangler:
+    """Just enough of the Itanium C++ ABI for the C function types that Linux CFI hashes (_ZTSF...E)."""
+
+    def __init__(self, text):
+        self.s, self.p, self.subs = text, 0, []
+
+    def _peek(self):
+        return self.s[self.p:self.p + 1]
+
+    def _number(self):
+        start = self.p
+        while self._peek().isdigit():
+            self.p += 1
+        if start == self.p:
+            raise ValueError("number expected")
+        return int(self.s[start:self.p])
+
+    def type(self):
+        c = self._peek()
+        if not c:
+            raise ValueError("truncated")
+        if c in _BUILTIN:
+            self.p += 1
+            return ("name", _BUILTIN[c])
+        if c.isdigit() or self.s.startswith("St", self.p):      # a name, or std::name
+            prefix = ""
+            if c == "S":
+                self.p, prefix = self.p + 2, "std::"
+            n = self._number()
+            name = self.s[self.p:self.p + n]
+            if len(name) != n:
+                raise ValueError("truncated name")
+            self.p += n
+            t = ("name", prefix + name)
+        elif c == "P":
+            self.p += 1
+            t = ("ptr", self.type())
+        elif c in "rVK":
+            quals = []
+            for q, word in (("r", "restrict"), ("V", "volatile"), ("K", "const")):
+                if self._peek() == q:
+                    self.p += 1
+                    quals.append(word)
+            t = ("qual", " ".join(reversed(quals)), self.type())
+        elif c == "F":
+            self.p += 1
+            if self._peek() == "Y":
+                self.p += 1
+            ret, args = self.type(), []
+            while self._peek() != "E":
+                args.append(self.type())
+            self.p += 1
+            t = ("func", ret, args)
+        elif c == "A":
+            self.p += 1
+            n = self._number() if self._peek() != "_" else ""
+            if self._peek() != "_":
+                raise ValueError("array")
+            self.p += 1
+            t = ("array", str(n), self.type())
+        elif c == "S":
+            self.p += 1
+            if self._peek() == "_":
+                idx = 0
+            else:
+                start = self.p
+                while self._peek() and self._peek() != "_":
+                    self.p += 1
+                idx = int(self.s[start:self.p], 36) + 1
+            self.p += 1
+            return self.subs[idx]
+        else:
+            raise ValueError("unsupported %r" % c)
+        self.subs.append(t)
+        return t
+
+
+def _format_type(t, decl=""):
+    kind = t[0]
+    if kind == "name":
+        return t[1] + decl
+    if kind == "ptr":
+        inner = t[1]
+        if inner[0] in ("func", "array"):
+            return _format_type(inner, "(*" + decl + ")")
+        return _format_type(inner, "*" + decl)
+    if kind == "qual":
+        return _format_type(t[2], " " + t[1] + decl)
+    if kind == "func":
+        args = t[2]
+        if len(args) == 1 and args[0] == ("name", "void"):
+            args = []
+        text = ", ".join(_format_type(a) for a in args)
+        return _format_type(t[1], " " + decl + "(" + text + ")")
+    if kind == "array":
+        return _format_type(t[2], (" " + decl if decl else "") + " [" + t[1] + "]")
+    raise ValueError(kind)
+
+
+def demangle_type(mangled):
+    """'_ZTSFiP4fileiE' -> 'int (file*, int)' (c++filt's spelling); None if the name is outside the subset."""
+    if not mangled.startswith("_ZTS"):
+        return None
+    body, _, suffix = mangled[4:].partition(".")
+    try:
+        d = _Demangler(body)
+        t = d.type()
+        if d.p != len(body):
+            return None
+        text = _format_type(t)
+    except (ValueError, IndexError, RecursionError):
+        return None
+    return text + (" [%s]" % suffix if suffix else "")
+
+
+def name_jt_types(sites, symbols):
+    """Give jump-table CFI sites their type names from `__typeid_<mangled>_global_addr` symbols.
+
+    symbols: iterable of (address, name).  The id in a slow path is MD5 of the mangled name; a check whose slow
+    path was not read is named by the symbol at its first entry.  Returns the number of named checks."""
+    by_id, by_ea = {}, {}
+    for ea, name in symbols:
+        m = _TYPEID_SYMBOL.match(name)
+        if m:
+            by_id[cfi_type_id(m.group(1))] = m.group(1)
+            by_ea.setdefault(ea, m.group(1))
+    named = 0
+    for s in sites:
+        for x in [s] + list(s.extra_checks):
+            if x.kind == "kcfi":
+                continue
+            mangled = by_id.get(x.type_id) if x.type_id is not None else None
+            if mangled is None and x.type_id is None and x.kind != "slowpath" and x.jt_base in by_ea:
+                mangled = by_ea[x.jt_base]
+                x.type_id = x.hash = cfi_type_id(mangled)
+            if mangled:
+                x.type_mangled, x.type_name = mangled, demangle_type(mangled) or mangled
+                named += 1
+    return named
+
+
+def type_label(site):
+    """The type(s) a jump-table CFI site checks: names when known, else 64-bit ids; '' if unknown."""
+    out = []
+    for x in [site] + list(site.extra_checks):
+        text = x.type_name or ("type id 0x%016x" % x.type_id if x.type_id is not None else "")
+        if text and text not in out:
+            out.append(text)
+    return " | ".join(out)
