@@ -160,6 +160,15 @@ class IdaLayer(unittest.TestCase):
         self.assertIn("int (file*, int)", il.targets_title(lo))
         rows = il.callers_rows(sites, shift(truth["symbols"]["g_one"]))
         self.assertEqual([r[0] for r in rows], [shift(truth["sites"][4]["call"])])
+        # On a jump-table entry (where pointers to the function point), callers are those of the function itself.
+        self.assertEqual(il.callers_rows(sites, shift(truth["symbols"]["g_one.cfi_jt"])), rows)
+        self.assertEqual(il.callers_rows(sites, shift(truth["symbols"]["f_a.cfi_jt"])),
+                         il.callers_rows(sites, shift(truth["symbols"]["f_a"])))
+        self.assertEqual(len(il.callers_rows(sites, shift(truth["symbols"]["f_a.cfi_jt"]))), 4)
+        # The cursor exactly on a call (or check) always selects that site, even inside another site's span.
+        for s in sites:
+            if s.call_ea:
+                self.assertIs(il.site_at(sites, s.call_ea), s)
         self.assertEqual(il.remove_annotations(sites), res["xrefs"])
         self.assertEqual(w.cmts, {}); self.assertEqual(w.crefs, set())
 

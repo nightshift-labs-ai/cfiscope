@@ -77,13 +77,19 @@ def typeid_names():
     return out
 
 
+JT = {"table": None}   # the jump table of the last jump-table CFI scan
+
+
 def scan():
     arch = current_arch()
     if arch is None:
         raise RuntimeError("CFIScope supports 64-bit x86 and AArch64 databases only.")
-    sites, stats = core.resolve(code_ranges(), arch)
+    ranges = code_ranges()
+    sites, stats = core.resolve(ranges, arch)
+    JT["table"] = None
     if stats.get("scheme") == "jump-table CFI":
         stats = dict(stats, named_types=core.name_jt_types(sites, typeid_names()))
+        JT["table"] = core.find_jump_table(ranges)    # so that a foo.cfi_jt entry can stand for foo (callers_rows)
     return sites, stats
 
 
@@ -234,17 +240,21 @@ class Chooser(ida_kernwin.Choose):
 
 
 def site_at(sites, ea):
+    """The site whose call or check is at ea; else the narrowest check-to-call span holding ea; else the nearest
+    check in the same function. (A jump-table CFI call can sit before its check, or far from it.)"""
     func = ida_funcs.get_func(ea)
-    best = None
+    span = near = None
     for s in sites:
-        lo = min(s.check_ea, s.call_ea or s.check_ea)      # a jump-table CFI call can sit before its check (b.lo)
-        end = max(s.check_ea, s.call_ea or s.check_ea) + 4
-        if lo <= ea < end:
+        if ea == s.call_ea or ea == s.check_ea:
             return s
+        lo = min(s.check_ea, s.call_ea or s.check_ea)
+        end = max(s.check_ea, s.call_ea or s.check_ea) + 4
+        if lo <= ea < end and (span is None or end - lo < span[0]):
+            span = (end - lo, s)
         if func is not None and func.start_ea <= s.check_ea < func.end_ea:
-            if best is None or abs(s.check_ea - ea) < abs(best.check_ea - ea):
-                best = s
-    return best
+            if near is None or abs(s.check_ea - ea) < abs(near.check_ea - ea):
+                near = s
+    return span[1] if span else near
 
 
 def targets_title(site):
@@ -260,6 +270,12 @@ def targets_rows(site):
 
 
 def callers_rows(sites, ea):
+    jt = JT["table"]
+    if jt is not None and jt.start <= ea < jt.end:
+        # A jump-table entry (foo.cfi_jt): every pointer to foo points here, so answer for foo itself.
+        target = jt.targets[(ea - jt.start) // jt.entry_size]
+        if not jt.start <= target < jt.end:
+            ea = target
     func = ida_funcs.get_func(ea)
     # The kCFI target may sit inside IDA's function (e.g. after a __cfi_ preamble IDA merged in),
     # so accept the cursor address, the function start, or any target inside the function.
