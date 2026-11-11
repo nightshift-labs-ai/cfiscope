@@ -182,6 +182,7 @@ Measured on `gki-certified-boot-android13-5.15-2024-01_r1` ([zip](https://dl.goo
 |---|---|
 | Jump table found from the code alone | 33,773 entries; same bounds as `__cfi_jt_start` / `__cfi_jt_end` |
 | `blr` in kernel text (`_stext`..`_etext` without the jump table, plus init text) with candidates | 14,000 of 21,738 (64.4%) |
+| The same, leaving out the CFI runtime's own 1,015 calls into a module's `__cfi_check` | 14,000 of 20,723 (67.6%) |
 | Candidates per resolved `blr` | median 6, mean 29.2, largest 1,310; exactly one: 2,142 |
 | Distinct candidates that start exactly at a kallsyms function | 24,912 of 24,912 |
 | Jump-table entries used whose name matches the target (`foo.cfi_jt` branches to `foo`) | 24,912 of 24,912 |
