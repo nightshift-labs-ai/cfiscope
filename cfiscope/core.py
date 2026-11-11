@@ -793,7 +793,12 @@ def resolve_jump_table_cfi(ranges):
     for key, chks in guards.items():
         c, k = where[key]
         chks.sort(key=lambda x: x.code.ea(x.i))
-        parts = [_check_site(jt, x, c.ea(k), not c.w[k] & 0x00200000) for x in chks]
+        parts, seen = [], set()
+        for x in chks:                             # the same check can be found twice (forward and from its slow path)
+            p = _check_site(jt, x, c.ea(k), not c.w[k] & 0x00200000)
+            if (p.kind, p.jt_base, p.jt_count, p.type_id) not in seen:
+                seen.add((p.kind, p.jt_base, p.jt_count, p.type_id))
+                parts.append(p)
         site = parts[0]
         if len(parts) > 1:                         # one call reached from several checks (calls merged by the compiler)
             site.targets = sorted({t for p in parts for t in p.targets})

@@ -177,7 +177,7 @@ Measured on `gki-certified-boot-android13-5.15-2024-01_r1` ([zip](https://dl.goo
 | Candidates per resolved `blr` | median 6, mean 29.2, largest 1,310; exactly one: 2,142 |
 | Distinct candidates that start exactly at a kallsyms function | 24,912 of 24,912 |
 | Jump-table entries used whose name matches the target (`foo.cfi_jt` branches to `foo`) | 24,912 of 24,912 |
-| Checks whose first entry is the `__typeid` symbol of the id their own slow path passes | range 12,076 of 12,076; single 2,155 of 2,155 |
+| Checks whose first entry is the `__typeid` symbol of the id their own slow path passes | range 11,880 of 11,880; single 2,146 of 2,146 |
 | Linked check and call in the same function | 15,953 of 15,953 |
 | Type names equal to `c++filt` | 2,777 of 2,777 |
 
