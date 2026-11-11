@@ -34,6 +34,7 @@ class Site:
     jt_base: int = 0       # first jump-table entry the check accepts
     jt_count: int = 0      # number of entries it accepts
     extra_checks: list = field(default_factory=list)   # other checks guarding the same call (their own Sites)
+    note: str = None       # caveat for the user, e.g. a slow-path-only site whose type does have functions here
 
 
 def _s8(v):
@@ -664,14 +665,15 @@ def _bl_target(c, k):
 
 
 def _link_forward(codes, c, k, regs, limit=48, hops=2):
-    """First blr/br of a register in regs (or a mov copy of it) on the straight path from word k."""
+    """(code, word, b followed) of the first blr/br of a register in regs (or a mov copy of it) on the
+    straight path from word k, following up to `hops` unconditional b; None if there is none."""
     regs = set(regs)
     W, end, h = c.w, k + limit, 0
     while k < end and k < len(W):
         w = W[k]
         if w & 0xffdffc1f == 0xd61f0000:                 # br / blr xN
             if (w >> 5) & 31 in regs:
-                return c, k
+                return c, k, h
             if not w & 0x00200000:
                 return None                              # br elsewhere: the path ends
         if _is_b(w):
@@ -771,7 +773,7 @@ def resolve_jump_table_cfi(ranges):
         loc = _link_forward(codes, chk.code, chk.call_at, {chk.xF}) if 0 <= chk.call_at < len(chk.code.w) else None
         if loc is not None:
             guards[(id(loc[0]), loc[1])].append(chk)
-            where[(id(loc[0]), loc[1])] = loc
+            where[(id(loc[0]), loc[1])] = loc[:2]
     by_word = {(id(chk.code), chk.i): chk for chk in checks}
     for c, k in all_calls:
         if (id(c), k) in guards:
@@ -804,31 +806,47 @@ def resolve_jump_table_cfi(ranges):
     for chk in checks:
         if chk.type_id is not None and _candidates(jt, chk) is not None:
             ranges_of[chk.type_id].add((chk.base, chk.count))
-    lone_at = {}
-    for c, k in lone:
-        tid = _type_id_before(c, k)
+    # Calls reached only through the slow path ("slowpath": no candidate in this image, the pointer failed or
+    # skipped the in-image check, so only module functions of the type remain): a type with no function here, or a
+    # copy of the call that the compiler placed right after the slow-path call.
+    owner = {}
+    for chk in checks:
+        if chk.slow_bl is not None:
+            owner.setdefault((id(chk.slow_bl[0]), chk.slow_bl[1]), chk)
+    by_call = {}
+    for c, k in slow_calls:
+        chk = owner.get((id(c), k))
+        tid = chk.type_id if chk is not None else _type_id_before(c, k)
         r = _x1_source(c, k)
-        loc = None
-        if r is not None and r not in _CALLER_SAVED:
-            loc = _link_forward(codes, c, k + 1, {r}, limit=24)
-            if loc is not None and (id(loc[0]), loc[1]) in guards:
-                loc = None                         # an inline check already covers that call
-        s = Site(c.ea(k), loc[0].ea(loc[1]) if loc else 0, tid or 0, 0,
-                 bool(loc) and not loc[0].w[loc[1]] & 0x00200000)
+        loc = _link_forward(codes, c, k + 1, {r}, limit=24) if r is not None and r not in _CALLER_SAVED else None
+        if loc is not None and (id(loc[0]), loc[1]) in guards:
+            continue                               # the slow path rejoins a call whose inline check was read
+        if chk is not None and (loc is None or loc[2] or id(chk) not in linked):
+            continue                               # an inline check's slow path that rejoins nothing we can follow
+        s = Site(c.ea(k), 0, tid or 0, 0)
         s.kind, s.type_id = "slowpath", tid
-        if len(ranges_of.get(tid, ())) == 1:
-            # The type has functions here, so an inline check exists that was not recognised; another check
-            # of the same id gives its entries.
-            s.jt_base, s.jt_count = next(iter(ranges_of[tid]))
-            first = jt.entry_index(s.jt_base)
-            s.targets = sorted(set(jt.targets[first:first + s.jt_count]))
-        prev = lone_at.get(s.call_ea) if s.call_ea else None
+        if chk is not None:
+            s.note = ("call copy on the slow path of the check at 0x%x: reached only when the pointer is not one "
+                      "of this image's functions of the type" % chk.code.ea(chk.i))
+        elif tid in ranges_of:
+            s.note = ("this type has functions in this image (another check names them), so an inline check "
+                      "was probably not decoded: candidates unknown")
+        if loc is not None:
+            s.call_ea, s.is_tail = loc[0].ea(loc[1]), not loc[0].w[loc[1]] & 0x00200000
+            if loc[2] and chk is None and len(ranges_of.get(tid, ())) == 1:
+                # It jumps back to a call that an inline check of this type guards, one this scanner did not
+                # decode; the type has functions here, and another check of the same id gives their entries.
+                s.jt_base, s.jt_count = next(iter(ranges_of[tid]))
+                s.kind = "range" if s.jt_count > 1 else "single"
+                first = jt.entry_index(s.jt_base)
+                s.targets = sorted(set(jt.targets[first:first + s.jt_count]))
+        prev = by_call.get(s.call_ea) if s.call_ea else None
         if prev is not None:                       # two slow-path calls before one call: one site
             prev.extra_checks.append(s)
             prev.targets = sorted(set(prev.targets) | set(s.targets))
             continue
         if s.call_ea:
-            lone_at[s.call_ea] = s
+            by_call[s.call_ea] = s
         sites.append(s)
     sites.sort(key=lambda s: (s.call_ea or s.check_ea, s.check_ea))
     counts = sorted(len(s.targets) for s in sites)
@@ -1036,6 +1054,9 @@ def name_jt_types(sites, symbols):
             if mangled:
                 x.type_mangled, x.type_name = mangled, demangle_type(mangled) or mangled
                 named += 1
+                if x.kind == "slowpath" and not x.targets and x.note is None:
+                    x.note = ("this type has functions in this image (it has a __typeid symbol), so an inline "
+                              "check was probably not decoded: candidates unknown")
     return named
 
 

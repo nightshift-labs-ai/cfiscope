@@ -17,7 +17,7 @@ import json
 import struct
 import sys
 
-from .core import resolve
+from .core import name_jt_types, resolve, type_label
 
 EM_X86_64, EM_AARCH64 = 62, 183
 ARCH_BY_MACHINE = {EM_X86_64: "x86_64", EM_AARCH64: "aarch64"}
@@ -40,8 +40,9 @@ def _sections(d):
     return [struct.unpack_from("<IIQQQQIIQQ", d, shoff + 64 * i) for i in range(shnum)]
 
 
-def _function_symbols(d, secs, place):
-    """Return {address: name} for STT_FUNC symbols; place(shndx, value) -> address or None."""
+def _function_symbols(d, secs, place, every=None):
+    """Return {address: name} for STT_FUNC symbols; place(shndx, value) -> address or None.
+    every, if a list, also receives each (address, name), several names per address included."""
     names = {}
     for s in secs:
         if s[1] != SHT_SYMTAB or s[6] >= len(secs):
@@ -61,12 +62,15 @@ def _function_symbols(d, secs, place):
             end = d.find(b"\0", start)
             if end < 0:
                 continue
-            names.setdefault(ea, d[start:end].decode("utf-8", "replace"))
+            name = d[start:end].decode("utf-8", "replace")
+            names.setdefault(ea, name)
+            if every is not None:
+                every.append((ea, name))
     return names
 
 
-def load_elf(d):
-    """Return (arch, ranges, symbols) from a 64-bit little-endian ELF."""
+def load_elf(d, every=None):
+    """Return (arch, ranges, symbols) from a 64-bit little-endian ELF (every: see _function_symbols)."""
     if len(d) < 64 or d[:4] != b"\x7fELF":
         raise InputError("not an ELF file (use --raw for a raw kernel image)")
     if d[4] != 2 or d[5] != 1:
@@ -111,7 +115,7 @@ def load_elf(d):
             return value or None
     if not ranges:
         raise InputError("no executable code found in the ELF")
-    return arch, ranges, _function_symbols(d, secs, place)
+    return arch, ranges, _function_symbols(d, secs, place, every)
 
 
 class Names:
@@ -145,7 +149,7 @@ def parse_target(text, names):
 
 
 def _site_dict(s, names, limit):
-    return {
+    out = {
         "call": "0x%x" % s.call_ea if s.call_ea else None,
         "check": "0x%x" % s.check_ea,
         "in": names(s.call_ea or s.check_ea),
@@ -153,6 +157,23 @@ def _site_dict(s, names, limit):
         "tail_call": s.is_tail,
         "candidates": len(s.targets),
         "targets": [{"ea": "0x%x" % t, "name": names(t)} for t in s.targets[:limit]],
+    }
+    if s.kind != "kcfi":     # jump-table CFI: the hash is the 64-bit type id
+        out["hash"] = "0x%016x" % s.type_id if s.type_id is not None else None
+        out.update(_jt_dict(s))
+        if s.extra_checks:
+            out["other_checks"] = [dict(check="0x%x" % x.check_ea, **_jt_dict(x)) for x in s.extra_checks]
+    return out
+
+
+def _jt_dict(s):
+    return {
+        "kind": s.kind,
+        "type_id": "0x%016x" % s.type_id if s.type_id is not None else None,
+        "type": s.type_name,
+        "type_mangled": s.type_mangled,
+        "jump_table_range": ["0x%x" % s.jt_base, s.jt_count] if s.jt_count and s.jt_base else None,
+        "note": s.note,
     }
 
 
@@ -165,14 +186,38 @@ def _site_line(s, names, limit):
     shown = ", ".join(names(t) for t in s.targets[:limit])
     more = " ..." if len(s.targets) > limit else ""
     kind = "jump" if s.is_tail else "call"
+    if s.kind != "kcfi":
+        kind = "%s %s" % (kind if s.call_ea else "check (call not linked)", s.kind)
+        if s.kind == "slowpath" and not s.targets:
+            count = "no candidate in this image (%s)" % (s.note or "module functions only")
+        else:
+            count = "%d candidate(s)" % len(s.targets)
+        return "%s  %-40s %s %s  %s%s%s" % (
+            where, names(s.call_ea or s.check_ea), kind, type_label(s) or "type unknown", count,
+            ": " if shown else "", shown + more)
     return "%s  %-40s %s hash 0x%08x  %d candidate(s)%s%s" % (
         where, names(s.call_ea or s.check_ea), kind, s.hash, len(s.targets),
         ": " if shown else "", shown + more)
 
 
+def _print_jt_summary(st):
+    jt = st["jump_table"]
+    print("arch %s, %d named functions" % (st["arch"], st["named_functions"]))
+    print("Linux 5.x jump-table CFI: jump table %s-%s, %d entries of %d bytes"
+          % (jt["start"], jt["end"], jt["entries"], jt["entry_size"]))
+    print("checked sites %d: range checks %d, single-member checks %d, slow path only %d (type ids %d, named %d)"
+          % (st["sites"], st["range_sites"], st["single_sites"], st["slowpath_sites"], st["hashes"],
+             st.get("named_types", 0)))
+    print("indirect calls (blr/br) %d, with candidates %d" % (st["indirect_calls"], st["calls_with_candidates"]))
+    print("sites with candidates %d, none %d, exactly one %d" % (st["resolved"], st["unresolved"], st["single_target"]))
+    print("median candidates per site with candidates %d (over all sites %d), max %d"
+          % (st["median_candidates_resolved"], st["median_candidates"], st["max_candidates"]))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="python3 -m cfiscope",
-                                 description="Resolve kCFI indirect calls in a kernel image without IDA.")
+                                 description="Resolve kCFI (and aarch64 Linux 5.x jump-table CFI) indirect calls "
+                                             "in a kernel image without IDA.")
     ap.add_argument("input", help="ELF (vmlinux, .o, .ko) or, with --raw, a raw kernel image")
     ap.add_argument("--raw", action="store_true", help="input is raw code bytes (needs --arch and --base)")
     ap.add_argument("--arch", choices=["x86_64", "aarch64"], help="architecture for --raw")
@@ -192,12 +237,15 @@ def main(argv=None):
         if a.raw:
             if a.arch is None or a.base is None:
                 raise InputError("--raw needs --arch and --base")
-            arch, ranges, symbols = a.arch, [(a.base, data)], {}
+            arch, ranges, symbols, every = a.arch, [(a.base, data)], {}, []
         else:
-            arch, ranges, symbols = load_elf(data)
+            every = []
+            arch, ranges, symbols = load_elf(data, every)
         names = Names(symbols)
         sites, stats = resolve(ranges, arch)
         stats = dict(stats, arch=arch, named_functions=len(symbols))
+        if stats.get("scheme") == "jump-table CFI":
+            stats["named_types"] = name_jt_types(sites, every)
         if a.callers or a.targets:
             want = parse_target(a.callers or a.targets, names)
     except (OSError, InputError, ValueError, OverflowError, struct.error) as e:
@@ -213,7 +261,8 @@ def main(argv=None):
     elif a.targets:
         chosen = [s for s in sites if want & {s.call_ea, s.check_ea}]
         if not chosen:
-            print("cfiscope: no kCFI check or call at %s" % a.targets, file=sys.stderr)
+            print("cfiscope: no %s check or call at %s"
+                  % ("CFI" if stats.get("scheme") else "kCFI", a.targets), file=sys.stderr)
             return 1
         header = "candidates for the site at %s" % a.targets
     elif a.sites:
@@ -229,6 +278,9 @@ def main(argv=None):
         json.dump(out, sys.stdout, indent=1)
         print()
         return 0
+    if chosen is None and stats.get("scheme") == "jump-table CFI":
+        _print_jt_summary(stats)
+        return 0
     if chosen is None:
         st = stats
         print("arch %s, %d named functions" % (st["arch"], st["named_functions"]))
@@ -238,12 +290,13 @@ def main(argv=None):
               % (st["median_candidates_resolved"], st["median_candidates"], st["max_candidates"]))
         if not st["sites"] and any(m in data for m in OLD_CFI_MARKERS):
             print("no kCFI checks found: this kernel uses the older jump-table Clang CFI of Linux 5.x "
-                  "(it contains .cfi_jt / __cfi_check), as Android 12/13 GKI 5.10/5.15 do; CFIScope reads only "
-                  "kCFI (CONFIG_CFI_CLANG on Linux 6.1 or later)")
+                  "(it contains .cfi_jt / __cfi_check), but CFIScope found no aarch64 jump table of 8-byte "
+                  "`bti c; b` entries with checks that use it; it reads that form (as in Android 13 GKI 5.15), "
+                  "not x86-64 or jump tables without BTI")
         elif not st["sites"]:
             print("no kCFI checks found: this kernel was probably built without Clang kCFI "
-                  "(CONFIG_CFI_CLANG on Linux 6.1 or later), for example by GCC, or by Clang with the older "
-                  "jump-table CFI of Linux 5.x (Android 12/13 GKI 5.10/5.15), which CFIScope does not read"
+                  "(CONFIG_CFI_CLANG on Linux 6.1 or later), for example by GCC; no aarch64 jump-table CFI "
+                  "of Linux 5.x (Android 12/13 GKI) was found either"
                   + (", or --arch/--base is wrong" if a.raw else ""))
         return 0
     if header:
