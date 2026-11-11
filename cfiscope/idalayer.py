@@ -77,7 +77,7 @@ def typeid_names():
     return out
 
 
-JT = {"table": None}   # the jump table of the last jump-table CFI scan
+JT = {"table": None, "entry_of": {}}   # the last jump-table CFI scan: its jump table, target -> first entry
 
 
 def scan():
@@ -90,6 +90,8 @@ def scan():
     if stats.get("scheme") == "jump-table CFI":
         stats = dict(stats, named_checks=core.name_jt_types(sites, typeid_names()))
         JT["table"] = core.find_jump_table(ranges)    # so that a foo.cfi_jt entry can stand for foo (callers_rows)
+    jt = JT["table"]
+    JT["entry_of"] = {} if jt is None else {t: jt.start + k * jt.entry_size for k, t in reversed(list(enumerate(jt.targets)))}
     return sites, stats
 
 
@@ -100,6 +102,12 @@ def scheme_name(sites):
 
 def is_address_taken(ea):
     return ida_xref.get_first_dref_to(ea) != BADADDR
+
+
+def pointer_taken(site, target):
+    """Is target's address stored anywhere? With jump-table CFI, pointers to foo point at its entry foo.cfi_jt."""
+    entry = JT["entry_of"].get(target) if getattr(site, "kind", "kcfi") != "kcfi" else None
+    return (entry is not None and is_address_taken(entry)) or is_address_taken(target)
 
 
 def target_name(ea):
@@ -117,7 +125,7 @@ def target_name(ea):
 
 def ranked(site):
     """Address-taken candidates first: only they can really be stored in a pointer."""
-    return sorted(site.targets, key=lambda t: (not is_address_taken(t), t))
+    return sorted(site.targets, key=lambda t: (not pointer_taken(site, t), t))
 
 
 def _jt_describe(site, targets):
@@ -265,7 +273,7 @@ def targets_title(site):
 
 
 def targets_rows(site):
-    return [(t, target_name(t), "address taken" if is_address_taken(t) else "")
+    return [(t, target_name(t), "address taken" if pointer_taken(site, t) else "")
             for t in ranked(site)]
 
 

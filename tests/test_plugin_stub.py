@@ -160,6 +160,12 @@ class IdaLayer(unittest.TestCase):
         self.assertIn("int (file*, int)", il.targets_title(lo))
         rows = il.callers_rows(sites, shift(truth["symbols"]["g_one"]))
         self.assertEqual([r[0] for r in rows], [shift(truth["sites"][4]["call"])])
+        # Candidates whose jump-table entry is referenced as data rank first and are marked "address taken".
+        hs = by_call[shift(truth["sites"][0]["call"])]
+        w.drefs.add(shift(truth["symbols"]["f_c.cfi_jt"]))
+        self.assertEqual(il.ranked(hs)[0], shift(truth["symbols"]["f_c"]))
+        self.assertEqual([r[2] for r in il.targets_rows(hs)], ["address taken", "", ""])
+        w.drefs.discard(shift(truth["symbols"]["f_c.cfi_jt"]))
         # On a jump-table entry (where pointers to the function point), callers are those of the function itself.
         self.assertEqual(il.callers_rows(sites, shift(truth["symbols"]["g_one.cfi_jt"])), rows)
         self.assertEqual(il.callers_rows(sites, shift(truth["symbols"]["f_a.cfi_jt"])),
