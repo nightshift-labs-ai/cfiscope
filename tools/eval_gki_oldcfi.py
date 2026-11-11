@@ -194,6 +194,12 @@ print("unresolved blr in kernel text: %d" % sum(split.values()))
 for key, n in sorted(split.items(), key=lambda kv: -kv[1]):
     print("  %5d  %s" % (n, key))
 runtime = sum(n for key, n in split.items() if key.startswith("inlined CFI slow path"))
+# The scanner finds the runtime's calls without symbols, as the blr of a decoded check's inlined slow path.
+found_rt = {x.runtime_call_ea for t in sites for x in [t] + t.extra_checks if x.runtime_call_ea}
+sym_rt = {a for a in blr - {s.call_ea for s in resolved} if find_check is not None
+          and any(is_bl(p, find_check) for p in range(a - 4, max(fn(a), a - 64) - 4, -4))}
+print("CFI runtime calls found from the code (inlined slow paths of decoded checks): %d; in the symbol-based bucket: %s;"
+      " found but not in it: %d" % (len(found_rt), pct(len(found_rt & sym_rt), len(sym_rt)), len(found_rt - sym_rt)))
 print("blr in kernel text resolved, leaving out the CFI runtime's own calls: %s" % pct(len(rb), len(blr) - runtime))
 
 named = core.name_jt_types(sites, [(a, n) for a, n, _ in syms])
