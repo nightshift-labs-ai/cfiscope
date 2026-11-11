@@ -3,7 +3,7 @@
 
     python3 tools/cfiscope_headless.py <vmlinux, Image or .ko> [--no-analysis] [--define-functions] [--remove]
 
-Opens the file as an IDA database and does what CFIScope: Scan kCFI calls does: a comment at every checked call
+Opens the file as an IDA database and does what CFIScope: Scan kCFI calls does (kCFI, or the aarch64 jump-table CFI of Linux 5.x): a comment at every checked call
 and user xrefs to short candidate lists. --define-functions also creates functions at candidates IDA has not
 recognised; --remove takes CFIScope's comments and xrefs out again. Prints the same statistics and saves the
 database. It calls the plugin's own cfiscope.idalayer functions. Hex-Rays pseudocode comments are a display
@@ -53,7 +53,8 @@ def main(argv=None):
             print("[CFIScope] xrefs removed: %d" % idalayer.remove_annotations(sites))
             return 0
         if not sites:
-            print("[CFIScope] no kCFI checks found: this binary may not be built with -fsanitize=kcfi (Linux 6.1+ CONFIG_CFI_CLANG)")
+            print("[CFIScope] no kCFI checks found, and no aarch64 jump-table CFI either: this binary may not be built with "
+                  "-fsanitize=kcfi (Linux 6.1+ CONFIG_CFI_CLANG) or with the jump-table CFI of Linux 5.x (aarch64 only)")
             return 0
         print("[CFIScope] %s" % json.dumps(idalayer.annotate(sites)))
         if args.define_functions:
