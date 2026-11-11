@@ -5,7 +5,7 @@
     "entryPoint": "cfiscope_entry.py",
     "version": "0.1.17",
     "idaVersions": ">=9.0",
-    "description": "Resolve indirect calls in Linux and Android kernels built with kCFI: matches the type hash at each call site to the hash in front of every function, then comments, cross-references and lists the candidates. Also reads the older Linux 5.x jump-table CFI on aarch64 (Android 12/13 GKI).",
+    "description": "Resolve indirect calls in Linux and Android kernels built with kCFI: matches the type hash at each call site to the hash in front of every function, then comments, cross-references and lists the candidates. Also reads the older Linux 5.x jump-table CFI on aarch64 (Android 12/13 GKI). Not yet run in real IDA.",
     "license": "MIT",
     "categories": [
       "api-scripting-and-automation"
