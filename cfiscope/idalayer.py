@@ -40,6 +40,12 @@ def code_ranges():
     return out
 
 
+def layout():
+    """Segment bounds; if they change (for example after Edit > Segments > Rebase program), cached sites are stale."""
+    segments = [ida_segment.getnseg(i) for i in range(ida_segment.get_segm_qty())]
+    return tuple((seg.start_ea, seg.end_ea) for seg in segments if seg is not None)
+
+
 def scan():
     arch = current_arch()
     if arch is None:
@@ -52,7 +58,16 @@ def is_address_taken(ea):
 
 
 def target_name(ea):
-    return ida_funcs.get_func_name(ea) or ida_name.get_ea_name(ea) or "0x%x" % ea
+    """Name of the address itself; if it has none, the containing function plus an offset."""
+    name = ida_name.get_ea_name(ea)
+    if name:
+        return name
+    func = ida_funcs.get_func(ea)
+    if func is not None:
+        fname = ida_funcs.get_func_name(func.start_ea)
+        if fname:
+            return fname if func.start_ea == ea else "%s+0x%x" % (fname, ea - func.start_ea)
+    return "0x%x" % ea
 
 
 def ranked(site):
@@ -152,10 +167,12 @@ def targets_rows(site):
 
 def callers_rows(sites, ea):
     func = ida_funcs.get_func(ea)
-    start = func.start_ea if func is not None else ea
+    # The kCFI target may sit inside IDA's function (e.g. after a __cfi_ preamble IDA merged in),
+    # so accept the cursor address, the function start, or any target inside the function.
+    lo, hi = (func.start_ea, func.end_ea) if func is not None else (ea, ea + 1)
     rows = []
     for s in sites:
-        if start in s.targets:
+        if ea in s.targets or any(lo <= t < hi for t in s.targets):
             at = s.call_ea or s.check_ea
             rows.append((at, target_name(at), "%d candidate(s)" % len(s.targets)))
     return rows

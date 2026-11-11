@@ -34,13 +34,15 @@ def main():
     # Name collisions between static functions make names ambiguous, so go from each __cfi_ symbol to
     # its function by distance: usually 16 bytes (padded preamble), sometimes 5 (no padding).
     cfi = []
-    text = {}
+    text, weak = {}, {}
     for line in open(sys.argv[2]):
         addr, kind, name = line.split()[:3]
         if name.startswith("__cfi_"):
             cfi.append((int(addr, 16), name[6:]))
         elif kind in "tT":
             text.setdefault(int(addr, 16), []).append(name)
+        elif kind in "wW":
+            weak.setdefault(int(addr, 16), []).append(name)
     truth = set()
     unplaced = 0
     for a, n in cfi:
@@ -64,7 +66,11 @@ def main():
     print("__cfi_ functions found as targets: %d (%.2f%%)" % (hit, 100 * hit / max(1, len(truth))))
     extra = sorted(targets - truth)
     named = sum(1 for t in extra if t in text)
-    print("other targets: %d, of which at a named text symbol %d, not at any symbol %d" % (len(extra), named, len(extra) - named))
+    weak_n = sum(1 for t in extra if t not in text and t in weak)
+    print("other targets: %d, of which at a named text symbol %d, at a weak symbol %d, not at any symbol %d"
+          % (len(extra), named, weak_n, len(extra) - named - weak_n))
+    print("median candidates per site with candidates", stats["median_candidates_resolved"],
+          "(over all sites %d)" % stats["median_candidates"])
     print("sites with a recognised call:", sum(1 for s in sites if s.call_ea), "of", len(sites))
 
 

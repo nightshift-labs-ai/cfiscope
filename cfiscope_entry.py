@@ -19,18 +19,22 @@ if HERE not in sys.path:
 
 from cfiscope import __version__, idalayer  # noqa: E402
 
-STATE = {"sites": None, "stats": None}
+STATE = {"sites": None, "stats": None, "layout": None}
 
 
 def ensure_scan():
+    if STATE["sites"] is not None and STATE["layout"] != idalayer.layout():
+        report("segments changed since the last scan (rebase?): scanning again")
+        STATE["sites"] = None
     if STATE["sites"] is None:
+        STATE["layout"] = idalayer.layout()
         STATE["sites"], STATE["stats"] = idalayer.scan()
     return STATE["sites"]
 
 
 def scan_or_warn():
     """Run the scan once behind a wait box, or show the plugin's own warning (unsupported database) and return None."""
-    if STATE["sites"] is not None:
+    if STATE["sites"] is not None and STATE["layout"] == idalayer.layout():
         return STATE["sites"]
     problem = None
     sites = None
@@ -85,7 +89,9 @@ class ScanAction(ida_kernwin.action_handler_t):
         report(json.dumps(STATE["stats"]))
         report(json.dumps(res))
         if not sites:
-            ida_kernwin.warning("No kCFI checks found. This binary may not be built with -fsanitize=kcfi.")
+            ida_kernwin.warning("No kCFI checks found. This binary may not be built with -fsanitize=kcfi "
+                                "(Linux 6.1+ CONFIG_CFI_CLANG); GCC kernels and the older jump-table CFI "
+                                "of Linux 5.x Clang builds are not supported.")
             return 1
         if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO,
                               "Create functions at candidates IDA has not recognised?") == ida_kernwin.ASKBTN_YES:

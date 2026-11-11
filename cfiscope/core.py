@@ -149,6 +149,12 @@ def looks_like_entry(mem, off, arch):
     return mem[off] not in (0x00, 0xcc)
 
 
+
+def _median_resolved(counts):
+    """Median list length over the sites that have at least one candidate (counts is sorted)."""
+    r = [c for c in counts if c]
+    return r[len(r) // 2] if r else 0
+
 def resolve(ranges, arch):
     """ranges: list of (base, bytes).  Returns (sites, stats)."""
     sites = []
@@ -173,7 +179,8 @@ def resolve(ranges, arch):
         "resolved": sum(1 for c in counts if c),
         "unresolved": sum(1 for c in counts if not c),
         "single_target": sum(1 for c in counts if c == 1),
-        "median_candidates": counts[n // 2] if n else 0,
+        "median_candidates": counts[n // 2] if n else 0,  # over all sites, unresolved (0) included
+        "median_candidates_resolved": _median_resolved(counts),
         "max_candidates": counts[-1] if n else 0,
         "disps": disps,
     }

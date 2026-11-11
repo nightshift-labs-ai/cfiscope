@@ -9,9 +9,9 @@ Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 
 - **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give.
 - **Remove annotations**: removes the comments and cross-references the scan added.
 
-Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that a given call ever reaches it. Most lists are short (median 4 on the GKI kernel below), but a few common types have hundreds or more (the largest list there has 1,458). Treat a long list as a type filter and a short one as a strong lead.
+Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that a given call ever reaches it. Most lists are short (median 6 candidates per call that has any, on both GKI kernels below), but a few common types have hundreds or more (the largest list there has 1,458). Treat a long list as a type filter and a short one as a strong lead.
 
-Supported targets: aarch64 and x86-64. The scanner was scored on a real Android GKI kernel for each (numbers below); the IDA layer has not been run in IDA yet (see Status).
+Supported targets: aarch64 and x86-64 kernels built by Clang with kCFI (`CONFIG_CFI_CLANG` on Linux 6.1 or later), for example Android GKI android14-6.1 and later. Not supported: GCC-built kernels (most desktop distribution kernels have no kCFI checks to read) and the older jump-table CFI of Linux 5.x Clang builds (Android 12/13 GKI 5.10/5.15); on those the scan finds 0 sites and says so. The scanner was scored on a real Android GKI kernel for each architecture (numbers below); the IDA layer has not been run in IDA yet (see Status).
 
 ## Why it matters
 
@@ -21,8 +21,8 @@ Kernel attack surface runs through function pointers: `file_operations`, `net_de
 
 Quick try, no download (about a minute): the repository ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`: the generator wrote each function-pointer type and its implementations into `t.c`, and Clang built the objects.
 
-1. Open `tests/fixtures/x86_64-kernel.o` (or `aarch64-kernel.o`) in IDA.
-2. Press `Ctrl-Alt-K`. It should find 21 kCFI call sites, one per function-pointer type in `t.c`, each with candidates.
+1. Open `tests/fixtures/x86_64-kernel.o` (or `aarch64-kernel.o`) in IDA. After `hcli plugin install cfiscope` the fixtures are in `$IDAUSR/plugins/cfiscope/tests/fixtures/` (`~/.idapro/plugins/...` on Linux and macOS, `%APPDATA%\Hex-Rays\IDA Pro\plugins\...` on Windows).
+2. Press `Ctrl-Alt-K`. It should find 21 kCFI call sites, one per function-pointer type in `t.c`, each with candidates (the counts are printed in the Output window).
 3. In `do_call_2`, `Ctrl-Alt-T` should list `impl_2_0`, `impl_2_1`, `impl_2_2`; on `impl_2_1`, `Ctrl-Alt-C` should list that call in `do_call_2`.
 
 The same scan from the command line, real output:
@@ -39,7 +39,7 @@ $ python3 -m cfiscope tests/fixtures/x86_64-kernel.o --sites --max-list 4
 
 A real kernel:
 
-1. Download the public aarch64 Android kernel used for the numbers below: [gki-certified-boot-android14-6.1-2024-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip), extract the kernel from `boot-6.1.img`, and restore its symbols with [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf).
+1. Download the public aarch64 Android kernel used for the numbers below: [gki-certified-boot-android14-6.1-2024-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip), extract the kernel with `python3 tools/extract_bootimg.py boot-6.1.img Image` (no dependencies), and restore its symbols with [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf): `vmlinux-to-elf Image gki.elf`.
 2. Open the resulting ELF in IDA and let auto-analysis finish.
 3. Press `Ctrl-Alt-K`. Then on any `blr` preceded by a kCFI check, press `Ctrl-Alt-T` to list the functions it can reach, or on a function, press `Ctrl-Alt-C` to list the indirect calls that can reach it.
 
@@ -106,7 +106,7 @@ Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google downlo
 | Indirect call sites found | 13,897, using 4,184 distinct type hashes, in 0.5 s |
 | Sites with at least one candidate | 11,961 (86.1%) |
 | Sites with exactly one candidate | 1,694 |
-| Median candidates per resolved site | 4 |
+| Median candidates per site with at least one candidate (over all sites, unresolved included: 4) | 6 |
 | Sites with 1 to 8 candidates / 1 to 16 | 7,092 / 8,999 |
 | Candidate start precision: distinct candidates that begin exactly at a kallsyms function symbol (symbols restored by [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf), used only to score). This checks that candidates are real function starts, not that a call reaches them | 30,357 of 30,567 (99.31%) |
 
@@ -119,15 +119,15 @@ Real x86-64 kernel: the public GKI prebuilt `kernel-6.1` from [kernel/prebuilts/
 | Indirect call sites found | 13,770, using 4,257 distinct type hashes, in 0.4 s |
 | Sites with at least one candidate | 11,833 (85.9%) |
 | Sites with exactly one candidate | 1,652 |
-| Median candidates per resolved site | 4 |
+| Median candidates per site with at least one candidate (over all sites, unresolved included: 4) | 6 |
 | Sites with 1 to 8 candidates / 1 to 16 | 7,093 / 8,601 |
 | Distinct candidates that are a `__cfi_`-protected function | 32,393 of 33,015 (98.12%) |
 
-The other 622 candidates are not at any symbol in the map; many sit in unnamed syscall stubs, and they were not checked one by one. Only 63.50% of the protected functions appear as candidates, which is expected for a kernel image alone: a function's hash only matches when some call site in the image uses that type.
+The other 622 candidates: 244 sit at weak (`W`) symbols in the map, mostly syscall entry stubs such as `__ia32_sys_msgctl`, and 378 are at no symbol in the map; those 378 were not checked one by one. Only 63.50% of the protected functions appear as candidates, which is expected for a kernel image alone: a function's hash only matches when some call site in the image uses that type.
 
 Known-answer objects: `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the table of signatures and implementations that `tools/gen_fixtures.py` wrote into the source; function offsets come from the compiled objects. `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the known candidate sets for the same objects, and that bad input gives a clear error.
 
-`tests/test_plugin_stub.py` runs the IDA layer against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 44 IDA API names used exist in the official stubs. Neither is a test in real IDA.
+Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 44 IDA API names used exist in the official stubs. Neither is a test in real IDA.
 
 Not verified: behaviour inside real IDA.
 

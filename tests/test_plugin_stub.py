@@ -77,6 +77,21 @@ class IdaLayer(unittest.TestCase):
         il.remove_annotations(sites)
         self.assertEqual(w.cmts[ea], "my note")
 
+    def test_target_inside_merged_function(self):
+        # IDA may start the function at the __cfi_ preamble, 16 bytes before the kCFI target.
+        w, il = self.make("x86_64-plain", "metapc")
+        sites, _ = il.scan()
+        t = sites[0].targets[0]
+        class F:
+            start_ea, end_ea = t - 16, t + 64
+        sys.modules["ida_funcs"].get_func = lambda ea: F if F.start_ea <= ea < F.end_ea else None
+        sys.modules["ida_funcs"].get_func_name = lambda ea: "__cfi_impl" if ea == F.start_ea else ""
+        self.assertEqual(il.target_name(t), "__cfi_impl+0x10")
+        sys.modules["ida_name"].get_ea_name = lambda ea: "impl" if ea == t else ""
+        self.assertEqual(il.target_name(t), "impl")
+        rows = il.callers_rows(sites, F.start_ea)
+        self.assertIn(sites[0].call_ea or sites[0].check_ea, [r[0] for r in rows])
+
     def test_address_taken_ranked_first(self):
         w, il = self.make("x86_64-plain", "metapc")
         sites, _ = il.scan()

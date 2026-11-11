@@ -230,16 +230,19 @@ def main(argv=None):
         print("arch %s, %d named functions" % (st["arch"], st["named_functions"]))
         print("call sites %d (type hashes %d)" % (st["sites"], st["hashes"]))
         print("with candidates %d, none %d, exactly one %d" % (st["resolved"], st["unresolved"], st["single_target"]))
-        print("median candidates %d, max %d" % (st["median_candidates"], st["max_candidates"]))
+        print("median candidates per site with candidates %d (over all sites %d), max %d"
+              % (st["median_candidates_resolved"], st["median_candidates"], st["max_candidates"]))
         if not st["sites"]:
             print("no kCFI checks found: this kernel was probably built without Clang kCFI "
-                  "(CONFIG_CFI_CLANG), for example by GCC" + (", or --arch/--base is wrong" if a.raw else ""))
+                  "(CONFIG_CFI_CLANG on Linux 6.1 or later), for example by GCC, or by Clang with the older "
+                  "jump-table CFI of Linux 5.x (Android 12/13 GKI 5.10/5.15), which CFIScope does not read"
+                  + (", or --arch/--base is wrong" if a.raw else ""))
         return 0
     if header:
         print(header)
     if a.targets:
         for s in chosen:
-            print(_site_line(s, names, 0))
+            print(_site_line(s, names, 0).rstrip(" ."))
             for t in s.targets:
                 print("    0x%x  %s" % (t, names(t)))
         return 0
