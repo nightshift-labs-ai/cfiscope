@@ -26,4 +26,15 @@ for f in FILES:
             checked += 1
             if not re.search(r"(?:def|class)\s+%s\b|^\s*%s\s*:" % (name, name), src, re.M):
                 print("MISSING", ".".join(d)); missing += 1
+# Methods and attributes the pseudocode hook uses on objects IDA hands it (not visible as ida_* names above).
+MEMBERS = [("ida_hexrays", "Hexrays_Hooks", m) for m in ("func_printed", "hook", "unhook")] + \
+    [("ida_hexrays", "cfunc_t", m) for m in ("get_eamap", "find_item_coords", "get_pseudocode")] + \
+    [("ida_hexrays", "eamap_t", "__iter__"), ("ida_hexrays", "eamap_t", "__getitem__"),
+     ("ida_hexrays", "cinsnptrvec_t", "__iter__"), ("ida_pro", "strvec_t", "__getitem__"),
+     ("ida_pro", "strvec_t", "__len__"), ("ida_kernwin", "simpleline_t", "line")]
+for mod, cls, name in MEMBERS:
+    checked += 1
+    body = re.search(r"^class %s\b.*?(?=^class |\Z)" % cls, open(os.path.join(sys.argv[1], mod + ".pyi")).read(), re.M | re.S)
+    if not body or not re.search(r"def %s\b" % name, body.group(0)):
+        print("MISSING", "%s.%s.%s" % (mod, cls, name)); missing += 1
 print("checked", checked, "missing", missing); sys.exit(1 if missing else 0)

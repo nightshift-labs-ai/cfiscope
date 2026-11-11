@@ -86,6 +86,17 @@ def describe(site):
     return "%s 0x%08X: %d candidate(s): %s" % (COMMENT_TAG, site.hash, len(targets), names)
 
 
+def pseudocode_text(site, limit=5):
+    """Trailing pseudocode comment: the count and the first `limit` candidates, in the same order as describe()."""
+    targets = ranked(site)
+    if not targets:
+        return "CFIScope: 0 candidates in this image"
+    names = ", ".join(target_name(t) for t in targets[:limit])
+    if len(targets) > limit:
+        names += " and %d more" % (len(targets) - limit)
+    return "CFIScope: %d candidate%s: %s" % (len(targets), "" if len(targets) == 1 else "s", names)
+
+
 def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT):
     """Comment every check; add user xrefs where the candidate list is short."""
     res = {"comments": 0, "xrefs": 0, "kept_user_comments": 0}

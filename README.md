@@ -7,7 +7,8 @@ Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 
 - **Scan kCFI calls** (`Ctrl-Alt-K`): finds every check, comments the call site with the type hash and candidate count, adds cross-references when the candidate list is short (at most 16), and offers to create functions at candidates IDA has not recognised. Your own comments are kept.
 - **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach. If the cursor is not on a kCFI check or its call, the nearest check in the same function is used; the list's title names the call address it chose.
 - **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give.
-- **Remove annotations**: removes the comments and cross-references the scan added.
+- **Remove annotations**: removes the comments and cross-references the scan added, and turns the pseudocode comments off.
+- **Pseudocode comments** (with the Hex-Rays decompiler): after a scan, the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2` (at most 5 names, then "and N more"). The line is found through the decompiler's address map when a function is printed; the comment is display text only, nothing is saved in the database. Not yet run in IDA and not tested with the real decompiler, only against a fake `ida_hexrays` module.
 
 All four actions are under Edit > Plugins. Scan and the two lookups are also on the right-click menu of disassembly and pseudocode views (CFIScope submenu). Many Linux desktops take `Ctrl-Alt-T` for a terminal and Keypatch uses `Ctrl-Alt-K`: use the menus, or rebind the keys in Options > Shortcuts.
 
@@ -141,7 +142,7 @@ The other 622 candidates: 244 sit at weak (`W`) symbols in the map, mostly sysca
 
 Known-answer objects: `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the table of signatures and implementations that `tools/gen_fixtures.py` wrote into the source; function offsets come from the compiled objects. `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the known candidate sets for the same objects, and that bad input gives a clear error.
 
-Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer and `tests/test_entry_stub.py` the plugin wiring (menus, right-click hooks, rescan after a rebase) against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 49 IDA API names used exist in the official stubs. None of these is a test in real IDA.
+Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer and `tests/test_entry_stub.py` the plugin wiring (menus, right-click hooks, rescan after a rebase, pseudocode comments on a fake decompiler) against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 68 IDA API names used, including the decompiler methods the pseudocode hook calls, exist in the official stubs. None of these is a test in real IDA.
 
 Not verified: behaviour inside real IDA.
 

@@ -2,6 +2,15 @@
 
 Taken from the GitHub release notes. Newest first.
 
+## v0.1.15 (2026-11-11)
+
+- **Candidates in Hex-Rays pseudocode.** After a scan, a decompiler hook (`Hexrays_Hooks.func_printed`) appends a comment such as `// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2` to the pseudocode line of each kCFI call site in the function being printed: at most 5 names, then "and N more"; a site without candidates gets "CFIScope: 0 candidates in this image". The line is found with `cfunc.get_eamap()` (call address to statements) and `cfunc.find_item_coords()`. The hook reuses the scan results, never scans, and only changes the printed text: nothing new is stored in the database. Remove annotations turns the comments off; Scan and Remove annotations flush the decompiler cache (`clear_cached_cfuncs`) so that the next decompile shows the change.
+- The hook is installed only if `ida_hexrays` imports and `init_hexrays_plugin()` returns true (tried when the plugin loads and again at each Scan that finds call sites), and it is removed when the plugin unloads. An exception inside it is caught, reported once in the Output window, and the hook returns 0. Without the decompiler, CFIScope works as before.
+- Stub tests (`tests/test_entry_stub.py`, a fake `ida_hexrays` with a small decompiled function): the mapped lines get the right text, other lines and functions without kCFI sites are untouched, nothing is added before a scan, after Remove annotations or after the segments change, a missing or disabled decompiler means no hook and no error, and an exception inside the hook returns 0.
+- IDA API names used: 68 checked against the official IDAPython stubs (now including the methods the hook calls on `cfunc_t`, `eamap_t`, `cinsnptrvec_t`, `strvec_t` and `simpleline_t`), 0 missing.
+
+Built by an AI agent (Claude, operated by Nightshift Labs). Not yet run in real IDA.
+
 ## v0.1.14 (2026-11-11)
 
 - **Remove annotations reports xrefs actually removed.** It now deletes only the call references to candidates that exist (read with `get_first_fcref_from` / `get_next_fcref_from`) and counts those; the Output line says "xrefs removed: N" instead of "xrefs removal attempted". We did not use `del_cref`'s return value for the count because the SDK documents it as "true if the referenced instruction will be deleted" (xref.hpp), not as "reference removed". Stub test: removal count equals the xrefs added, and a second removal reports 0.
