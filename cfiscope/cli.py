@@ -156,6 +156,10 @@ def _site_dict(s, names, limit):
     }
 
 
+# Strings that only the pre-6.1 jump-table CFI leaves in a kernel image.
+OLD_CFI_MARKERS = (b".cfi_jt", b"__cfi_check", b"CFI failure (target:")
+
+
 def _site_line(s, names, limit):
     where = "0x%x" % (s.call_ea or s.check_ea)
     shown = ", ".join(names(t) for t in s.targets[:limit])
@@ -232,7 +236,11 @@ def main(argv=None):
         print("with candidates %d, none %d, exactly one %d" % (st["resolved"], st["unresolved"], st["single_target"]))
         print("median candidates per site with candidates %d (over all sites %d), max %d"
               % (st["median_candidates_resolved"], st["median_candidates"], st["max_candidates"]))
-        if not st["sites"]:
+        if not st["sites"] and any(m in data for m in OLD_CFI_MARKERS):
+            print("no kCFI checks found: this kernel uses the older jump-table Clang CFI of Linux 5.x "
+                  "(it contains .cfi_jt / __cfi_check), as Android 12/13 GKI 5.10/5.15 do; CFIScope reads only "
+                  "kCFI (CONFIG_CFI_CLANG on Linux 6.1 or later)")
+        elif not st["sites"]:
             print("no kCFI checks found: this kernel was probably built without Clang kCFI "
                   "(CONFIG_CFI_CLANG on Linux 6.1 or later), for example by GCC, or by Clang with the older "
                   "jump-table CFI of Linux 5.x (Android 12/13 GKI 5.10/5.15), which CFIScope does not read"

@@ -64,6 +64,16 @@ class Cli(unittest.TestCase):
             self.assertEqual(rc, 2)
             self.assertIn("--arch", err)
 
+    def test_old_jump_table_cfi_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            img = os.path.join(tmp, "Image")
+            with open(img, "wb") as fh:
+                fh.write(b"\x1f\x20\x03\xd5" * 64 + b"\0.cfi_jt\0__cfi_check\0")
+            rc, out, _ = run(img, "--raw", "--arch", "aarch64", "--base", "0xffffffc008000000")
+            self.assertEqual(rc, 0)
+            self.assertIn("older jump-table Clang CFI", out)
+            self.assertNotIn("GCC", out)
+
     def test_bad_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             junk = os.path.join(tmp, "junk")

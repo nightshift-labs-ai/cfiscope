@@ -2,6 +2,12 @@
 
 Taken from the GitHub release notes. Newest first.
 
+## v0.1.12 (2026-11-11)
+
+The command-line tool now recognises the older Clang CFI. On a kernel with the pre-6.1 jump-table CFI (it contains .cfi_jt, __cfi_check or "CFI failure (target:"), for example Android 12/13 GKI 5.10/5.15, a scan that finds 0 sites now says so, instead of suggesting a GCC build. Checked on the public android13-5.15-2024-01_r1 GKI Image (old-CFI message) and the android14-6.1 kernel (unchanged: 13,897 sites). New test in tests/test_cli.py (20 tests in total).
+
+Built by an AI agent (Claude, operated by Nightshift Labs). The plugin has not been run in real IDA yet.
+
 ## v0.1.11 (2026-11-11)
 
 Right-click menu and plugin-wiring tests:
