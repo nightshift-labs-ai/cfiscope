@@ -227,6 +227,14 @@ def _resolve_kcfi(ranges, arch):
 _BTI_C, _PACIASP = 0xd503245f, 0xd503233f
 _CALLER_SAVED = frozenset(list(range(19)) + [30])
 _JT_RUN = re.compile(rb"(?:\x5f\x24\x03\xd5...[\x14-\x17])+", re.DOTALL)   # (bti c; b imm26)+
+_ROR_ANCHOR = re.compile(rb".[\x08-\x0f][\xc0-\xdf]\x93", re.DOTALL)  # ror xT, xS, #2/#3 (extr xT, xS, xS)
+RANGE_GAP = 4
+
+
+def _is_sub_reg(w):
+    return w & 0xffe0fc00 == 0xcb000000       # sub xd, xn, xm (no shift)
+
+
 _RANGE_ANCHOR = re.compile(rb".[\x00-\x03][\x00-\x1f]\xcb.[\x08-\x0f][\xc0-\xdf]\x93", re.DOTALL)  # sub; ror #2/#3
 _SINGLE_ANCHOR = re.compile(rb"[\x1f\x3f\x5f\x7f\x9f\xbf\xdf\xff][\x00-\x03][\x00-\x1f]\xeb"
                             rb"[\x01\x21\x41\x61\x81\xa1\xc1\xe1]..\x54", re.DOTALL)    # cmp xA, xB; b.ne
@@ -501,18 +509,24 @@ class _Check:
         self.calls = []
 
 
-def _range_check(c, i):
-    """sub xS, xF, xB at word i, ror xT, xS, #s at i+1, cmp xT, #N (or a register holding N), b.cond."""
+def _range_check(c, i, gap=0):
+    """sub xS, xF, xB at word i, ror xT, xS, #s at i+1+gap, cmp xT, #N (or a register holding N), b.cond.
+
+    gap: unrelated words the compiler scheduled between the sub and the ror (none may write xS or xF)."""
     W = c.w
-    sub, ror = W[i], W[i + 1]
+    if i + 1 + gap >= len(W):
+        return None
+    sub, ror = W[i], W[i + 1 + gap]
     xS = sub & 31
     if (ror >> 5) & 31 != xS or (ror >> 16) & 31 != xS:
         return None
     xF, xB, xT = (sub >> 5) & 31, (sub >> 16) & 31, ror & 31
     if 31 in (xF, xB, xS):
         return None
+    if any(r in _written(W[g]) for g in range(i + 1, i + 1 + gap) for r in (xS, xF)):
+        return None
     n = k = None
-    for k in range(i + 2, min(i + 5, len(W) - 1)):
+    for k in range(i + 2 + gap, min(i + 5 + gap, len(W) - 1)):
         q = W[k]
         if q & 0xff80001f == 0xf100001f and (q >> 5) & 31 == xT:          # cmp xT, #imm
             n = ((q >> 10) & 0xfff) << (12 if (q >> 22) & 1 else 0)
@@ -723,6 +737,16 @@ def resolve_jump_table_cfi(ranges):
             chk = _range_check(c, m.start() >> 2)
             if chk is not None:
                 checks.append(chk)
+        for m in _aligned(_ROR_ANCHOR, c.mem):    # sub and ror with up to RANGE_GAP other words between them
+            j = m.start() >> 2
+            if j < 1 or _is_sub_reg(c.w[j - 1]):
+                continue                          # adjacent: the anchor above handles it
+            for gap in range(1, RANGE_GAP + 1):
+                if j - 1 - gap >= 0 and _is_sub_reg(c.w[j - 1 - gap]) and c.w[j - 1 - gap] & 31 == (c.w[j] >> 5) & 31:
+                    chk = _range_check(c, j - 1 - gap, gap)
+                    if chk is not None:
+                        checks.append(chk)
+                    break
         for m in _aligned(_SINGLE_ANCHOR, c.mem):
             chk = _single_check(c, m.start() >> 2, jt)
             if chk is not None:
