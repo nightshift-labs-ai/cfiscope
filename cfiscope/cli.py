@@ -175,6 +175,7 @@ def _jt_dict(s):
         "jump_table_range": ["0x%x" % s.jt_base, s.jt_count] if s.jt_count and s.jt_base else None,
         "note": s.note,
         "range_from": s.jt_range_from,
+        "runtime_call": "0x%x" % s.runtime_call_ea if s.runtime_call_ea else None,
     }
 
 

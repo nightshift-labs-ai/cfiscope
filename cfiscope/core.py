@@ -34,6 +34,7 @@ class Site:
     jt_base: int = 0       # first jump-table entry the check accepts
     jt_count: int = 0      # number of entries it accepts
     jt_range_from: str = None  # "code" (read at this check), or "same-id check" (copied from another check of its id)
+    runtime_call_ea: int = 0   # blr of this check's inlined slow path: the CFI runtime calling a module's __cfi_check
     extra_checks: list = field(default_factory=list)   # other checks guarding the same call (their own Sites)
     note: str = None       # caveat for the user, e.g. a slow-path-only site whose type does have functions here
 
@@ -914,6 +915,7 @@ def resolve_jump_table_cfi(ranges):
         "checks": len(checks),
         "checks_without_range": sum(1 for x in checks if _candidates(jt, x) is None),
         "checks_range_copied": sum(1 for chk in checks if getattr(chk, "base_from", None) == "same-id check"),
+        "runtime_calls": len({x.runtime_call_ea for t in sites for x in [t] + t.extra_checks if x.runtime_call_ea}),
         "checks_without_call": sum(1 for s in sites if not s.call_ea and s.kind != "slowpath"),
         "indirect_calls": len(all_calls),
         "calls_with_candidates": len({s.call_ea for s in sites if s.call_ea and s.targets}),
@@ -939,6 +941,8 @@ def _check_site(jt, chk, call_ea, tail):
     s.kind, s.type_id = chk.kind, chk.type_id
     s.jt_base, s.jt_count = chk.base or 0, chk.count
     s.jt_range_from = getattr(chk, "base_from", None) if chk.base is not None else None
+    if chk.slow_bl is not None and chk.slow_bl[0].w[chk.slow_bl[1]] & 0xfffffc1f == 0xd63f0000:
+        s.runtime_call_ea = chk.slow_bl[0].ea(chk.slow_bl[1])   # inlined __cfi_slowpath: not a program call
     return s
 
 
