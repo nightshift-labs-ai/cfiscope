@@ -2,7 +2,7 @@
 
 Taken from the GitHub release notes. Newest first.
 
-## Unreleased (branch `oldcfi`)
+## v0.1.17 (2026-11-12)
 
 - **Linux 5.x jump-table CFI on aarch64 (Android 12/13 GKI).** When an aarch64 image has no kCFI checks but has a CFI jump table (the longest run of 8-byte `bti c; b <function>` entries), CFIScope reads the older Clang CFI: range checks (`sub; ror #3; cmp; b.hs/b.hi/b.lo/b.ls`, count as an immediate or in a register, also hoisted out of loops), single-member checks (`cmp; b.ne`) and calls checked only by `__cfi_slowpath(_diag)`. The base register is traced back through `adrp`/`add` and `mov` copies; candidates are the branch targets of the entries the check accepts. Each site gets a kind (`range`, `single`, `slowpath`), the 64-bit type id from its slow path and, with `__typeid_<type>_global_addr` symbols, the demangled type (`int (file*, int)`). Hand-decoded, no new dependency.
 - Same IDA actions, comments (`jtCFI <type>: ...`), cross-references, lists and pseudocode comments as for kCFI. In IDA the type names come from the database's names and, since IDA keeps one name per address and these share theirs with `foo.cfi_jt` entries, from the input ELF's symbol table when that file is still on disk. Command line: summary, `--sites`, `--callers`, `--targets` and `--json` (new fields `kind`, `type_id`, `type`, `type_mangled`, `jump_table_range`, `note`, `range_from`, `other_checks`; `hash` is the 64-bit id). kCFI output is unchanged.
