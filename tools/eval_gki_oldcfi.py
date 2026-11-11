@@ -6,6 +6,8 @@
 Image: the kernel from boot-5.15.img in
 https://dl.google.com/android/gki/gki-certified-boot-android13-5.15-2024-01_r1.zip
 (python3 tools/extract_bootimg.py boot-5.15.img Image).
+Android 12 GKI 5.10, same steps: https://dl.google.com/android/gki/gki-certified-boot-android12-5.10-2024-01_r1.zip
+(boot-5.10.img; README 'Two kernels were measured').
 vmlinux.elf (optional): the same kernel with kallsyms restored by
 https://github.com/marin-m/vmlinux-to-elf, used only to score the result: which words are kernel text,
 where functions start, the jump-table entry names (foo.cfi_jt) and the __typeid_<type>_global_addr symbols.
