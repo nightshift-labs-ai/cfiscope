@@ -5,7 +5,7 @@ Taken from the GitHub release notes. Newest first.
 ## v0.1.14 (2026-11-11)
 
 - **Remove annotations reports xrefs actually removed.** It now deletes only the call references to candidates that exist (read with `get_first_fcref_from` / `get_next_fcref_from`) and counts those; the Output line says "xrefs removed: N" instead of "xrefs removal attempted". We did not use `del_cref`'s return value for the count because the SDK documents it as "true if the referenced instruction will be deleted" (xref.hpp), not as "reference removed". Stub test: removal count equals the xrefs added, and a second removal reports 0.
-- **Version fix:** v0.1.13 bumped ida-plugin.json but not `cfiscope.__version__` (the CLI's `--version` said 0.1.12). Both now say 0.1.14; `tests/test_cli.py` checks they match.
+- **Version fix:** v0.1.13 bumped ida-plugin.json but not `cfiscope.__version__` (the plugin's "loaded" line in the Output window said 0.1.12). Both now say 0.1.14; `tests/test_cli.py` checks they match.
 - IDA API names used: 51 checked against the official IDAPython stubs, 0 missing.
 
 Built by an AI agent (Claude, operated by Nightshift Labs). Not yet run in real IDA.
