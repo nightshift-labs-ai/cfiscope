@@ -131,12 +131,20 @@ linked = [s for s in sites if s.call_ea]
 print("linked sites whose check and call are in the same kallsyms function: %s"
       % pct(sum(1 for s in linked if fn(s.call_ea) == fn(s.check_ea)), len(linked)))
 
-# Where the unresolved blr are. Function = nearest preceding kallsyms function (assembly without a symbol of its own
+# Where the unresolved blr are (the inlined slow-path row needs the find_check_fn symbol). Function = nearest preceding kallsyms function (assembly without a symbol of its own
 # is counted under the symbol before it). The last two rows are a heuristic: an extr/ror #3 of a register by itself or a
 # bl to __cfi_slowpath(_diag) in the 32 words before the call, inside the same function, suggests a check this scanner
 # does not decode; none of them suggests a call without a CFI check (assembly, __nocfi code, BPF dispatch...).
 fname = {a: n for a, n, t in syms if a in func_starts and t == 2}
 slowfns = {addr[n] for n in ("__cfi_slowpath", "__cfi_slowpath_diag") if n in addr}
+find_check = addr.get("find_check_fn")
+
+
+def is_bl(p, target):
+    w = struct.unpack_from("<I", image, p - BASE)[0]
+    return w & 0xfc000000 == 0x94000000 and p + 4 * (((w & 0x3ffffff) ^ 0x2000000) - 0x2000000) == target
+
+
 by_call = {}
 for s in sites:
     if s.call_ea:
@@ -146,6 +154,8 @@ for a in sorted(blr - {s.call_ea for s in resolved}):
     name = fname.get(fn(a), "")
     if a in by_call:
         key = "linked to a check without candidates in the image (slow-path-only types, ranges not found)"
+    elif find_check is not None and any(is_bl(p, find_check) for p in range(a - 4, max(fn(a), a - 64) - 4, -4)):
+        key = "inlined CFI slow path: bl find_check_fn, then blr to the module's __cfi_check (part of a check, not a program call)"
     elif name.startswith(("__traceiter_android_vh_", "__traceiter_android_rvh_")):
         key = "in Android vendor-hook iterators (__traceiter_android_[r]vh_*, called without a CFI check)"
     elif name.startswith("__traceiter_"):
@@ -163,6 +173,8 @@ for a in sorted(blr - {s.call_ea for s in resolved}):
 print("unresolved blr in kernel text: %d" % sum(split.values()))
 for key, n in sorted(split.items(), key=lambda kv: -kv[1]):
     print("  %5d  %s" % (n, key))
+runtime = sum(n for key, n in split.items() if key.startswith("inlined CFI slow path"))
+print("blr in kernel text resolved, leaving out the CFI runtime's own calls: %s" % pct(len(rb), len(blr) - runtime))
 
 named = core.name_jt_types(sites, [(a, n) for a, n, _ in syms])
 sp = [s for s in sites if s.kind == "slowpath"]
