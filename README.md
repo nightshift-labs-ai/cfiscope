@@ -11,7 +11,7 @@ Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 
 
 All four actions are under Edit > Plugins. Scan and the two lookups are also on the right-click menu of disassembly and pseudocode views (CFIScope submenu). Many Linux desktops take `Ctrl-Alt-T` for a terminal and Keypatch uses `Ctrl-Alt-K`: use the menus, or rebind the keys in Options > Shortcuts.
 
-Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that a given call ever reaches it. Most lists are short (median 6 candidates per call that has any, on both GKI kernels below), but a few common types have hundreds or more (the largest list there has 1,458). Treat a long list as a type filter and a short one as a strong lead.
+Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that a given call ever reaches it. Most lists are short (median 6 candidates per call that has any on both 6.1 GKI kernels below, 6 and 7 on the 6.6 and 6.12 ones), but a few common types have hundreds or more (the largest lists have 1,458 to 1,580). Treat a long list as a type filter and a short one as a strong lead.
 
 Supported targets: aarch64 and x86-64 kernels built by Clang with kCFI (`CONFIG_CFI_CLANG` on Linux 6.1 or later), for example Android GKI android14-6.1 and later. Not supported: GCC-built kernels (most desktop distribution kernels have no kCFI checks to read) and the older jump-table CFI of Linux 5.x Clang builds (Android 12/13 GKI 5.10/5.15); on those the scan finds 0 sites and says so. The scanner was scored on a real Android GKI kernel for each architecture (numbers below); the IDA layer has not been run in IDA yet (see Status).
 
@@ -113,6 +113,18 @@ Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google downlo
 | Candidate start precision: distinct candidates that begin exactly at a kallsyms function symbol (symbols restored by [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf), used only to score). This checks that candidates are real function starts, not that a call reaches them | 30,357 of 30,567 (99.31%) |
 
 The 1,936 sites with no candidate carry a hash that no function in this image has; a likely reason is callees that live in loadable modules, not checked one by one.
+
+Newer aarch64 GKI kernels, measured the same way: [gki-certified-boot-android15-6.6-2025-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android15-6.6-2025-01_r1.zip) and [gki-certified-boot-android16-6.12-2025-06_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android16-6.12-2025-06_r1.zip), kernel extracted with `tools/extract_bootimg.py`, symbols restored by vmlinux-to-elf, then `python3 tools/eval_gki.py --base 0xffffffc080000000 Image gki.elf` (these kernels start at a different address than 6.1).
+
+| Measure | android15-6.6 | android16-6.12 |
+|---|---|---|
+| Indirect call sites found (distinct type hashes) | 14,694 (4,466) | 16,164 (4,626) |
+| Sites with at least one candidate | 12,917 (87.9%) | 14,232 (88.0%) |
+| Sites with exactly one candidate | 1,974 | 2,019 |
+| Median candidates per site with at least one (over all sites) | 6 (5) | 7 (5) |
+| Sites with 1 to 8 candidates / 1 to 16 | 7,435 / 9,681 | 8,404 / 10,684 |
+| Largest candidate list | 1,536 | 1,580 |
+| Candidate start precision (distinct candidates at a kallsyms function symbol) | 33,743 of 33,967 (99.34%) | 35,248 of 35,481 (99.34%) |
 
 Real x86-64 kernel: the public GKI prebuilt `kernel-6.1` from [kernel/prebuilts/6.1/x86-64](https://android.googlesource.com/kernel/prebuilts/6.1/x86-64) (6.1.84), scored against its own `System.map`, which names a `__cfi_` preamble for each protected function. Reproduce with `python3 tools/extract_bzimage.py kernel-6.1 vmlinux`, then `python3 tools/eval_gki_x86.py vmlinux System.map`.
 

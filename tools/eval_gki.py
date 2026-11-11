@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Reproduce the README numbers on a public Android GKI kernel.
 
-    python3 tools/eval_gki.py Image [vmlinux.elf]
+    python3 tools/eval_gki.py [--base 0xffffffc080000000] Image [vmlinux.elf]
 
 Image: the kernel from boot-6.1.img in
 https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip
 vmlinux.elf (optional): the same kernel with kallsyms restored by
 https://github.com/marin-m/vmlinux-to-elf, used only to score the result.
+--base: where the kernel image starts (default 0xffffffc008000000, the 6.1 GKI; 6.6 and later GKI
+kernels start at 0xffffffc080000000). With a wrong base the precision line drops to about 0%.
 """
 import os, struct, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -28,6 +30,9 @@ def functions(path):
                     out.add(val)
     return out
 
+if len(sys.argv) > 2 and sys.argv[1] == "--base":
+    BASE = int(sys.argv[2], 0)
+    del sys.argv[1:3]
 if len(sys.argv) < 2:
     sys.exit(__doc__)
 with open(sys.argv[1], "rb") as fh:

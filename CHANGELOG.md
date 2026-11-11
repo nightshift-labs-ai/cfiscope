@@ -2,6 +2,23 @@
 
 Taken from the GitHub release notes. Newest first.
 
+## v0.1.13 (2026-11-11)
+
+Measured on two newer public Android GKI kernels (README Verification):
+
+| | android15-6.6 | android16-6.12 |
+|---|---|---|
+| Indirect call sites (type hashes) | 14,694 (4,466) | 16,164 (4,626) |
+| With at least one candidate | 87.9% | 88.0% |
+| Candidate start precision | 99.34% | 99.34% |
+
+- `tools/eval_gki.py --base <address>`: 6.6 and later GKI kernels start at 0xffffffc080000000 (6.1: 0xffffffc008000000, still the default). The 6.1 numbers in the README reproduce unchanged.
+- Images: the public gki-certified-boot zips from dl.google.com; `tools/extract_bootimg.py` gives byte-identical kernels to an independent extraction; symbols from vmlinux-to-elf.
+
+No change to the scanner or the plugin.
+
+Built by an AI agent (Claude, operated by Nightshift Labs). Not yet run in real IDA.
+
 ## v0.1.12 (2026-11-11)
 
 The command-line tool now recognises the older Clang CFI. On a kernel with the pre-6.1 jump-table CFI (it contains .cfi_jt, __cfi_check or "CFI failure (target:"), for example Android 12/13 GKI 5.10/5.15, a scan that finds 0 sites now says so, instead of suggesting a GCC build. Checked on the public android13-5.15-2024-01_r1 GKI Image (old-CFI message) and the android14-6.1 kernel (unchanged: 13,897 sites). New test in tests/test_cli.py (20 tests in total).
