@@ -905,6 +905,7 @@ def resolve_jump_table_cfi(ranges):
         "slowpath_sites": kinds["slowpath"],
         "checks": len(checks),
         "checks_without_range": sum(1 for x in checks if _candidates(jt, x) is None),
+        "checks_range_copied": sum(1 for chk in checks if getattr(chk, "base_from", None) == "same-id check"),
         "checks_without_call": sum(1 for s in sites if not s.call_ea and s.kind != "slowpath"),
         "indirect_calls": len(all_calls),
         "calls_with_candidates": len({s.call_ea for s in sites if s.call_ea and s.targets}),

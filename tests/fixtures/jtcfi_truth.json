@@ -1,7 +1,7 @@
 {
  "base": "0xffffffc008000000",
  "jump_table": [
-  "0xffffffc008000240",
+  "0xffffffc0080002c0",
   4
  ],
  "sites": [
@@ -70,15 +70,28 @@
    "kind": "slowpath",
    "type": "_ZTSFlP4filePcmPxE",
    "type_id": "0x07ff5a213d37b1a6"
+  },
+  {
+   "call": "0xffffffc008000258",
+   "candidates": [
+    "f_a",
+    "f_b",
+    "f_c"
+   ],
+   "function": "call_gap",
+   "kind": "range",
+   "type": "_ZTSFiP4fileiE",
+   "type_id": "0x95a8373040082c4d"
   }
  ],
  "slowpath": "0xffffffc008000040",
  "symbols": {
-  "__cfi_jt_end": "0xffffffc008000260",
-  "__cfi_jt_start": "0xffffffc008000240",
+  "__cfi_jt_end": "0xffffffc0080002e0",
+  "__cfi_jt_start": "0xffffffc0080002c0",
   "__cfi_slowpath_diag": "0xffffffc008000040",
-  "__typeid__ZTSFiP4fileiE_global_addr": "0xffffffc008000240",
-  "__typeid__ZTSFvPvE_global_addr": "0xffffffc008000258",
+  "__typeid__ZTSFiP4fileiE_global_addr": "0xffffffc0080002c0",
+  "__typeid__ZTSFvPvE_global_addr": "0xffffffc0080002d8",
+  "call_gap": "0xffffffc008000230",
   "call_hi": "0xffffffc0080000fc",
   "call_hoisted": "0xffffffc00800014c",
   "call_hs": "0xffffffc008000050",
@@ -86,13 +99,13 @@
   "call_single": "0xffffffc0080001ac",
   "call_slow": "0xffffffc0080001f8",
   "f_a": "0xffffffc008000000",
-  "f_a.cfi_jt": "0xffffffc008000240",
+  "f_a.cfi_jt": "0xffffffc0080002c0",
   "f_b": "0xffffffc008000010",
-  "f_b.cfi_jt": "0xffffffc008000248",
+  "f_b.cfi_jt": "0xffffffc0080002c8",
   "f_c": "0xffffffc008000020",
-  "f_c.cfi_jt": "0xffffffc008000250",
+  "f_c.cfi_jt": "0xffffffc0080002d0",
   "g_one": "0xffffffc008000030",
-  "g_one.cfi_jt": "0xffffffc008000258"
+  "g_one.cfi_jt": "0xffffffc0080002d8"
  },
  "type_names": {
   "_ZTSFiP4fileiE": "int (file*, int)",

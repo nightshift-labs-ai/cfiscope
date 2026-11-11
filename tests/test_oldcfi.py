@@ -53,11 +53,15 @@ class Fixture(unittest.TestCase):
                 self.assertEqual([self.name_of[x] for x in s.targets], want["candidates"])
                 self.assertEqual("0x%016x" % s.type_id, want["type_id"])
                 self.assertFalse(s.is_tail)
-        self.assertEqual(self.stats["calls_with_candidates"], 5)
-        self.assertEqual(self.stats["indirect_calls"], 6)
+        self.assertEqual(self.stats["calls_with_candidates"], 6)
+        self.assertEqual(self.stats["indirect_calls"], 7)
+        # call_gap: a mov between sub and ror; read as one range check that starts at its sub (call_gap+0x14),
+        # not only through the slow path as a hoisted check starting at the cmp.
+        gap = by_call[int(self.t["sites"][6]["call"], 16)]
+        self.assertEqual(gap.check_ea, int(self.t["symbols"]["call_gap"], 16) + 0x14)
 
     def test_type_names(self):
-        self.assertEqual(core.name_jt_types(self.sites, self.every), 5)
+        self.assertEqual(core.name_jt_types(self.sites, self.every), 6)
         names = self.t["type_names"]
         by_call = {s.call_ea: s for s in self.sites}
         for want in self.t["sites"]:
@@ -102,7 +106,7 @@ class Fixture(unittest.TestCase):
                 fh.write(code)
             rc, out, _ = run(raw, "--raw", "--arch", "aarch64", "--base", hex(base), "--json")
             st = json.loads(out)["stats"]
-            self.assertEqual((st["sites"], st["calls_with_candidates"], st["named_checks"]), (6, 5, 0))
+            self.assertEqual((st["sites"], st["calls_with_candidates"], st["named_checks"]), (7, 6, 0))
             # adrp is relative to the pc: a base off by whole pages only moves every address.
             rc, out, _ = run(raw, "--raw", "--arch", "aarch64", "--base", hex(base + 0x1000), "--sites", "--json")
             calls = sorted(int(s["call"], 16) for s in json.loads(out)["sites"])
