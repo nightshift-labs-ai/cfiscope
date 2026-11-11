@@ -100,6 +100,14 @@ python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
 
 Run it from this folder. Input is a 64-bit ELF (a `vmlinux`, a kernel with symbols restored by vmlinux-to-elf, or a `.o`/`.ko`) or, with `--raw`, a bare kernel image. Symbols are only used to print names. `--json` gives machine-readable output. On the GKI aarch64 `Image` from the walkthrough above, `--raw` prints the same totals as the table below in under a second.
 
+Headless inside IDA, with idalib (IDA 9.0 or newer; set up the `idapro` module as Hex-Rays describes):
+
+```
+python3 tools/cfiscope_headless.py vmlinux [--define-functions] [--remove] [--no-analysis]
+```
+
+It opens the file as a database, adds the same comments and cross-references as **CFIScope: Scan kCFI calls**, prints the same statistics and saves the database. It calls the plugin's own `cfiscope.idalayer`; like the rest of the IDA layer it has only been run against fake modules (`tests/test_headless_stub.py`), not a real idalib.
+
 ## Verification
 
 Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google download), aarch64, stripped. Reproduce with `python3 tools/eval_gki.py Image gki.elf` (`Image` and `gki.elf` as in the walkthrough).

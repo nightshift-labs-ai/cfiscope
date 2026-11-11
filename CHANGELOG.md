@@ -2,6 +2,10 @@
 
 Taken from the GitHub release notes. Newest first.
 
+## v0.1.16 (2026-11-11)
+
+- **Headless runner for idalib** (IDA 9.0+): `python3 tools/cfiscope_headless.py <kernel> [--define-functions] [--remove] [--no-analysis]` scans, comments and adds the candidate xrefs like the Scan action (or removes them), prints the statistics and saves the database, using the plugin's own `cfiscope.idalayer`. Exit codes: 0 done (also when no kCFI checks are found; the message says so), 1 IDA could not open the file, 2 no idalib, 3 unsupported database (not 64-bit x86 or AArch64). New `tests/test_headless_stub.py` (fake `idapro` and `cfiscope.idalayer`). Not yet run with a real idalib.
+
 ## v0.1.15 (2026-11-11)
 
 - **Candidates in Hex-Rays pseudocode.** After a scan, a decompiler hook (`Hexrays_Hooks.func_printed`) appends a comment such as `// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2` to the pseudocode line of each kCFI call site in the function being printed: at most 5 names, then "and N more"; a site without candidates gets "CFIScope: 0 candidates in this image". The line is found with `cfunc.get_eamap()` (call address to statements) and `cfunc.find_item_coords()`. The hook reuses the scan results, never scans, and only changes the printed text: nothing new is stored in the database. Remove annotations turns the comments off; Scan and Remove annotations flush the decompiler cache (`clear_cached_cfuncs`) so that the next decompile shows the change.
