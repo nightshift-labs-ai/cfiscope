@@ -174,6 +174,7 @@ def _jt_dict(s):
         "type_mangled": s.type_mangled,
         "jump_table_range": ["0x%x" % s.jt_base, s.jt_count] if s.jt_count and s.jt_base else None,
         "note": s.note,
+        "range_from": s.jt_range_from,
     }
 
 
@@ -205,9 +206,9 @@ def _print_jt_summary(st):
     print("arch %s, %d named functions" % (st["arch"], st["named_functions"]))
     print("Linux 5.x jump-table CFI: jump table %s-%s, %d entries of %d bytes"
           % (jt["start"], jt["end"], jt["entries"], jt["entry_size"]))
-    print("checked sites %d: range checks %d, single-member checks %d, slow path only %d (type ids %d, named %d)"
+    print("checked sites %d: range checks %d, single-member checks %d, slow path only %d (type ids %d; checks named from __typeid symbols %d)"
           % (st["sites"], st["range_sites"], st["single_sites"], st["slowpath_sites"], st["hashes"],
-             st.get("named_types", 0)))
+             st.get("named_checks", 0)))
     print("indirect calls (blr/br) %d, with candidates %d" % (st["indirect_calls"], st["calls_with_candidates"]))
     print("sites with candidates %d, none %d, exactly one %d" % (st["resolved"], st["unresolved"], st["single_target"]))
     print("median candidates per site with candidates %d (over all sites %d), max %d"
@@ -245,7 +246,7 @@ def main(argv=None):
         sites, stats = resolve(ranges, arch)
         stats = dict(stats, arch=arch, named_functions=len(symbols))
         if stats.get("scheme") == "jump-table CFI":
-            stats["named_types"] = name_jt_types(sites, every)
+            stats["named_checks"] = name_jt_types(sites, every)
         if a.callers or a.targets:
             want = parse_target(a.callers or a.targets, names)
     except (OSError, InputError, ValueError, OverflowError, struct.error) as e:

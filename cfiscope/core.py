@@ -33,6 +33,7 @@ class Site:
     type_mangled: str = None  # e.g. "_ZTSFiP4fileiE"
     jt_base: int = 0       # first jump-table entry the check accepts
     jt_count: int = 0      # number of entries it accepts
+    jt_range_from: str = None  # "code" (read at this check), or "same-id check" (copied from another check of its id)
     extra_checks: list = field(default_factory=list)   # other checks guarding the same call (their own Sites)
     note: str = None       # caveat for the user, e.g. a slow-path-only site whose type does have functions here
 
@@ -736,6 +737,9 @@ def resolve_jump_table_cfi(ranges):
     slow_fns = {t for t, n in called.items() if 4 * n >= top}
     if not slow_fns:
         return None
+    # A cmp/b.ne against one entry with no slow path behind it is an ordinary function-pointer comparison
+    # (`if (ops->fn == foo)`), not a CFI check.
+    checks = [chk for chk in checks if chk.kind != "single" or (chk.slow_bl is not None and chk.type_id is not None)]
     all_calls, slow_calls = [], []
     for c in codes:
         all_calls.extend((c, m.start() >> 2) for m in _aligned(_BRANCH_REG, c.mem))
@@ -764,8 +768,9 @@ def resolve_jump_table_cfi(ranges):
         if chk.type_id is not None and chk.base is not None:
             base_of[chk.type_id].add(chk.base)
     for chk in checks:
+        chk.base_from = "code" if chk.base is not None else None
         if chk.base is None and len(base_of.get(chk.type_id, ())) == 1:
-            chk.base = next(iter(base_of[chk.type_id]))
+            chk.base, chk.base_from = next(iter(base_of[chk.type_id])), "same-id check"
     # Link each check to the call it guards: forward along the straight path, then calls that reuse an earlier check.
     guards = defaultdict(list)                     # (code id, word) -> checks guarding that call
     where = {}
@@ -843,6 +848,8 @@ def resolve_jump_table_cfi(ranges):
                 # decode; the type has functions here, and another check of the same id gives their entries.
                 s.jt_base, s.jt_count = next(iter(ranges_of[tid]))
                 s.kind = "range" if s.jt_count > 1 else "single"
+                s.jt_range_from = "same-id check"
+                s.note = ("inline check not decoded; its range is taken from another check of the same type id")
                 first = jt.entry_index(s.jt_base)
                 s.targets = sorted(set(jt.targets[first:first + s.jt_count]))
         prev = by_call.get(s.call_ea) if s.call_ea else None
@@ -898,6 +905,7 @@ def _check_site(jt, chk, call_ea, tail):
     s = Site(chk.code.ea(chk.i), call_ea, chk.type_id or 0, 0, tail, sorted(set(_candidates(jt, chk) or ())))
     s.kind, s.type_id = chk.kind, chk.type_id
     s.jt_base, s.jt_count = chk.base or 0, chk.count
+    s.jt_range_from = getattr(chk, "base_from", None) if chk.base is not None else None
     return s
 
 

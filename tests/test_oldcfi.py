@@ -102,7 +102,7 @@ class Fixture(unittest.TestCase):
                 fh.write(code)
             rc, out, _ = run(raw, "--raw", "--arch", "aarch64", "--base", hex(base), "--json")
             st = json.loads(out)["stats"]
-            self.assertEqual((st["sites"], st["calls_with_candidates"], st["named_types"]), (6, 5, 0))
+            self.assertEqual((st["sites"], st["calls_with_candidates"], st["named_checks"]), (6, 5, 0))
             # adrp is relative to the pc: a base off by whole pages only moves every address.
             rc, out, _ = run(raw, "--raw", "--arch", "aarch64", "--base", hex(base + 0x1000), "--sites", "--json")
             calls = sorted(int(s["call"], 16) for s in json.loads(out)["sites"])

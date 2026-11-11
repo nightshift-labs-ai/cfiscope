@@ -119,10 +119,14 @@ for a, n, _ in syms:
     m = core._TYPEID_SYMBOL.match(n)
     if m:
         by_id[core.cfi_type_id(m.group(1))] = a
+# Only checks whose range was read at the check itself count; a range copied from another check of the same id
+# agrees with the symbol by construction, so those are reported apart.
 for kind in ("range", "single"):
     checks = [x for s in sites for x in [s] + s.extra_checks if x.kind == kind and x.targets and x.type_id is not None]
-    print("%s checks with candidates and a slow-path id: first entry == __typeid symbol of that id: %s"
-          % (kind, pct(sum(1 for x in checks if by_id.get(x.type_id) == x.jt_base), len(checks))))
+    own = [x for x in checks if x.jt_range_from == "code"]
+    print("%s checks with candidates and a slow-path id, range read at the check: first entry == __typeid symbol of that"
+          " id: %s; range copied from another check of the same id: %d" % (
+              kind, pct(sum(1 for x in own if by_id.get(x.type_id) == x.jt_base), len(own)), len(checks) - len(own)))
 
 # Linking: the check and the call it was linked to lie in the same function.
 fa = sorted(func_starts)

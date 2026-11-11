@@ -88,7 +88,7 @@ def scan():
     sites, stats = core.resolve(ranges, arch)
     JT["table"] = None
     if stats.get("scheme") == "jump-table CFI":
-        stats = dict(stats, named_types=core.name_jt_types(sites, typeid_names()))
+        stats = dict(stats, named_checks=core.name_jt_types(sites, typeid_names()))
         JT["table"] = core.find_jump_table(ranges)    # so that a foo.cfi_jt entry can stand for foo (callers_rows)
     return sites, stats
 

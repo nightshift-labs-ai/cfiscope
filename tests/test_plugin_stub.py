@@ -125,7 +125,7 @@ class IdaLayer(unittest.TestCase):
         names = {shift(v): k for k, v in truth["symbols"].items()}
         sys.modules["ida_name"].get_ea_name = lambda ea: names.get(ea, "")
         sites, stats = il.scan()
-        self.assertEqual((stats["scheme"], stats["sites"], stats["named_types"]), ("jump-table CFI", 6, 5))
+        self.assertEqual((stats["scheme"], stats["sites"], stats["named_checks"]), ("jump-table CFI", 6, 5))
         self.assertEqual(il.scheme_name(sites), "jump-table CFI")
         res = il.annotate(sites)
         self.assertEqual(res["comments"], 6)
@@ -148,13 +148,13 @@ class IdaLayer(unittest.TestCase):
                                  "(slow-path check only)" % want["type_id"])
         # IDA keeps one name per address: with the __typeid names lost, the input ELF still names the types.
         w.nlist = [x for x in w.nlist if not x[1].startswith("__typeid_")]
-        self.assertEqual(il.scan()[1]["named_types"], 0)
+        self.assertEqual(il.scan()[1]["named_checks"], 0)
         w.input_path = os.path.join(HERE, "fixtures", "aarch64-jtcfi.elf")
         sites2, stats2 = il.scan()
-        self.assertEqual(stats2["named_types"], 5)
+        self.assertEqual(stats2["named_checks"], 5)
         self.assertEqual({il.core.type_label(s) for s in sites2 if s.targets}, {"int (file*, int)", "void (void*)"})
         w.input_path = os.path.join(HERE, "fixtures", "missing.elf")
-        self.assertEqual(il.scan()[1]["named_types"], 0)
+        self.assertEqual(il.scan()[1]["named_checks"], 0)
         lo = by_call[shift(truth["sites"][1]["call"])]               # b.lo: the call sits after the check here
         self.assertIs(il.site_at(sites, lo.call_ea), lo)
         self.assertIn("int (file*, int)", il.targets_title(lo))
