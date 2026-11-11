@@ -1,9 +1,12 @@
 """IDA side of CFIScope: read code segments, write comments and cross-references."""
+import os
+
 import ida_bytes
 import ida_funcs
 import ida_ida
 import ida_idaapi
 import ida_kernwin
+import ida_nalt
 import ida_name
 import ida_segment
 import ida_xref
@@ -49,12 +52,28 @@ def layout():
 
 
 def typeid_names():
-    """(address, name) of the __typeid_<type>_global_addr names in the database (kallsyms keeps them)."""
+    """(address, name) of the __typeid_<type>_global_addr names (kallsyms keeps them).
+
+    IDA keeps one name per address, and each of these shares its address with a `foo.cfi_jt` entry name, so the
+    database may have lost them: the input file's own ELF symbol table, if it is still there, is read as well.
+    Names from the file come without an address (the database may be rebased); they are matched by type id."""
     out = []
     for i in range(ida_name.get_nlist_size()):
         name = ida_name.get_nlist_name(i)
         if name and name.startswith("__typeid_"):
             out.append((ida_name.get_nlist_ea(i), name))
+    try:
+        from . import cli
+        path = ida_nalt.get_input_file_path()
+        if path and os.path.isfile(path):
+            with open(path, "rb") as fh:
+                data = fh.read()
+            if data[:4] == b"\x7fELF":
+                every = []
+                cli.load_elf(data, every)
+                out.extend((None, name) for _, name in every if name.startswith("__typeid_"))
+    except Exception:  # noqa: BLE001  names are a bonus: an unreadable input file only means fewer of them
+        pass
     return out
 
 

@@ -12,9 +12,11 @@ class World:
     def __init__(self, segs, mem):
         self.segs, self.mem, self.cmts, self.crefs, self.funcs, self.drefs = segs, mem, {}, set(), set(), set()
         self.nlist = []   # (ea, name) as IDA's name list holds them
+        self.input_path = None
 
 def install(world):
-    m = {n: types.ModuleType(n) for n in "ida_bytes ida_funcs ida_ida ida_idaapi ida_kernwin ida_name ida_segment ida_xref".split()}
+    m = {n: types.ModuleType(n) for n in "ida_bytes ida_funcs ida_ida ida_idaapi ida_kernwin ida_nalt ida_name ida_segment ida_xref".split()}
+    m["ida_nalt"].get_input_file_path = lambda: world.input_path
     m["ida_idaapi"].BADADDR = 2**64 - 1
     m["ida_bytes"].get_bytes = lambda ea, n: world.mem[ea]
     m["ida_bytes"].get_cmt = lambda ea, rep: world.cmts.get(ea)
@@ -144,6 +146,15 @@ class IdaLayer(unittest.TestCase):
                 self.assertIn("type id " + want["type_id"], text)
                 self.assertEqual(il.pseudocode_text(s), "CFIScope: no candidate in this image of type id %s "
                                  "(slow-path check only)" % want["type_id"])
+        # IDA keeps one name per address: with the __typeid names lost, the input ELF still names the types.
+        w.nlist = [x for x in w.nlist if not x[1].startswith("__typeid_")]
+        self.assertEqual(il.scan()[1]["named_types"], 0)
+        w.input_path = os.path.join(HERE, "fixtures", "aarch64-jtcfi.elf")
+        sites2, stats2 = il.scan()
+        self.assertEqual(stats2["named_types"], 5)
+        self.assertEqual({il.core.type_label(s) for s in sites2 if s.targets}, {"int (file*, int)", "void (void*)"})
+        w.input_path = os.path.join(HERE, "fixtures", "missing.elf")
+        self.assertEqual(il.scan()[1]["named_types"], 0)
         lo = by_call[shift(truth["sites"][1]["call"])]               # b.lo: the call sits after the check here
         self.assertIs(il.site_at(sites, lo.call_ea), lo)
         self.assertIn("int (file*, int)", il.targets_title(lo))
