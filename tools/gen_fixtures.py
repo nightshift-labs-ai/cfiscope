@@ -140,6 +140,8 @@ def jtcfi_program():
         a.emit(BTI_C, movw(0, k + 1), RET, NOP)
     a.label("__cfi_slowpath_diag")
     a.emit(BTI_C, RET, NOP, NOP)
+    a.label("find_check_fn")                                   # stands in for the runtime's lookup of a module's __cfi_check
+    a.emit(BTI_C, RET, NOP, NOP)
     prologue, epilogue = [PACIASP, PUSH], [POP, AUTIASP, RET]
 
     # 1. range check, b.hs to an out-of-line slow path that jumps back to the call
@@ -237,6 +239,20 @@ def jtcfi_program():
     a.emit(*load_id(_type_id(T_FILE)))
     a.emit(mov(1, 20), bl("__cfi_slowpath_diag"), b("back_gapcopy"))
 
+    # 9. range check whose slow path is inlined: find the module's __cfi_check, then call it with the type id (the
+    #    CFI runtime's own indirect call, not a program call)
+    a.label("call_inline")
+    a.emit(*prologue)
+    a.emit(mov(21, 1), adrp(9, "jt"), lo12(9, 9, "jt"), sub(10, 21, 9), ror(10, 10, 3), cmp_imm(10, 3),
+           bcond(HS, "slow_inline"))
+    a.label("back_inline")
+    a.label("site_inline")
+    a.emit(blr(21), *epilogue)
+    a.label("slow_inline")
+    a.emit(mov(0, 21), bl("find_check_fn"), mov(8, 0), *load_id(_type_id(T_FILE)), mov(1, 21))
+    a.label("rt_inline")
+    a.emit(blr(8), b("back_inline"))
+
     a.align(64)
     a.label("jt")                                              # 4 entries: bti c; b <function>
     for name, _ in members:
@@ -247,7 +263,8 @@ def jtcfi_program():
     words = a.words()
     L = a.labels
     symbols = [(n, L[n]) for n in ("f_a", "f_b", "f_c", "g_one", "__cfi_slowpath_diag", "call_hs", "call_lo",
-                                   "call_hi", "call_hoisted", "call_single", "call_slow", "call_gap", "call_gapcopy")]
+                                   "call_hi", "call_hoisted", "call_single", "call_slow", "call_gap", "call_gapcopy",
+                                   "find_check_fn", "call_inline")]
     symbols += [(n + ".cfi_jt", L[n + ".cfi_jt"]) for n, _ in members]
     symbols += [("__typeid_%s_global_addr" % T_FILE, L["jt"]), ("__typeid_%s_global_addr" % T_VOID, L["g_one.cfi_jt"]),
                 ("__cfi_jt_start", L["jt"]), ("__cfi_jt_end", L["jt_end"])]
@@ -261,6 +278,8 @@ def jtcfi_program():
         dict(function="call_slow", call=L["site_slow"], kind="slowpath", type=T_READ, candidates=[]),
         dict(function="call_gap", call=L["site_gap"], kind="range", type=T_FILE, candidates=fa),
         dict(function="call_gapcopy", call=L["site_gapcopy"], kind="range", type=T_FILE, candidates=fa),
+        dict(function="call_inline", call=L["site_inline"], kind="range", type=T_FILE, candidates=fa,
+             runtime_call="0x%x" % L["rt_inline"]),
     ]
     for site in sites:
         site["type_id"] = "0x%016x" % _type_id(site["type"])

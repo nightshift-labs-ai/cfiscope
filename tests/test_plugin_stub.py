@@ -125,11 +125,11 @@ class IdaLayer(unittest.TestCase):
         names = {shift(v): k for k, v in truth["symbols"].items()}
         sys.modules["ida_name"].get_ea_name = lambda ea: names.get(ea, "")
         sites, stats = il.scan()
-        self.assertEqual((stats["scheme"], stats["sites"], stats["named_checks"]), ("jump-table CFI", 8, 7))
+        self.assertEqual((stats["scheme"], stats["sites"], stats["named_checks"]), ("jump-table CFI", 9, 8))
         self.assertEqual(il.scheme_name(sites), "jump-table CFI")
         res = il.annotate(sites)
-        self.assertEqual(res["comments"], 8)
-        self.assertEqual(res["xrefs"], 6 * 3 + 1)                  # six calls of int (file*, int), one of void (void*)
+        self.assertEqual(res["comments"], 9)
+        self.assertEqual(res["xrefs"], 7 * 3 + 1)                  # seven calls of int (file*, int), one of void (void*)
         by_call = {s.call_ea: s for s in sites}
         for want in truth["sites"]:
             s = by_call[shift(want["call"])]
@@ -151,7 +151,7 @@ class IdaLayer(unittest.TestCase):
         self.assertEqual(il.scan()[1]["named_checks"], 0)
         w.input_path = os.path.join(HERE, "fixtures", "aarch64-jtcfi.elf")
         sites2, stats2 = il.scan()
-        self.assertEqual(stats2["named_checks"], 7)
+        self.assertEqual(stats2["named_checks"], 8)
         self.assertEqual({il.core.type_label(s) for s in sites2 if s.targets}, {"int (file*, int)", "void (void*)"})
         w.input_path = os.path.join(HERE, "fixtures", "missing.elf")
         self.assertEqual(il.scan()[1]["named_checks"], 0)
@@ -170,7 +170,7 @@ class IdaLayer(unittest.TestCase):
         self.assertEqual(il.callers_rows(sites, shift(truth["symbols"]["g_one.cfi_jt"])), rows)
         self.assertEqual(il.callers_rows(sites, shift(truth["symbols"]["f_a.cfi_jt"])),
                          il.callers_rows(sites, shift(truth["symbols"]["f_a"])))
-        self.assertEqual(len(il.callers_rows(sites, shift(truth["symbols"]["f_a.cfi_jt"]))), 6)
+        self.assertEqual(len(il.callers_rows(sites, shift(truth["symbols"]["f_a.cfi_jt"]))), 7)
         # The cursor exactly on a call (or check) always selects that site, even inside another site's span.
         for s in sites:
             if s.call_ea:
