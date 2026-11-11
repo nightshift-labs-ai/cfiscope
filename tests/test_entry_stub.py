@@ -6,8 +6,8 @@ sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, ".."))
 import test_plugin_stub as T  # noqa: E402
 
 
-def load_entry():
-    w, _ = T.IdaLayer("test_flow").make("x86_64-kernel", "metapc")
+def load_entry(name="x86_64-kernel", proc="metapc", ext=".o"):
+    w, _ = T.IdaLayer("test_flow").make(name, proc, ext=ext)
     kw, ia = sys.modules["ida_kernwin"], sys.modules["ida_idaapi"]
     log = {"msgs": [], "menu": [], "popup": [], "registered": [], "hooked": 0}
     kw.msg = lambda t: log["msgs"].append(t)
@@ -204,6 +204,54 @@ class Pseudocode(unittest.TestCase):
         self.assertEqual(hooks.func_printed(Broken()), 0)
         self.assertEqual(sum("pseudocode comment failed" in m for m in self.log["msgs"]), 1)   # logged once
         self.assertEqual(hooks.func_printed(None), 0)
+
+
+class JumpTableCfi(unittest.TestCase):
+    """The plugin actions on the hand-assembled Linux 5.x jump-table CFI fixture."""
+
+    def setUp(self):
+        import json
+        self.addCleanup(sys.modules.pop, "ida_hexrays", None)
+        self.w, self.E, self.log = load_entry("aarch64-jtcfi", "ARM", ".elf")
+        with open(os.path.join(HERE, "fixtures", "jtcfi_truth.json")) as fh:
+            self.truth = json.load(fh)
+        base = self.w.segs[0].start_ea
+        self.shift = lambda a: base + int(a, 16) - int(self.truth["base"], 16)
+        names = {self.shift(v): k for k, v in self.truth["symbols"].items() if not k.startswith("__")}
+        self.w.nlist = sorted((self.shift(v), k) for k, v in self.truth["symbols"].items())
+        sys.modules["ida_name"].get_ea_name = lambda ea: names.get(ea, "")
+
+    def test_scan_lists_and_pseudocode(self):
+        fake_hexrays(self.log)
+        shown = []
+        kw = sys.modules["ida_kernwin"]
+        kw.Choose.Show = lambda chooser: shown.append((chooser.title, chooser.rows)) or True
+        orig_init = kw.Choose.__init__
+        kw.Choose.__init__ = lambda chooser, title, cols, flags=0: setattr(chooser, "title", title)
+        self.addCleanup(setattr, kw.Choose, "__init__", orig_init)
+        p = self.E.PLUGIN_ENTRY()
+        p.init()
+        self.assertEqual(self.E.ScanAction().activate(None), 1)
+        sites = self.E.STATE["sites"]
+        self.assertEqual(len(sites), 6)
+        self.assertFalse(any("WARN" in m for m in self.log["msgs"]))
+        hs = self.truth["sites"][0]
+        call = self.shift(hs["call"])
+        cf = FakeCfunc(["int f(void)", "{", "  return fp(file, 0);", "}"], {call: ["c"]}, {"c": (2, 2)})
+        self.E.STATE["hx"].func_printed(cf)
+        self.assertEqual(cf.text()[2], "  return fp(file, 0);\x01\x04  // CFIScope: 3 candidates of int (file*, int): "
+                         "f_a, f_b, f_c\x02\x04")
+        kw.get_screen_ea = lambda: call
+        self.assertEqual(self.E.TargetsAction().activate(None), 1)
+        title, rows = shown[-1]
+        self.assertEqual(title, "jump-table CFI candidates for the call at 0x%X (int (file*, int))" % call)
+        self.assertEqual([r[1] for r in rows], ["f_a", "f_b", "f_c"])
+        kw.get_screen_ea = lambda: self.shift(self.truth["symbols"]["g_one"])
+        self.assertEqual(self.E.CallersAction().activate(None), 1)
+        self.assertEqual(shown[-1][0], "jump-table CFI callers of g_one")
+        self.assertEqual(self.E.RemoveAction().activate(None), 1)
+        self.assertEqual(self.w.cmts, {})
+        p.term()
 
 
 if __name__ == "__main__":

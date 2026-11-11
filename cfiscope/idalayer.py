@@ -11,6 +11,8 @@ import ida_xref
 from . import core
 
 COMMENT_TAG = "kCFI"
+JT_COMMENT_TAG = "jtCFI"      # Linux 5.x jump-table CFI sites
+OWN_TAGS = (COMMENT_TAG, JT_COMMENT_TAG)
 DEFAULT_XREF_LIMIT = 16
 BADADDR = ida_idaapi.BADADDR
 
@@ -46,11 +48,29 @@ def layout():
     return tuple((seg.start_ea, seg.end_ea) for seg in segments if seg is not None)
 
 
+def typeid_names():
+    """(address, name) of the __typeid_<type>_global_addr names in the database (kallsyms keeps them)."""
+    out = []
+    for i in range(ida_name.get_nlist_size()):
+        name = ida_name.get_nlist_name(i)
+        if name and name.startswith("__typeid_"):
+            out.append((ida_name.get_nlist_ea(i), name))
+    return out
+
+
 def scan():
     arch = current_arch()
     if arch is None:
         raise RuntimeError("CFIScope supports 64-bit x86 and AArch64 databases only.")
-    return core.resolve(code_ranges(), arch)
+    sites, stats = core.resolve(code_ranges(), arch)
+    if stats.get("scheme") == "jump-table CFI":
+        stats = dict(stats, named_types=core.name_jt_types(sites, typeid_names()))
+    return sites, stats
+
+
+def scheme_name(sites):
+    """'kCFI', or 'jump-table CFI' for a Linux 5.x kernel."""
+    return "jump-table CFI" if sites and sites[0].kind != "kcfi" else "kCFI"
 
 
 def is_address_taken(ea):
@@ -75,8 +95,23 @@ def ranked(site):
     return sorted(site.targets, key=lambda t: (not is_address_taken(t), t))
 
 
+def _jt_describe(site, targets):
+    label = core.type_label(site) or "type unknown"
+    if not targets:
+        if site.kind == "slowpath":
+            why = site.note or "only __cfi_slowpath checks this call: its targets can only be in modules"
+            return "%s %s: no candidate in this image (%s)" % (JT_COMMENT_TAG, label, why)
+        return "%s %s: candidates unknown (the check's jump-table range was not found)" % (JT_COMMENT_TAG, label)
+    names = ", ".join(target_name(t) for t in targets[:6])
+    if len(targets) > 6:
+        names += ", +%d more" % (len(targets) - 6)
+    return "%s %s: %d candidate(s): %s" % (JT_COMMENT_TAG, label, len(targets), names)
+
+
 def describe(site):
     targets = ranked(site)
+    if getattr(site, "kind", "kcfi") != "kcfi":
+        return _jt_describe(site, targets)
     if not targets:
         return "%s 0x%08X: no implementation in this image" % (COMMENT_TAG, site.hash)
     names = ", ".join(target_name(t) for t in targets[:6])
@@ -89,12 +124,19 @@ def describe(site):
 def pseudocode_text(site, limit=5):
     """Trailing pseudocode comment: the count and the first `limit` candidates, in the same order as describe()."""
     targets = ranked(site)
+    of = ""
+    if getattr(site, "kind", "kcfi") != "kcfi":
+        of = " of " + core.type_label(site) if core.type_label(site) else ""
+        if not targets and site.kind == "slowpath":
+            return "CFIScope: no candidate in this image%s (slow-path check only)" % of
+        if not targets:
+            return "CFIScope: candidates unknown%s" % of
     if not targets:
         return "CFIScope: 0 candidates in this image"
     names = ", ".join(target_name(t) for t in targets[:limit])
     if len(targets) > limit:
         names += " and %d more" % (len(targets) - limit)
-    return "CFIScope: %d candidate%s: %s" % (len(targets), "" if len(targets) == 1 else "s", names)
+    return "CFIScope: %d candidate%s%s: %s" % (len(targets), "" if len(targets) == 1 else "s", of, names)
 
 
 def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT):
@@ -103,7 +145,7 @@ def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT):
     for s in sites:
         ea = s.call_ea or s.check_ea
         old = ida_bytes.get_cmt(ea, False)
-        if old and not old.startswith(COMMENT_TAG):
+        if old and not old.startswith(OWN_TAGS):
             res["kept_user_comments"] += 1
         else:
             ida_bytes.set_cmt(ea, describe(s), False)
@@ -133,7 +175,7 @@ def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
     for s in sites:
         ea = s.call_ea or s.check_ea
         old = ida_bytes.get_cmt(ea, False)
-        if old and old.startswith(COMMENT_TAG):
+        if old and old.startswith(OWN_TAGS):
             ida_bytes.set_cmt(ea, "", False)
         if s.call_ea and 0 < len(s.targets) <= xref_limit:
             existing = far_crefs_from(s.call_ea)
@@ -145,7 +187,7 @@ def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
 
 
 def define_functions(sites):
-    """A kCFI preamble marks a real entry point: create functions IDA missed."""
+    """A kCFI preamble, or a CFI jump-table entry's branch, marks a real entry point: create functions IDA missed."""
     made = 0
     for t in sorted({t for s in sites for t in s.targets}):
         if ida_funcs.get_func(t) is None and ida_funcs.add_func(t):
@@ -176,13 +218,21 @@ def site_at(sites, ea):
     func = ida_funcs.get_func(ea)
     best = None
     for s in sites:
-        end = (s.call_ea or s.check_ea) + 4
-        if s.check_ea <= ea < end:
+        lo = min(s.check_ea, s.call_ea or s.check_ea)      # a jump-table CFI call can sit before its check (b.lo)
+        end = max(s.check_ea, s.call_ea or s.check_ea) + 4
+        if lo <= ea < end:
             return s
         if func is not None and func.start_ea <= s.check_ea < func.end_ea:
             if best is None or abs(s.check_ea - ea) < abs(best.check_ea - ea):
                 best = s
     return best
+
+
+def targets_title(site):
+    at = site.call_ea or site.check_ea
+    if site.kind == "kcfi":
+        return "kCFI candidates for the call at 0x%X (hash 0x%08X)" % (at, site.hash)
+    return "jump-table CFI candidates for the call at 0x%X (%s)" % (at, core.type_label(site) or "type unknown")
 
 
 def targets_rows(site):

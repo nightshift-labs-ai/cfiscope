@@ -11,6 +11,7 @@ class Seg:
 class World:
     def __init__(self, segs, mem):
         self.segs, self.mem, self.cmts, self.crefs, self.funcs, self.drefs = segs, mem, {}, set(), set(), set()
+        self.nlist = []   # (ea, name) as IDA's name list holds them
 
 def install(world):
     m = {n: types.ModuleType(n) for n in "ida_bytes ida_funcs ida_ida ida_idaapi ida_kernwin ida_name ida_segment ida_xref".split()}
@@ -38,6 +39,9 @@ def install(world):
     m["ida_funcs"].get_func_name = lambda ea: "sub_%x" % ea
     m["ida_funcs"].add_func = lambda ea: world.funcs.add(ea) or True
     m["ida_name"].get_ea_name = lambda ea: ""
+    m["ida_name"].get_nlist_size = lambda: len(world.nlist)
+    m["ida_name"].get_nlist_ea = lambda i: world.nlist[i][0]
+    m["ida_name"].get_nlist_name = lambda i: world.nlist[i][1]
     class Choose:
         CHCOL_HEX, CH_RESTORE, NOTHING_CHANGED = 1, 2, 0
         def __init__(self, title, cols, flags=0): pass
@@ -48,8 +52,8 @@ def install(world):
     return importlib.import_module("cfiscope.idalayer")
 
 class IdaLayer(unittest.TestCase):
-    def make(self, name, proc, perm=1, type_=2):
-        d, S, text = sections(os.path.join(HERE, "fixtures", name + ".o"))
+    def make(self, name, proc, perm=1, type_=2, ext=".o"):
+        d, S, text = sections(os.path.join(HERE, "fixtures", name + ext))
         segs, mem, base = [], {}, 0x100000
         for _, data in sorted(text.items()):
             segs.append(Seg(base, base + len(data), perm, type_)); mem[base] = data
@@ -106,6 +110,47 @@ class IdaLayer(unittest.TestCase):
     def test_raw_load_without_permissions_scans_everything(self):
         w, il = self.make("x86_64-plain", "metapc", perm=0, type_=0)
         self.assertGreater(il.scan()[1]["sites"], 0)
+
+    def test_jump_table_cfi_flow(self):
+        """Linux 5.x jump-table CFI: the same comments, xrefs and removal, with the type in the comment."""
+        import json
+        with open(os.path.join(HERE, "fixtures", "jtcfi_truth.json")) as fh:
+            truth = json.load(fh)
+        w, il = self.make("aarch64-jtcfi", "ARM", ext=".elf")
+        base = w.segs[0].start_ea
+        shift = lambda a: base + int(a, 16) - int(truth["base"], 16)
+        w.nlist = [(shift(v), k) for k, v in sorted(truth["symbols"].items())]
+        names = {shift(v): k for k, v in truth["symbols"].items()}
+        sys.modules["ida_name"].get_ea_name = lambda ea: names.get(ea, "")
+        sites, stats = il.scan()
+        self.assertEqual((stats["scheme"], stats["sites"], stats["named_types"]), ("jump-table CFI", 6, 5))
+        self.assertEqual(il.scheme_name(sites), "jump-table CFI")
+        res = il.annotate(sites)
+        self.assertEqual(res["comments"], 6)
+        self.assertEqual(res["xrefs"], 4 * 3 + 1)                  # four calls of int (file*, int), one of void (void*)
+        by_call = {s.call_ea: s for s in sites}
+        for want in truth["sites"]:
+            s = by_call[shift(want["call"])]
+            text = w.cmts[s.call_ea]
+            self.assertTrue(text.startswith("jtCFI "), text)
+            if want["candidates"]:
+                self.assertEqual(text, "jtCFI %s: %d candidate(s): %s" % (
+                    truth["type_names"][want["type"]], len(want["candidates"]), ", ".join(want["candidates"])))
+                self.assertEqual({t for (f, t, _) in w.crefs if f == s.call_ea},
+                                 {shift(truth["symbols"][n]) for n in want["candidates"]})
+                self.assertIn("of %s: " % truth["type_names"][want["type"]], il.pseudocode_text(s))
+            else:
+                self.assertIn("no candidate in this image", text)
+                self.assertIn("type id " + want["type_id"], text)
+                self.assertEqual(il.pseudocode_text(s), "CFIScope: no candidate in this image of type id %s "
+                                 "(slow-path check only)" % want["type_id"])
+        lo = by_call[shift(truth["sites"][1]["call"])]               # b.lo: the call sits after the check here
+        self.assertIs(il.site_at(sites, lo.call_ea), lo)
+        self.assertIn("int (file*, int)", il.targets_title(lo))
+        rows = il.callers_rows(sites, shift(truth["symbols"]["g_one"]))
+        self.assertEqual([r[0] for r in rows], [shift(truth["sites"][4]["call"])])
+        self.assertEqual(il.remove_annotations(sites), res["xrefs"])
+        self.assertEqual(w.cmts, {}); self.assertEqual(w.crefs, set())
 
 if __name__ == "__main__":
     unittest.main()

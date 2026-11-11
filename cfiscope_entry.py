@@ -1,4 +1,4 @@
-"""CFIScope: resolve Linux/Android kCFI indirect calls in IDA.
+"""CFIScope: resolve Linux/Android kCFI indirect calls in IDA (and the aarch64 jump-table CFI of Linux 5.x).
 
 Edit > Plugins > CFIScope actions:
   * Scan kCFI calls: comment every check, add xrefs for short candidate lists.
@@ -179,9 +179,10 @@ class ScanAction(ida_kernwin.action_handler_t):
         report(json.dumps(STATE["stats"]))
         report(json.dumps(res))
         if not sites:
-            ida_kernwin.warning("No kCFI checks found. This binary may not be built with -fsanitize=kcfi "
-                                "(Linux 6.1+ CONFIG_CFI_CLANG); GCC kernels and the older jump-table CFI "
-                                "of Linux 5.x Clang builds are not supported.")
+            ida_kernwin.warning("No kCFI checks found, and no aarch64 jump-table CFI either. This binary may not be "
+                                "built with -fsanitize=kcfi (Linux 6.1+ CONFIG_CFI_CLANG) or with the older "
+                                "jump-table CFI of Linux 5.x as in Android GKI 5.15 (aarch64 only); GCC kernels "
+                                "are not supported.")
             return 1
         STATE["pseudo"] = {s.call_ea or s.check_ea: s for s in sites}
         if hook_pseudocode():
@@ -204,10 +205,9 @@ class TargetsAction(ida_kernwin.action_handler_t):
             return 0
         site = idalayer.site_at(sites, ida_kernwin.get_screen_ea())
         if site is None:
-            ida_kernwin.warning("No kCFI check at or near the cursor.")
+            ida_kernwin.warning("No %s check at or near the cursor." % idalayer.scheme_name(sites))
             return 0
-        idalayer.Chooser("kCFI candidates for the call at 0x%X (hash 0x%08X)" % (site.call_ea or site.check_ea, site.hash),
-                         idalayer.targets_rows(site)).Show()
+        idalayer.Chooser(idalayer.targets_title(site), idalayer.targets_rows(site)).Show()
         return 1
 
     def update(self, ctx):
@@ -223,9 +223,9 @@ class CallersAction(ida_kernwin.action_handler_t):
         ea = ida_kernwin.get_screen_ea()
         rows = idalayer.callers_rows(sites, ea)
         if not rows:
-            ida_kernwin.warning("No kCFI call site can reach this function.")
+            ida_kernwin.warning("No %s call site can reach this function." % idalayer.scheme_name(sites))
             return 0
-        idalayer.Chooser("kCFI callers of %s" % idalayer.target_name(ea), rows).Show()
+        idalayer.Chooser("%s callers of %s" % (idalayer.scheme_name(sites), idalayer.target_name(ea)), rows).Show()
         return 1
 
     def update(self, ctx):
