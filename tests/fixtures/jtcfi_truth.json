@@ -1,0 +1,102 @@
+{
+ "base": "0xffffffc008000000",
+ "jump_table": [
+  "0xffffffc008000240",
+  4
+ ],
+ "sites": [
+  {
+   "call": "0xffffffc008000078",
+   "candidates": [
+    "f_a",
+    "f_b",
+    "f_c"
+   ],
+   "function": "call_hs",
+   "kind": "range",
+   "type": "_ZTSFiP4fileiE",
+   "type_id": "0x95a8373040082c4d"
+  },
+  {
+   "call": "0xffffffc0080000ec",
+   "candidates": [
+    "f_a",
+    "f_b",
+    "f_c"
+   ],
+   "function": "call_lo",
+   "kind": "range",
+   "type": "_ZTSFiP4fileiE",
+   "type_id": "0x95a8373040082c4d"
+  },
+  {
+   "call": "0xffffffc008000120",
+   "candidates": [
+    "f_a",
+    "f_b",
+    "f_c"
+   ],
+   "function": "call_hi",
+   "kind": "range",
+   "type": "_ZTSFiP4fileiE",
+   "type_id": "0x95a8373040082c4d"
+  },
+  {
+   "call": "0xffffffc008000178",
+   "candidates": [
+    "f_a",
+    "f_b",
+    "f_c"
+   ],
+   "function": "call_hoisted",
+   "kind": "range",
+   "type": "_ZTSFiP4fileiE",
+   "type_id": "0x95a8373040082c4d"
+  },
+  {
+   "call": "0xffffffc0080001cc",
+   "candidates": [
+    "g_one"
+   ],
+   "function": "call_single",
+   "kind": "single",
+   "type": "_ZTSFvPvE",
+   "type_id": "0x4c550309df1cf4c1"
+  },
+  {
+   "call": "0xffffffc008000220",
+   "candidates": [],
+   "function": "call_slow",
+   "kind": "slowpath",
+   "type": "_ZTSFlP4filePcmPxE",
+   "type_id": "0x07ff5a213d37b1a6"
+  }
+ ],
+ "slowpath": "0xffffffc008000040",
+ "symbols": {
+  "__cfi_jt_end": "0xffffffc008000260",
+  "__cfi_jt_start": "0xffffffc008000240",
+  "__cfi_slowpath_diag": "0xffffffc008000040",
+  "__typeid__ZTSFiP4fileiE_global_addr": "0xffffffc008000240",
+  "__typeid__ZTSFvPvE_global_addr": "0xffffffc008000258",
+  "call_hi": "0xffffffc0080000fc",
+  "call_hoisted": "0xffffffc00800014c",
+  "call_hs": "0xffffffc008000050",
+  "call_lo": "0xffffffc0080000a4",
+  "call_single": "0xffffffc0080001ac",
+  "call_slow": "0xffffffc0080001f8",
+  "f_a": "0xffffffc008000000",
+  "f_a.cfi_jt": "0xffffffc008000240",
+  "f_b": "0xffffffc008000010",
+  "f_b.cfi_jt": "0xffffffc008000248",
+  "f_c": "0xffffffc008000020",
+  "f_c.cfi_jt": "0xffffffc008000250",
+  "g_one": "0xffffffc008000030",
+  "g_one.cfi_jt": "0xffffffc008000258"
+ },
+ "type_names": {
+  "_ZTSFiP4fileiE": "int (file*, int)",
+  "_ZTSFlP4filePcmPxE": "long (file*, char*, unsigned long, long long*)",
+  "_ZTSFvPvE": "void (void*)"
+ }
+}
