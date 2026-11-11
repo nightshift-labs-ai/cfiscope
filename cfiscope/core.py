@@ -739,7 +739,7 @@ def resolve_jump_table_cfi(ranges):
                 checks.append(chk)
         for m in _aligned(_ROR_ANCHOR, c.mem):    # sub and ror with up to RANGE_GAP other words between them
             j = m.start() >> 2
-            if j < 1 or _is_sub_reg(c.w[j - 1]):
+            if j < 1 or (_is_sub_reg(c.w[j - 1]) and c.w[j - 1] & 31 == (c.w[j] >> 5) & 31):
                 continue                          # adjacent: the anchor above handles it
             for gap in range(1, RANGE_GAP + 1):
                 if j - 1 - gap >= 0 and _is_sub_reg(c.w[j - 1 - gap]) and c.w[j - 1 - gap] & 31 == (c.w[j] >> 5) & 31:
@@ -800,6 +800,14 @@ def resolve_jump_table_cfi(ranges):
     where = {}
     for chk in checks:
         loc = _link_forward(codes, chk.code, chk.call_at, {chk.xF}) if 0 <= chk.call_at < len(chk.code.w) else None
+        if loc is None and chk.slow_bl is not None and 0 <= chk.call_at < len(chk.code.w):
+            # The pointer may have been copied to another register before the call (mov x20, x2 between the
+            # check and the blr x20): the slow path passes the register that is really called in x1.
+            r = _x1_source(*chk.slow_bl)
+            if r is not None and r != chk.xF:
+                loc = _link_forward(codes, chk.code, chk.call_at, {r})
+                if loc is not None:
+                    chk.xF = r
         if loc is not None:
             guards[(id(loc[0]), loc[1])].append(chk)
             where[(id(loc[0]), loc[1])] = loc[:2]

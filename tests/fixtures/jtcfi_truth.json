@@ -1,7 +1,7 @@
 {
  "base": "0xffffffc008000000",
  "jump_table": [
-  "0xffffffc0080002c0",
+  "0xffffffc008000300",
   4
  ],
  "sites": [
@@ -82,16 +82,29 @@
    "kind": "range",
    "type": "_ZTSFiP4fileiE",
    "type_id": "0x95a8373040082c4d"
+  },
+  {
+   "call": "0xffffffc0080002ac",
+   "candidates": [
+    "f_a",
+    "f_b",
+    "f_c"
+   ],
+   "function": "call_gapcopy",
+   "kind": "range",
+   "type": "_ZTSFiP4fileiE",
+   "type_id": "0x95a8373040082c4d"
   }
  ],
  "slowpath": "0xffffffc008000040",
  "symbols": {
-  "__cfi_jt_end": "0xffffffc0080002e0",
-  "__cfi_jt_start": "0xffffffc0080002c0",
+  "__cfi_jt_end": "0xffffffc008000320",
+  "__cfi_jt_start": "0xffffffc008000300",
   "__cfi_slowpath_diag": "0xffffffc008000040",
-  "__typeid__ZTSFiP4fileiE_global_addr": "0xffffffc0080002c0",
-  "__typeid__ZTSFvPvE_global_addr": "0xffffffc0080002d8",
+  "__typeid__ZTSFiP4fileiE_global_addr": "0xffffffc008000300",
+  "__typeid__ZTSFvPvE_global_addr": "0xffffffc008000318",
   "call_gap": "0xffffffc008000230",
+  "call_gapcopy": "0xffffffc008000284",
   "call_hi": "0xffffffc0080000fc",
   "call_hoisted": "0xffffffc00800014c",
   "call_hs": "0xffffffc008000050",
@@ -99,13 +112,13 @@
   "call_single": "0xffffffc0080001ac",
   "call_slow": "0xffffffc0080001f8",
   "f_a": "0xffffffc008000000",
-  "f_a.cfi_jt": "0xffffffc0080002c0",
+  "f_a.cfi_jt": "0xffffffc008000300",
   "f_b": "0xffffffc008000010",
-  "f_b.cfi_jt": "0xffffffc0080002c8",
+  "f_b.cfi_jt": "0xffffffc008000308",
   "f_c": "0xffffffc008000020",
-  "f_c.cfi_jt": "0xffffffc0080002d0",
+  "f_c.cfi_jt": "0xffffffc008000310",
   "g_one": "0xffffffc008000030",
-  "g_one.cfi_jt": "0xffffffc0080002d8"
+  "g_one.cfi_jt": "0xffffffc008000318"
  },
  "type_names": {
   "_ZTSFiP4fileiE": "int (file*, int)",

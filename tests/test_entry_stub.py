@@ -233,7 +233,7 @@ class JumpTableCfi(unittest.TestCase):
         p.init()
         self.assertEqual(self.E.ScanAction().activate(None), 1)
         sites = self.E.STATE["sites"]
-        self.assertEqual(len(sites), 7)
+        self.assertEqual(len(sites), 8)
         self.assertFalse(any("WARN" in m for m in self.log["msgs"]))
         hs = self.truth["sites"][0]
         call = self.shift(hs["call"])
