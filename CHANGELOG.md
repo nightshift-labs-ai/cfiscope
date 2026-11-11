@@ -13,7 +13,7 @@ Measured on two newer public Android GKI kernels (README Verification):
 | Candidate start precision | 99.34% | 99.34% |
 
 - `tools/eval_gki.py --base <address>`: 6.6 and later GKI kernels start at 0xffffffc080000000 (6.1: 0xffffffc008000000, still the default). The 6.1 numbers in the README reproduce unchanged.
-- Images: the public gki-certified-boot zips from dl.google.com; `tools/extract_bootimg.py` gives byte-identical kernels to an independent extraction; symbols from vmlinux-to-elf.
+- Images: the public gki-certified-boot zips from dl.google.com, kernel extracted with `tools/extract_bootimg.py`, symbols from vmlinux-to-elf.
 
 No change to the scanner or the plugin.
 
