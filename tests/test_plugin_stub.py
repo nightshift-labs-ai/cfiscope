@@ -129,6 +129,9 @@ class IdaLayer(unittest.TestCase):
         self.assertEqual(il.scheme_name(sites), "jump-table CFI")
         res = il.annotate(sites)
         self.assertEqual(res["comments"], 9)
+        rt = shift(truth["sites"][-1]["runtime_call"])           # the inlined slow path's call into __cfi_check
+        self.assertEqual(res["runtime_comments"], 1)
+        self.assertTrue(w.cmts[rt].startswith("jtCFI runtime: calls the module's __cfi_check for int (file*, int)"), w.cmts[rt])
         self.assertEqual(res["xrefs"], 7 * 3 + 1)                  # seven calls of int (file*, int), one of void (void*)
         by_call = {s.call_ea: s for s in sites}
         for want in truth["sites"]:

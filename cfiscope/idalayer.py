@@ -172,9 +172,32 @@ def pseudocode_text(site, limit=5):
     return "CFIScope: %d candidate%s%s: %s" % (len(targets), "" if len(targets) == 1 else "s", of, names)
 
 
+def runtime_calls(sites):
+    """{address: site} of the CFI runtime's own calls (jump-table CFI): the blr of a check's inlined slow path,
+    which calls a module's __cfi_check with the type id. Not program calls, so they get a note, not candidates."""
+    out = {}
+    for s in sites:
+        for x in [s] + list(s.extra_checks):
+            if getattr(x, "runtime_call_ea", 0):
+                out.setdefault(x.runtime_call_ea, x)
+    return out
+
+
+def describe_runtime(site):
+    return ("%s runtime: calls the module's __cfi_check for %s (slow path of the check at 0x%X); not a program call"
+            % (JT_COMMENT_TAG, core.type_label(site) or "this type", site.check_ea))
+
+
 def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT):
     """Comment every check; add user xrefs where the candidate list is short."""
-    res = {"comments": 0, "xrefs": 0, "kept_user_comments": 0}
+    res = {"comments": 0, "xrefs": 0, "kept_user_comments": 0, "runtime_comments": 0}
+    for ea, x in runtime_calls(sites).items():
+        old = ida_bytes.get_cmt(ea, False)
+        if old and not old.startswith(OWN_TAGS):
+            res["kept_user_comments"] += 1
+        else:
+            ida_bytes.set_cmt(ea, describe_runtime(x), False)
+            res["runtime_comments"] += 1
     for s in sites:
         ea = s.call_ea or s.check_ea
         old = ida_bytes.get_cmt(ea, False)
@@ -205,6 +228,10 @@ def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
     and were deleted (del_cref's own return value says whether the target instruction will be deleted,
     not whether a reference was removed, so it is not used for the count)."""
     removed = 0
+    for ea in runtime_calls(sites):
+        old = ida_bytes.get_cmt(ea, False)
+        if old and old.startswith(OWN_TAGS):
+            ida_bytes.set_cmt(ea, "", False)
     for s in sites:
         ea = s.call_ea or s.check_ea
         old = ida_bytes.get_cmt(ea, False)
