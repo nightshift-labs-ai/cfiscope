@@ -2,6 +2,10 @@
 
 Taken from the GitHub release notes. Newest first.
 
+## Unreleased
+
+- **The CFI runtime's own calls are labelled (jump-table CFI).** When a check's slow path is inlined (`bl find_check_fn`, then `blr` to the module's `__cfi_check` with the type id), that `blr` gets the comment `jtCFI runtime: calls the module's __cfi_check for <type> (slow path of the check at ...); not a program call` instead of looking like an unresolved indirect call; Remove annotations clears it. `--json` gives `runtime_call` per site and `runtime_calls` in the statistics. GKI 5.15: 890 found from the code alone, all among the 1,015 that `tools/eval_gki_oldcfi.py` counts with symbols (87.7%); GKI 5.10: none (no inlined slow paths). New fixture case `call_inline`. Tested with fake IDA modules only.
+
 ## v0.1.17 (2026-11-12)
 
 - **Linux 5.x jump-table CFI on aarch64 (Android 12/13 GKI).** When an aarch64 image has no kCFI checks but has a CFI jump table (the longest run of 8-byte `bti c; b <function>` entries), CFIScope reads the older Clang CFI: range checks (`sub; ror #3; cmp; b.hs/b.hi/b.lo/b.ls`, count as an immediate or in a register, also hoisted out of loops), single-member checks (`cmp; b.ne`) and calls checked only by `__cfi_slowpath(_diag)`. The base register is traced back through `adrp`/`add` and `mov` copies; candidates are the branch targets of the entries the check accepts. Each site gets a kind (`range`, `single`, `slowpath`), the 64-bit type id from its slow path and, with `__typeid_<type>_global_addr` symbols, the demangled type (`int (file*, int)`). Hand-decoded, no new dependency.
