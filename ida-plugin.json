@@ -3,7 +3,7 @@
   "plugin": {
     "name": "cfiscope",
     "entryPoint": "cfiscope_entry.py",
-    "version": "0.1.13",
+    "version": "0.1.14",
     "idaVersions": ">=9.0",
     "description": "Resolve indirect calls in Linux and Android kernels built with kCFI: matches the type hash at each call site to the hash in front of every function, then comments, cross-references and lists the candidates.",
     "license": "MIT",

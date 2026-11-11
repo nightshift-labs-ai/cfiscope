@@ -31,6 +31,9 @@ def install(world):
     m["ida_xref"].add_cref = lambda f, t, k: world.crefs.add((f, t, k)) or True
     m["ida_xref"].del_cref = lambda f, t, e: {world.crefs.discard(x) for x in list(world.crefs) if x[:2] == (f, t)} or True
     m["ida_xref"].get_first_dref_to = lambda ea: 1 if ea in world.drefs else 2**64 - 1
+    far = lambda f: sorted({t for (a, t, _) in world.crefs if a == f})
+    m["ida_xref"].get_first_fcref_from = lambda f: (far(f) or [2**64 - 1])[0]
+    m["ida_xref"].get_next_fcref_from = lambda f, cur: next((t for t in far(f) if t > cur), 2**64 - 1)
     m["ida_funcs"].get_func = lambda ea: None
     m["ida_funcs"].get_func_name = lambda ea: "sub_%x" % ea
     m["ida_funcs"].add_func = lambda ea: world.funcs.add(ea) or True
@@ -65,8 +68,9 @@ class IdaLayer(unittest.TestCase):
                 self.assertEqual(res["comments"], stats["sites"])
                 self.assertEqual(res["xrefs"], sum(len(s.targets) for s in sites))
                 self.assertTrue(all(v.startswith("kCFI 0x") for v in w.cmts.values()))
-                il.remove_annotations(sites)
+                self.assertEqual(il.remove_annotations(sites), res["xrefs"])
                 self.assertEqual(w.cmts, {}); self.assertEqual(w.crefs, set())
+                self.assertEqual(il.remove_annotations(sites), 0)  # nothing left to remove
 
     def test_user_comment_kept(self):
         w, il = self.make("x86_64-plain", "metapc")

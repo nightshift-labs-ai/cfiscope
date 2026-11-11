@@ -105,7 +105,19 @@ def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT):
     return res
 
 
+def far_crefs_from(ea):
+    """Jump and call references from ea (no ordinary flow), as IDA stores them."""
+    found, ref = set(), ida_xref.get_first_fcref_from(ea)
+    while ref != ida_idaapi.BADADDR and ref not in found:
+        found.add(ref)
+        ref = ida_xref.get_next_fcref_from(ea, ref)
+    return found
+
+
 def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
+    """Remove our comments and the call xrefs to the candidates. Returns the number of xrefs that existed
+    and were deleted (del_cref's own return value says whether the target instruction will be deleted,
+    not whether a reference was removed, so it is not used for the count)."""
     removed = 0
     for s in sites:
         ea = s.call_ea or s.check_ea
@@ -113,9 +125,11 @@ def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
         if old and old.startswith(COMMENT_TAG):
             ida_bytes.set_cmt(ea, "", False)
         if s.call_ea and 0 < len(s.targets) <= xref_limit:
+            existing = far_crefs_from(s.call_ea)
             for t in s.targets:
-                ida_xref.del_cref(s.call_ea, t, False)
-                removed += 1
+                if t in existing:
+                    ida_xref.del_cref(s.call_ea, t, False)
+                    removed += 1
     return removed
 
 

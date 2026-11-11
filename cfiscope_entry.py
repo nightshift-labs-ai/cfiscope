@@ -144,7 +144,7 @@ class RemoveAction(ida_kernwin.action_handler_t):
         sites = scan_or_warn()
         if sites is None:
             return 0
-        report("xrefs removal attempted: %d" % idalayer.remove_annotations(sites))
+        report("xrefs removed: %d" % idalayer.remove_annotations(sites))
         return 1
 
     def update(self, ctx):
