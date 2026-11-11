@@ -5,9 +5,12 @@ function-type hash in front of every function and compares it at every
 indirect call.  Both ends survive in a stripped binary, so matching them gives
 the set of functions a given indirect call may reach.
 """
+import array
+import hashlib
 import re
 import struct
-from collections import defaultdict
+import sys
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 X86_SITE = re.compile(
@@ -23,6 +26,13 @@ class Site:
     disp: int              # hash offset from the target, negative
     is_tail: bool = False  # jump rather than call
     targets: list = field(default_factory=list)
+    # Jump-table CFI (Linux 5.x) only; kCFI sites keep the defaults.
+    kind: str = "kcfi"     # "kcfi", or "range" / "single" / "slowpath" for jump-table CFI
+    type_id: int = None    # 64-bit cross-DSO type id (MD5 of the mangled type name), when known
+    type_name: str = None  # demangled type, e.g. "int (file*, int)", when symbols name it
+    type_mangled: str = None  # e.g. "_ZTSFiP4fileiE"
+    jt_base: int = 0       # first jump-table entry the check accepts
+    jt_count: int = 0      # number of entries it accepts
 
 
 def _s8(v):
@@ -156,7 +166,20 @@ def _median_resolved(counts):
     return r[len(r) // 2] if r else 0
 
 def resolve(ranges, arch):
-    """ranges: list of (base, bytes).  Returns (sites, stats)."""
+    """ranges: list of (base, bytes).  Returns (sites, stats).
+
+    kCFI first; an aarch64 image with no kCFI check but with a CFI jump table is read as the
+    older jump-table CFI instead (its stats carry "scheme": "jump-table CFI").
+    """
+    sites, stats = _resolve_kcfi(ranges, arch)
+    if not sites and arch == "aarch64":
+        old = resolve_jump_table_cfi(ranges)
+        if old is not None:
+            return old
+    return sites, stats
+
+
+def _resolve_kcfi(ranges, arch):
     sites = []
     for base, mem in ranges:
         sites.extend(scan_sites(mem, base, arch))
@@ -183,5 +206,526 @@ def resolve(ranges, arch):
         "median_candidates_resolved": _median_resolved(counts),
         "max_candidates": counts[-1] if n else 0,
         "disps": disps,
+    }
+    return sites, stats
+
+
+# ---------------------------------------------------------------------------
+# Linux 5.x jump-table CFI on aarch64 (Clang -fsanitize=cfi -fsanitize-cfi-cross-dso,
+# Android 12/13 GKI).  Every address-taken function gets an entry `bti c; b <function>` in
+# one jump table; the functions of one type sit next to each other, and the address taken is
+# the entry.  A checked call either tests that the pointer lies in its type's run of entries
+#     adrp xB, page ; add xB, xB, #off ; sub xS, xF, xB ; ror xT, xS, #3 ; cmp xT, #N ; b.hs slow
+# or, for a type with one member, compares it with that entry (cmp xF, xB ; b.ne slow).
+# The slow path loads the 64-bit type id into x0 and calls __cfi_slowpath(_diag), which is
+# also all that is left when a type has no member in this image.  Fixed-width words only:
+# no disassembler needed.
+
+_BTI_C, _PACIASP = 0xd503245f, 0xd503233f
+_CALLER_SAVED = frozenset(list(range(19)) + [30])
+_JT_RUN = re.compile(rb"(?:\x5f\x24\x03\xd5...[\x14-\x17])+", re.DOTALL)   # (bti c; b imm26)+
+_RANGE_ANCHOR = re.compile(rb".[\x00-\x03][\x00-\x1f]\xcb.[\x08-\x0f][\xc0-\xdf]\x93", re.DOTALL)  # sub; ror #2/#3
+_SINGLE_ANCHOR = re.compile(rb"[\x1f\x3f\x5f\x7f\x9f\xbf\xdf\xff][\x00-\x03][\x00-\x1f]\xeb"
+                            rb"[\x01\x21\x41\x61\x81\xa1\xc1\xe1]..\x54", re.DOTALL)    # cmp xA, xB; b.ne
+_BRANCH_REG = re.compile(rb"[\x00\x20\x40\x60\x80\xa0\xc0\xe0][\x00-\x03][\x1f\x3f]\xd6")  # br / blr xN
+_BL = re.compile(rb"...[\x94-\x97]", re.DOTALL)
+JT_MIN_ENTRIES = 2
+
+
+def _aligned(pattern, mem, step=4):
+    """Matches of pattern that start on a 4-byte boundary (a misaligned match does not hide an aligned one)."""
+    pos = 0
+    while True:
+        m = pattern.search(mem, pos)
+        if m is None:
+            return
+        if m.start() & 3:
+            pos = m.start() + 1
+            continue
+        yield m
+        pos = m.start() + step if step else m.end()
+
+
+class _Code:
+    """One code range as 32-bit words."""
+
+    def __init__(self, base, mem):
+        self.base, self.mem = base, bytes(mem)
+        self.w = array.array("I")
+        self.w.frombytes(self.mem[:len(self.mem) & ~3])
+        if sys.byteorder == "big":
+            self.w.byteswap()
+
+    def ea(self, i):
+        return self.base + 4 * i
+
+    def index(self, ea):
+        d = ea - self.base
+        return d >> 2 if 0 <= d < 4 * len(self.w) and not d & 3 else None
+
+
+def _locate(codes, ea):
+    for c in codes:
+        i = c.index(ea)
+        if i is not None:
+            return c, i
+    return None
+
+
+def _imm26(w):
+    v = w & 0x3ffffff
+    return v - 0x4000000 if v & 0x2000000 else v
+
+
+def _imm19(w):
+    v = (w >> 5) & 0x7ffff
+    return v - 0x80000 if v & 0x40000 else v
+
+
+def _is_b(w):
+    return w & 0xfc000000 == 0x14000000
+
+
+def _is_bl(w):
+    return w & 0xfc000000 == 0x94000000
+
+
+def _is_bcond(w):
+    return w & 0xff000010 == 0x54000000
+
+
+def _ends_flow(w):
+    """ret / retaa / eret / brk / br: the next word is not reached by falling through."""
+    return (w & 0xfffffc1f == 0xd65f0000 or w & 0xfffffbff == 0xd65f0bff or w == 0xd69f03e0
+            or w & 0xffe0001f == 0xd4200000 or w & 0xfffffc1f == 0xd61f0000)
+
+
+def _is_mov_reg(w):
+    return w & 0xffe0ffe0 == 0xaa0003e0          # mov xd, xm (orr xd, xzr, xm)
+
+
+def _ls_written(w):
+    rt, rn, rt2 = w & 31, (w >> 5) & 31, (w >> 10) & 31
+    simd = (w >> 26) & 1
+    if w & 0x3b000000 == 0x18000000:            # ldr (literal) / prfm
+        return () if simd or w >> 30 == 3 else (rt,)
+    if w & 0x3a000000 == 0x28000000:            # ldp / stp (all indexing modes)
+        out = [rt, rt2] if (w >> 22) & 1 and not simd else []
+        if (w >> 23) & 3 in (1, 3):
+            out.append(rn)                        # pre/post-index writeback
+        return tuple(out)
+    if w & 0x3a000000 == 0x38000000:            # ldr / str register forms, atomics
+        out = []
+        opc, size = (w >> 22) & 3, w >> 30
+        if not (w >> 24) & 1:
+            mode = (w >> 10) & 3
+            if not (w >> 21) & 1 and mode in (1, 3):
+                out.append(rn)                    # pre/post-index writeback
+            elif (w >> 21) & 1 and mode & 1:
+                out.append(rn)                    # ldraa/ldrab (conservative)
+            if (w >> 21) & 1 and mode == 0 and not simd:
+                out.append(rt)                    # atomic memory operation
+        if not simd and opc != 0 and not (size == 3 and opc == 2):
+            out.append(rt)                        # a load (prfm excluded)
+        return tuple(out)
+    return (rt, rn, rt2, (w >> 16) & 31)        # exclusives, CAS, SIMD structures: assume all
+
+
+def _written(w):
+    """General registers an instruction may write (a superset when unsure); calls clobber x0-x18 and x30."""
+    op0 = (w >> 25) & 15
+    if op0 & 14 == 8:                           # data processing, immediate
+        return (w & 31,)
+    if op0 & 7 == 5:                            # data processing, register
+        return () if w & 0x3fe00000 == 0x3a400000 else (w & 31,)   # ccmp/ccmn write flags only
+    if op0 & 14 == 10:                          # branches, exceptions, system
+        if _is_bl(w) or w & 0xfffffc1f == 0xd63f0000 or w & 0xfffff800 == 0xd63f0800:
+            return _CALLER_SAVED
+        if w & 0xfff00000 == 0xd5300000 or w & 0xfff80000 == 0xd5280000:   # mrs, sysl
+            return (w & 31,)
+        return ()
+    if op0 & 5 == 4:                            # loads and stores
+        return _ls_written(w)
+    return (w & 31,)
+
+
+def _stops_walk(w, k, i):
+    """A backward walk from word i stops at word k: a function start, or code that does not fall through.
+    An unconditional b that jumps forward into the stretch already walked (k < target <= i) is stepped over:
+    it only skips a block placed in between (a rotated loop), whose words the walk checked anyway."""
+    if _is_b(w):
+        return not k < k + _imm26(w) <= i
+    return _ends_flow(w) or w == _BTI_C or w == _PACIASP
+
+
+def _adrp(w, pc):
+    imm = (((w >> 5) & 0x7ffff) << 2) | ((w >> 29) & 3)
+    if imm & (1 << 20):
+        imm -= 1 << 21
+    return ((pc & ~0xfff) + (imm << 12)) & 0xffffffffffffffff
+
+
+def _adr(w, pc):
+    imm = (((w >> 5) & 0x7ffff) << 2) | ((w >> 29) & 3)
+    if imm & (1 << 20):
+        imm -= 1 << 21
+    return (pc + imm) & 0xffffffffffffffff
+
+
+def _const_reg(c, i, r, limit):
+    """Value of xr just before word i, if a straight walk back finds adrp(+add) or adr (through mov copies)."""
+    add = 0
+    seen_add = False
+    W = c.w
+    for k in range(i - 1, max(i - limit, 0) - 1, -1):
+        w = W[k]
+        if _stops_walk(w, k, i):
+            return None                               # left the straight path, or reached a function start
+        if w & 0x9f000000 == 0x90000000 and w & 31 == r:
+            return (_adrp(w, c.ea(k)) + add) & 0xffffffffffffffff
+        if w & 0x9f000000 == 0x10000000 and w & 31 == r:
+            return (_adr(w, c.ea(k)) + add) & 0xffffffffffffffff
+        if w & 0xff800000 == 0x91000000 and w & 31 == r and not seen_add:   # add xr, xs, #imm
+            add = ((w >> 10) & 0xfff) << (12 if (w >> 22) & 1 else 0)
+            seen_add, r = True, (w >> 5) & 31
+            continue
+        if _is_mov_reg(w) and w & 31 == r:
+            r = (w >> 16) & 31
+            continue
+        if r in _written(w):
+            return None
+    return None
+
+
+def _mov_imm(c, i, r, limit=64):
+    """N from `mov wr/xr, #N` (movz, shift 0) before word i."""
+    W = c.w
+    for k in range(i - 1, max(i - limit, 0) - 1, -1):
+        w = W[k]
+        if _stops_walk(w, k, i):
+            return None
+        if w & 0x7fe00000 == 0x52800000 and w & 31 == r:
+            return (w >> 5) & 0xffff
+        if r in _written(w):
+            return None
+    return None
+
+
+def _type_id_before(c, i, limit=16):
+    """The 64-bit constant that movz/movn + movk put in x0 before word i (the bl to the slow path)."""
+    parts = {}
+    W = c.w
+    for k in range(i - 1, max(i - limit, 0) - 1, -1):
+        w = W[k]
+        if _ends_flow(w) or _is_b(w) or _is_bl(w):
+            return None
+        if w & 31 != 0:
+            continue
+        top = w & 0xff800000
+        hw, imm = (w >> 21) & 3, (w >> 5) & 0xffff
+        if top == 0xf2800000:                     # movk x0
+            parts.setdefault(hw, imm)
+        elif top in (0xd2800000, 0x92800000):     # movz / movn x0
+            v = imm << (16 * hw)
+            if top == 0x92800000:
+                v = ~v & 0xffffffffffffffff
+            for h, p in parts.items():
+                v = (v & ~(0xffff << (16 * h))) | (p << (16 * h))
+            return v
+        elif 0 in _written(w):
+            return None
+    return None
+
+
+def _x1_source(c, i, limit=16):
+    """xR in `mov x1, xR` before the bl at word i (the pointer the slow path checks)."""
+    W = c.w
+    for k in range(i - 1, max(i - limit, 0) - 1, -1):
+        w = W[k]
+        if _ends_flow(w) or _is_b(w) or _is_bl(w):
+            return None
+        if _is_mov_reg(w) and w & 31 == 1:
+            return (w >> 16) & 31
+        if 1 in _written(w):
+            return None
+    return None
+
+
+class JumpTable:
+    """The CFI jump table: entry k at start + k * entry_size branches to targets[k]."""
+
+    def __init__(self, start, entry_size, targets):
+        self.start, self.entry_size, self.targets = start, entry_size, targets
+
+    @property
+    def end(self):
+        return self.start + self.entry_size * len(self.targets)
+
+    def entry_index(self, ea):
+        if ea is None or not self.start <= ea < self.end or (ea - self.start) % self.entry_size:
+            return None
+        return (ea - self.start) // self.entry_size
+
+
+def find_jump_table(ranges):
+    """The longest run of 8-byte `bti c; b <function>` entries in the code ranges, or None."""
+    best = None
+    for base, mem in ranges:
+        if base & 3:
+            continue
+        mem = bytes(mem)
+        for m in _aligned(_JT_RUN, mem, step=0):
+            n = (m.end() - m.start()) // 8
+            if best is None or n > best[0]:
+                best = (n, base, mem, m.start())
+    if best is None or best[0] < JT_MIN_ENTRIES:
+        return None
+    n, base, mem, off = best
+    targets = []
+    for k in range(n):
+        w = struct.unpack_from("<I", mem, off + 8 * k + 4)[0]
+        targets.append((base + off + 8 * k + 4 + 4 * _imm26(w)) & 0xffffffffffffffff)
+    return JumpTable(base + off, 8, targets)
+
+
+class _Check:
+    def __init__(self, kind, code, i, xF, base, count, entry_size, call_at, slow_at, cond):
+        self.kind, self.code, self.i, self.xF = kind, code, i, xF
+        self.base, self.count, self.entry_size = base, count, entry_size
+        self.call_at, self.slow_at, self.cond = call_at, slow_at, cond
+        self.slow_bl = None
+        self.type_id = None
+        self.calls = []
+
+
+def _range_check(c, i):
+    """sub xS, xF, xB at word i, ror xT, xS, #s at i+1, cmp xT, #N (or a register holding N), b.cond."""
+    W = c.w
+    sub, ror = W[i], W[i + 1]
+    xS = sub & 31
+    if (ror >> 5) & 31 != xS or (ror >> 16) & 31 != xS:
+        return None
+    xF, xB, xT = (sub >> 5) & 31, (sub >> 16) & 31, ror & 31
+    if 31 in (xF, xB, xS):
+        return None
+    n = k = None
+    for k in range(i + 2, min(i + 5, len(W) - 1)):
+        q = W[k]
+        if q & 0xff80001f == 0xf100001f and (q >> 5) & 31 == xT:          # cmp xT, #imm
+            n = ((q >> 10) & 0xfff) << (12 if (q >> 22) & 1 else 0)
+            break
+        if q & 0xffe0fc1f == 0xeb00001f and (q >> 5) & 31 == xT:          # cmp xT, xK
+            n = _mov_imm(c, k, (q >> 16) & 31)
+            break
+        if xT in _written(q):
+            return None
+    if n is None or k + 1 >= len(W):
+        return None
+    bc = W[k + 1]
+    cond = bc & 15
+    if not _is_bcond(bc) or cond not in (2, 3, 8, 9):    # hs, lo, hi, ls
+        return None
+    count = n + 1 if cond in (8, 9) else n               # hi/ls compare with the last index, hs/lo with the count
+    taken = k + 1 + _imm19(bc)
+    call_at, slow_at = (k + 2, taken) if cond in (2, 8) else (taken, k + 2)
+    base = _const_reg(c, i, xB, 400)
+    return _Check("range", c, i, xF, base, count, 1 << ((ror >> 10) & 63), call_at, slow_at, cond)
+
+
+def _single_check(c, i, jt):
+    """cmp xA, xB; b.ne at word i, where one register holds the address of a jump-table entry."""
+    W = c.w
+    q, bc = W[i], W[i + 1]
+    a, b = (q >> 5) & 31, (q >> 16) & 31
+    if 31 in (a, b):
+        return None
+    for xF, xB in ((a, b), (b, a)):
+        v = _const_reg(c, i, xB, 64)
+        if jt.entry_index(v) is not None:
+            break
+    else:
+        return None
+    return _Check("single", c, i, xF, v, 1, jt.entry_size, i + 2, i + 1 + _imm19(bc), 1)
+
+
+def _slow_call(c, k, limit=32):
+    """(word, type id) of the first call on the straight path from word k that receives a 64-bit constant in x0:
+    the slow path's bl __cfi_slowpath(_diag), or the blr of an inlined copy of it. (None, None) if none."""
+    W = c.w
+    for j in range(k, min(k + limit, len(W))):
+        w = W[j]
+        if _is_bl(w) or w & 0xfffffc1f == 0xd63f0000:
+            tid = _type_id_before(c, j)
+            if tid is not None:
+                return j, tid
+        elif _ends_flow(w) or _is_b(w):
+            break
+    return None, None
+
+
+def _bl_target(c, k):
+    return (c.ea(k) + 4 * _imm26(c.w[k])) & 0xffffffffffffffff
+
+
+def _link_forward(codes, c, k, regs, limit=48, hops=2):
+    """First blr/br of a register in regs (or a mov copy of it) on the straight path from word k."""
+    regs = set(regs)
+    W, end, h = c.w, k + limit, 0
+    while k < end and k < len(W):
+        w = W[k]
+        if w & 0xffdffc1f == 0xd61f0000:                 # br / blr xN
+            if (w >> 5) & 31 in regs:
+                return c, k
+            if not w & 0x00200000:
+                return None                              # br elsewhere: the path ends
+        if _is_b(w):
+            if h == hops:
+                return None
+            loc = _locate(codes, c.ea(k) + 4 * _imm26(w))
+            if loc is None:
+                return None
+            c, k = loc
+            W, end, h = c.w, k + limit, h + 1
+            continue
+        if _ends_flow(w):
+            return None
+        if _is_mov_reg(w):
+            if (w >> 16) & 31 in regs:
+                regs.add(w & 31)
+            else:
+                regs.discard(w & 31)
+        else:
+            regs.difference_update(_written(w))
+        if not regs:
+            return None
+        k += 1
+    return None
+
+
+def _candidates(jt, chk):
+    """Function targets of the entries a check accepts, or None if they are not all in the table."""
+    if chk.entry_size != jt.entry_size:
+        return None
+    first = jt.entry_index(chk.base)
+    if first is None or chk.count < 1 or first + chk.count > len(jt.targets):
+        return None
+    return jt.targets[first:first + chk.count]
+
+
+def resolve_jump_table_cfi(ranges):
+    """Sites and stats for an aarch64 image built with the Linux 5.x jump-table CFI; None if it has no jump table."""
+    codes = [_Code(base, mem) for base, mem in ranges if not base & 3 and len(mem) >= 8]
+    jt = find_jump_table([(c.base, c.mem) for c in codes])
+    if jt is None:
+        return None
+    checks = []
+    for c in codes:
+        for m in _aligned(_RANGE_ANCHOR, c.mem):
+            chk = _range_check(c, m.start() >> 2)
+            if chk is not None:
+                checks.append(chk)
+        for m in _aligned(_SINGLE_ANCHOR, c.mem):
+            chk = _single_check(c, m.start() >> 2, jt)
+            if chk is not None:
+                checks.append(chk)
+    # The slow-path function (__cfi_slowpath or __cfi_slowpath_diag) is what the checks' slow paths call.
+    called = Counter()
+    for chk in checks:
+        if 0 <= chk.slow_at < len(chk.code.w):
+            chk.slow_bl, chk.type_id = _slow_call(chk.code, chk.slow_at)
+        if chk.slow_bl is not None and _is_bl(chk.code.w[chk.slow_bl]):
+            called[_bl_target(chk.code, chk.slow_bl)] += 1
+    top = max(called.values()) if called else 0
+    slow_fns = {t for t, n in called.items() if 4 * n >= top}
+    if not slow_fns:
+        return None
+    # Checks whose base register was not found: the same type id elsewhere names the range.
+    base_of = defaultdict(set)
+    for chk in checks:
+        if chk.type_id is not None and chk.base is not None:
+            base_of[chk.type_id].add(chk.base)
+    for chk in checks:
+        if chk.base is None and len(base_of.get(chk.type_id, ())) == 1:
+            chk.base = next(iter(base_of[chk.type_id]))
+    # Link each check to the call it guards.
+    calls = {}                                     # (code id, word) -> check
+    for chk in checks:
+        loc = _link_forward(codes, chk.code, chk.call_at, {chk.xF}) if 0 <= chk.call_at < len(chk.code.w) else None
+        if loc is not None:
+            chk.calls.append(loc)
+            calls.setdefault((id(loc[0]), loc[1]), chk)
+    all_calls, slow_calls = [], []
+    for c in codes:
+        all_calls.extend((c, m.start() >> 2) for m in _aligned(_BRANCH_REG, c.mem))
+        for m in _aligned(_BL, c.mem):
+            k = m.start() >> 2
+            if _bl_target(c, k) in slow_fns:
+                slow_calls.append((c, k))
+    by_word = {(id(chk.code), chk.i): chk for chk in checks}
+    for c, k in all_calls:                         # a call after a check that guards an earlier call too
+        if (id(c), k) in calls:
+            continue
+        r = (c.w[k] >> 5) & 31
+        W = c.w
+        for j in range(k - 1, max(k - 160, 0) - 1, -1):
+            chk = by_word.get((id(c), j))
+            if chk is not None and chk.xF == r:
+                chk.calls.append((c, k))
+                calls[(id(c), k)] = chk
+                break
+            w = W[j]
+            if _ends_flow(w) or _is_b(w) or w == _BTI_C or w == _PACIASP or r in _written(w):
+                break
+    sites = []
+    for chk in checks:
+        cands = _candidates(jt, chk)
+        for cc, k in chk.calls or [(None, 0)]:
+            s = Site(chk.code.ea(chk.i), cc.ea(k) if cc else 0, chk.type_id or 0, 0,
+                     bool(cc) and not cc.w[k] & 0x00200000, sorted(set(cands or ())))
+            s.kind, s.type_id = chk.kind, chk.type_id
+            s.jt_base, s.jt_count = (chk.base or 0), chk.count
+            sites.append(s)
+    # Slow path only: the type has no function in this image's jump table (its targets can only be in modules).
+    own = {(id(chk.code), chk.slow_bl) for chk in checks if chk.slow_bl is not None}
+    for c, k in slow_calls:
+        if (id(c), k) in own:
+            continue
+        tid = _type_id_before(c, k)
+        r = _x1_source(c, k)
+        loc = None
+        if r is not None and r not in _CALLER_SAVED:
+            loc = _link_forward(codes, c, k + 1, {r}, limit=24)
+            if loc is not None and (id(loc[0]), loc[1]) in calls:
+                loc = None                         # an inline check already covers that call
+        s = Site(c.ea(k), loc[0].ea(loc[1]) if loc else 0, tid or 0, 0,
+                 bool(loc) and not loc[0].w[loc[1]] & 0x00200000)
+        s.kind, s.type_id = "slowpath", tid
+        sites.append(s)
+    sites.sort(key=lambda s: (s.call_ea or s.check_ea, s.check_ea))
+    counts = sorted(len(s.targets) for s in sites)
+    n = len(sites)
+    kinds = Counter(s.kind for s in sites)
+    resolved_calls = {s.call_ea for s in sites if s.call_ea and s.targets}
+    stats = {
+        "scheme": "jump-table CFI",
+        "sites": n,
+        "hashes": len({s.type_id for s in sites if s.type_id is not None}),
+        "resolved": sum(1 for c in counts if c),
+        "unresolved": sum(1 for c in counts if not c),
+        "single_target": sum(1 for c in counts if c == 1),
+        "median_candidates": counts[n // 2] if n else 0,
+        "median_candidates_resolved": _median_resolved(counts),
+        "max_candidates": counts[-1] if n else 0,
+        "disps": [],
+        "range_sites": kinds["range"],
+        "single_sites": kinds["single"],
+        "slowpath_sites": kinds["slowpath"],
+        "checks": len(checks),
+        "checks_without_range": sum(1 for chk in checks if _candidates(jt, chk) is None),
+        "indirect_calls": len(all_calls),
+        "calls_with_candidates": len(resolved_calls),
+        "jump_table": {"start": "0x%x" % jt.start, "end": "0x%x" % jt.end,
+                       "entries": len(jt.targets), "entry_size": jt.entry_size},
+        "slowpath_functions": ["0x%x" % t for t in sorted(slow_fns)],
     }
     return sites, stats
