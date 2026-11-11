@@ -204,15 +204,15 @@ Known-answer test: `tests/fixtures/aarch64-jtcfi.elf` is assembled by `tools/gen
 
 ```
 $ python3 -m cfiscope tests/fixtures/aarch64-jtcfi.elf --sites
-0xffffffc008000088  call_hs+0x28                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080000fc  call_lo+0x48                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc008000130  call_hi+0x24                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc008000188  call_hoisted+0x2c                        call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080001dc  call_single+0x20                         call single void (void*)  1 candidate(s): g_one
-0xffffffc008000230  call_slow+0x28                           call slowpath type id 0x07ff5a213d37b1a6  no candidate in this image (module functions only)
-0xffffffc008000268  call_gap+0x28                            call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080002bc  call_gapcopy+0x28                        call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc00800030c  call_inline+0x24                         call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000088  call_hs+0x28       call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080000fc  call_lo+0x48       call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000130  call_hi+0x24       call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000188  call_hoisted+0x2c  call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080001dc  call_single+0x20   call single void (void*)  1 candidate(s): g_one
+0xffffffc008000230  call_slow+0x28     call slowpath type id 0x07ff5a213d37b1a6  no candidate in this image (module functions only)
+0xffffffc008000268  call_gap+0x28      call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080002bc  call_gapcopy+0x28  call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc00800030c  call_inline+0x24   call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
 ```
 
 ## How it works
