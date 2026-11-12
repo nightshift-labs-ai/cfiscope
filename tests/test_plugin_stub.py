@@ -1,5 +1,6 @@
 """Runs the IDA layer on fake ida_* modules, feeding it a compiled fixture."""
 import importlib, os, struct, sys, types, unittest
+from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, ".."))
 from test_core import sections  # noqa: E402
@@ -223,6 +224,17 @@ class IdaLayer(unittest.TestCase):
         next(s for s in sites if s.check_ea == runtime).runtime_check = False
         self.assertTrue(il.in_cfi_runtime(runtime))
         self.assertNotIn(runtime, [r[0] for r in il.callers_rows(sites, f_a)])
+        # By the name alone: with the code test reporting a blr (fresh scan, so nothing cached), only IDA's function
+        # name __cfi_check marks it; renamed, it is kept.
+        func_name["__cfi_check"] = "__cfi_check"
+        sites, _ = il.scan()
+        next(s for s in sites if s.check_ea == runtime).runtime_check = False
+        with mock.patch.object(il.core, "has_indirect_call", lambda mem: True):
+            self.assertTrue(il.in_cfi_runtime(runtime))
+            self.assertNotIn(runtime, [r[0] for r in il.callers_rows(sites, f_a)])
+            func_name["__cfi_check"] = "renamed"
+            self.assertFalse(il.in_cfi_runtime(runtime))
+            self.assertEqual([r[0] for r in il.callers_rows(sites, f_a)][-2:], [unlinked, runtime])
         sys.modules["ida_funcs"].get_func = lambda ea: None     # no function there: listed as an unlinked check
         sites, _ = il.scan()
         next(s for s in sites if s.check_ea == runtime).runtime_check = False

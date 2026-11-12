@@ -1,6 +1,7 @@
 """Linux 5.x jump-table CFI (aarch64): the hand-assembled fixture from tools/gen_fixtures.py, scored against
 jtcfi_truth.json, plus decoder and demangler checks."""
 import contextlib, io, json, os, struct, sys, tempfile, unittest
+from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, ".."))
 from cfiscope import cli, core  # noqa: E402
@@ -92,10 +93,18 @@ class Fixture(unittest.TestCase):
         names = cli.Names(self.symbols)
         test = cli.runtime_test(names, self.ranges)
         self.assertEqual([s.check_ea for s in core.callers(self.sites, lambda t: t == f_b, test)[1]], [unlinked])
+        # By the name alone: with the code test reporting a blr everywhere, only the name __cfi_check marks it.
+        with mock.patch.object(core, "has_indirect_call", lambda mem: True):
+            test = cli.runtime_test(names, self.ranges)
+            self.assertTrue(test(runtime))
+            self.assertFalse(test(unlinked))
+            self.assertEqual([s.check_ea for s in core.callers(self.sites, lambda t: t == f_b, test)[1]], [unlinked])
         renamed = cli.Names({ea: ("other" if n == "__cfi_check" else n) for ea, n in self.symbols.items()})
         test = cli.runtime_test(renamed, self.ranges)          # by code: a function with no blr/br
         self.assertTrue(test(runtime))
         self.assertFalse(test(unlinked))
+        with mock.patch.object(core, "has_indirect_call", lambda mem: True):   # neither name nor code: kept
+            self.assertFalse(cli.runtime_test(renamed, self.ranges)(runtime))
         self.assertEqual([s.check_ea for s in core.callers(self.sites, lambda t: t == f_b, test)[1]], [unlinked])
         self.assertEqual(core.callers_header(7, 1, "f_b"),
                          "7 call site(s) can reach f_b (+1 type check(s) whose call was not linked, listed last)")
