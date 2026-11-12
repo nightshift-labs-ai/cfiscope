@@ -1,6 +1,6 @@
 """Loads cfiscope_entry.py on fake ida_* modules: scan cache, rescan after a rebase, menus, right-click hooks and
 the pseudocode comments. It proves the plugin wiring runs, not that IDA or Hex-Rays behave like the fakes."""
-import importlib, os, sys, types, unittest
+import importlib, json, os, sys, types, unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, ".."))
 import test_plugin_stub as T  # noqa: E402
@@ -106,24 +106,33 @@ class Entry(unittest.TestCase):
         self.assertEqual(E.RemoveAction().activate(None), 1)
         self.assertEqual(w.crefs, set())
 
-    def test_no_skips_candidate_inside_a_function(self):
-        # "No": a candidate inside a function IDA has, but not at its start, gets no call xref either (xref.hpp: fl_CN
-        # "creates a function at the referenced location", and that location is not where the function starts).
+    def test_no_data_xref_to_candidate_inside_a_function(self):
+        # "No": a candidate inside a function IDA has, not at its start (on x86 IDA may start the function at the
+        # __cfi_ preamble, 16 bytes earlier), gets a user data xref (dr_O) instead of a call xref, which "creates a
+        # function at the referenced location" (xref.hpp, fl_CN), so it can still be followed from the call; a candidate
+        # with no function gets neither. Remove annotations deletes the data xrefs too.
         w, E, log = load_entry()
         sites = E.scan_or_warn()
         targets = sorted({t for s in sites for t in s.targets})
-        inside = set(targets[1::2])                               # these lie 0x10 into a function IDA has
+        inside, none = set(targets[1::3]), set(targets[2::3])     # 0x10 into a function IDA has; no function at all
         F = lambda ea: types.SimpleNamespace(start_ea=ea - 0x10 if ea in inside else ea, end_ea=ea + 4, tailqty=0)
-        sys.modules["ida_funcs"].get_func = lambda ea: F(ea) if ea in targets else None
+        sys.modules["ida_funcs"].get_func = lambda ea: F(ea) if ea in targets and ea not in none else None
         self.answers(log, create=0)
         self.assertEqual(E.ScanAction().activate(None), 1)
         self.assertEqual(w.planned_funcs, set())
-        self.assertTrue(w.crefs)
-        self.assertEqual({t for _, t, _ in w.crefs} & inside, set())
         limit = sys.modules["cfiscope.idalayer"].DEFAULT_XREF_LIMIT
-        skipped = sum(t in inside for s in sites if s.call_ea and 0 < len(s.targets) <= limit for t in s.targets)
-        self.assertTrue(skipped)
-        self.assertIn('"xrefs_skipped_no_function": %d}' % skipped, "".join(log["msgs"]))
+        X = sys.modules["ida_xref"]
+        pairs = [(s.call_ea, t) for s in sites if s.call_ea and 0 < len(s.targets) <= limit for t in s.targets]
+        self.assertEqual({(f, t) for f, t, _ in w.crefs}, {p for p in pairs if p[1] not in inside | none})
+        self.assertEqual(w.data_xrefs, {p + (X.dr_O | X.XREF_USER,) for p in pairs if p[1] in inside})
+        res = json.loads(next(m for m in log["msgs"] if '"data_xrefs_inside_function"' in m)[len("[CFIScope] "):])
+        self.assertEqual((res["data_xrefs_inside_function"], res["xrefs_skipped_no_function"]),
+                         (sum(t in inside for _, t in pairs), sum(t in none for _, t in pairs)))
+        self.assertTrue(res["data_xrefs_inside_function"] and res["xrefs_skipped_no_function"])
+        self.assertEqual(E.RemoveAction().activate(None), 1)
+        self.assertIn("[CFIScope] xrefs removed: %d\n" % len(set(pairs) - {p for p in pairs if p[1] in none}),
+                      log["msgs"])
+        self.assertEqual((w.crefs, w.data_xrefs), (set(), set()))
 
     def test_yes_asked_before_xrefs(self):
         w, E, log = load_entry()

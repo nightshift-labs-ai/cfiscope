@@ -56,8 +56,8 @@ def main(argv=None):
             print("[CFIScope] no kCFI checks found, and no aarch64 jump-table CFI either: this binary may not be built with "
                   "-fsanitize=kcfi (Linux 6.1+ CONFIG_CFI_CLANG) or with the jump-table CFI of Linux 5.x (aarch64 only)")
             return 0
-        # Without --define-functions, no call xref to a candidate that does not start a function IDA has: IDA would make
-        # one there.
+        # Without --define-functions, a call xref only to a candidate at the start of a function IDA has (IDA would make
+        # one at any other); a data xref to a candidate inside a function, none to one with no function.
         print("[CFIScope] %s" % json.dumps(idalayer.annotate(sites, create_functions=args.define_functions)))
         if args.define_functions:
             print("[CFIScope] functions created: %(functions_created)d; candidates skipped (data, or not in a code "

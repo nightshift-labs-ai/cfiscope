@@ -118,6 +118,9 @@ def text_bounds(ranges, elf=None):
 
 # The last jump-table CFI scan: its jump table, target -> first entry, function start -> has no blr/br (in_cfi_runtime).
 JT = {"table": None, "entry_of": {}, "runtime_fn": {}}
+# Call addresses of the scanned sites. A data xref from one of them is CFIScope's own (annotate, after No), not a
+# stored pointer: an indirect call takes no function's address.
+CALLS = set()
 
 
 def scan():
@@ -134,6 +137,8 @@ def scan():
         JT["table"] = core.find_jump_table(ranges)    # so that a foo.cfi_jt entry can stand for foo (callers_rows)
     jt = JT["table"]
     JT["runtime_fn"] = {}
+    CALLS.clear()
+    CALLS.update(s.call_ea for s in sites if s.call_ea)
     JT["entry_of"] = {} if jt is None else {t: jt.start + k * jt.entry_size for k, t in reversed(list(enumerate(jt.targets)))}
     return sites, stats
 
@@ -144,7 +149,14 @@ def scheme_name(sites):
 
 
 def is_address_taken(ea):
-    return ida_xref.get_first_dref_to(ea) != BADADDR
+    """Is there a data xref to ea, not counting CFIScope's own from a call site (CALLS)?"""
+    seen, ref = set(), ida_xref.get_first_dref_to(ea)
+    while ref != BADADDR and ref not in seen:
+        if ref not in CALLS:
+            return True
+        seen.add(ref)
+        ref = ida_xref.get_next_dref_to(ea, ref)
+    return False
 
 
 def pointer_taken(site, target):
@@ -259,10 +271,13 @@ def target_check():
 def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT, create_functions=True):
     """Comment every check; add user xrefs where the candidate list is short, never to a candidate target_check() rejects
     (counted in xrefs_skipped_not_code). A call xref (fl_CN) makes IDA create a function at its target (xref.hpp), so
-    with create_functions=False a candidate that does not start a function IDA has (none there, or inside another
-    function) gets no xref (counted in xrefs_skipped_no_function)."""
+    with create_functions=False only a candidate at the start of a function IDA has gets one (counted in xrefs); a
+    candidate inside a function IDA has gets a user data xref (dr_O) instead (counted in data_xrefs_inside_function),
+    for which xref.hpp notes no such effect (ida.hpp AF_PROCPTR is for data xrefs from data; that it makes no function
+    is assumed, not checked in IDA), and a candidate with no function gets none (counted in xrefs_skipped_no_function).
+    A call and candidate pair keeps one xref: an earlier Scan's xref of the other kind is replaced."""
     res = {"comments": 0, "xrefs": 0, "kept_user_comments": 0, "runtime_comments": 0, "xrefs_skipped_not_code": 0,
-           "xrefs_skipped_no_function": 0}
+           "data_xrefs_inside_function": 0, "xrefs_skipped_no_function": 0}
     ok = target_check()
     for ea, x in runtime_calls(sites).items():
         old = ida_bytes.get_cmt(ea, False)
@@ -280,14 +295,25 @@ def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT, create_functions=True):
             ida_bytes.set_cmt(ea, describe(s), False)
             res["comments"] += 1
         if s.call_ea and 0 < len(s.targets) <= xref_limit:
+            drefs = data_refs_from(s.call_ea)
             # Call-type even for tail calls: a jump xref could fold a target into the caller as a chunk.
             for t in s.targets:
                 if not ok(t):
                     res["xrefs_skipped_not_code"] += 1
-                elif not create_functions and getattr(ida_funcs.get_func(t), "start_ea", None) != t:
+                    continue
+                start = None if create_functions else getattr(ida_funcs.get_func(t), "start_ea", None)
+                if create_functions or start == t:
+                    if t in drefs:
+                        ida_xref.del_dref(s.call_ea, t)
+                    if ida_xref.add_cref(s.call_ea, t, ida_xref.fl_CN | ida_xref.XREF_USER):
+                        res["xrefs"] += 1
+                elif start is None:
                     res["xrefs_skipped_no_function"] += 1
-                elif ida_xref.add_cref(s.call_ea, t, ida_xref.fl_CN | ida_xref.XREF_USER):
-                    res["xrefs"] += 1
+                else:
+                    if t in far_crefs_from(s.call_ea):
+                        ida_xref.del_cref(s.call_ea, t, False)
+                    if ida_xref.add_dref(s.call_ea, t, ida_xref.dr_O | ida_xref.XREF_USER):
+                        res["data_xrefs_inside_function"] += 1
     return res
 
 
@@ -300,8 +326,17 @@ def far_crefs_from(ea):
     return found
 
 
+def data_refs_from(ea):
+    """Data references from ea, as IDA stores them."""
+    found, ref = set(), ida_xref.get_first_dref_from(ea)
+    while ref != ida_idaapi.BADADDR and ref not in found:
+        found.add(ref)
+        ref = ida_xref.get_next_dref_from(ea, ref)
+    return found
+
+
 def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
-    """Remove our comments and the call xrefs to the candidates. Returns the number of xrefs that existed
+    """Remove our comments and the call and data xrefs to the candidates. Returns the number of xrefs that existed
     and were deleted (del_cref's own return value says whether the target instruction will be deleted,
     not whether a reference was removed, so it is not used for the count)."""
     removed = 0
@@ -315,10 +350,13 @@ def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
         if old and old.startswith(OWN_TAGS):
             ida_bytes.set_cmt(ea, "", False)
         if s.call_ea and 0 < len(s.targets) <= xref_limit:
-            existing = far_crefs_from(s.call_ea)
+            existing, data = far_crefs_from(s.call_ea), data_refs_from(s.call_ea)
             for t in s.targets:
                 if t in existing:
                     ida_xref.del_cref(s.call_ea, t, False)
+                    removed += 1
+                if t in data:
+                    ida_xref.del_dref(s.call_ea, t)
                     removed += 1
     return removed
 

@@ -16,6 +16,7 @@ class World:
         self.input_path = None
         self.flags = {}   # ea -> IDA flags: FF_DATA (0x400) for a data item's start, FF_TAIL (0x200) inside an item
         self.planned_funcs = set()   # call-xref targets IDA's auto-analysis would make functions (xref.hpp fl_CN)
+        self.data_xrefs = set()      # (from, to, type) added with add_dref; drefs above holds other "address taken" targets
         self.auto_ok = True          # ida_auto.auto_is_ok(): auto-analysis has finished
         self.auto_enabled = True     # ida_ida.inf_is_auto_enabled(): auto-analysis is turned on
 
@@ -43,9 +44,9 @@ def install(world):
     m["ida_ida"].inf_get_procname = lambda: world.proc
     m["ida_ida"].inf_is_64bit = lambda: True
     m["ida_ida"].inf_is_auto_enabled = lambda: world.auto_enabled
-    m["ida_xref"].fl_CN, m["ida_xref"].fl_JN, m["ida_xref"].XREF_USER = 17, 19, 32
+    m["ida_xref"].fl_CN, m["ida_xref"].fl_JN, m["ida_xref"].XREF_USER, m["ida_xref"].dr_O = 17, 19, 32, 1
     def add_cref(f, t, k):
-        # xref.hpp: fl_CF (16) and fl_CN (17) "create a function at the referenced location" (through auto-analysis),
+        # xref.hpp: fl_CF (16) and fl_CN (17) "create a function at the referenced location" (through auto-analysis).
         # Assumed, not checked in IDA: also where t lies inside a function that starts elsewhere.
         if (k & 0x1F) in (16, 17) and getattr(sys.modules["ida_funcs"].get_func(t), "start_ea", None) != t:
             world.planned_funcs.add(t)
@@ -53,7 +54,20 @@ def install(world):
         return True
     m["ida_xref"].add_cref = add_cref
     m["ida_xref"].del_cref = lambda f, t, e: {world.crefs.discard(x) for x in list(world.crefs) if x[:2] == (f, t)} or True
-    m["ida_xref"].get_first_dref_to = lambda ea: 1 if ea in world.drefs else 2**64 - 1
+    def add_dref(f, t, k):
+        # xref.hpp notes function creation for fl_CF and fl_CN only; dr_O ("Offset") has no such note, and ida.hpp's
+        # AF_PROCPTR creates a function for a data xref from data, not from an instruction. Assumed, not checked in IDA:
+        # a user dr_O from an instruction makes IDA create no code and no function at t, so no planned_funcs here.
+        world.data_xrefs.add((f, t, k))
+        return True
+    m["ida_xref"].add_dref = add_dref
+    m["ida_xref"].del_dref = lambda f, t: {world.data_xrefs.discard(x) for x in list(world.data_xrefs) if x[:2] == (f, t)} and None
+    dto = lambda t: sorted(({1} if t in world.drefs else set()) | {a for (a, b, _) in world.data_xrefs if b == t})
+    m["ida_xref"].get_first_dref_to = lambda ea: (dto(ea) or [2**64 - 1])[0]
+    m["ida_xref"].get_next_dref_to = lambda ea, cur: next((a for a in dto(ea) if a > cur), 2**64 - 1)
+    dfrom = lambda f: sorted({b for (a, b, _) in world.data_xrefs if a == f})
+    m["ida_xref"].get_first_dref_from = lambda f: (dfrom(f) or [2**64 - 1])[0]
+    m["ida_xref"].get_next_dref_from = lambda f, cur: next((t for t in dfrom(f) if t > cur), 2**64 - 1)
     far = lambda f: sorted({t for (a, t, _) in world.crefs if a == f})
     m["ida_xref"].get_first_fcref_from = lambda f: (far(f) or [2**64 - 1])[0]
     m["ida_xref"].get_next_fcref_from = lambda f, cur: next((t for t in far(f) if t > cur), 2**64 - 1)
@@ -139,6 +153,46 @@ class IdaLayer(unittest.TestCase):
         s = next(x for x in sites if len(x.targets) >= 2)
         w.drefs.add(s.targets[-1])
         self.assertEqual(il.ranked(s)[0], s.targets[-1])
+
+    def inside(self, sites):
+        """Every candidate lies 0x10 into a function IDA has (as when IDA starts it at the x86 __cfi_ preamble)."""
+        targets = {t for s in sites for t in s.targets}
+        sys.modules["ida_funcs"].get_func = lambda ea: types.SimpleNamespace(start_ea=ea - 0x10, end_ea=ea + 4,
+                                                                             tailqty=0) if ea in targets else None
+
+    def test_own_data_xref_is_not_address_taken(self):
+        # After No, a candidate inside a function gets a data xref from the call; that is no stored pointer, so it must
+        # not mark the candidate "address taken" (or reorder a later comment). A data xref from elsewhere still does.
+        w, il = self.make("x86_64-plain", "metapc")
+        sites, _ = il.scan()
+        self.inside(sites)
+        self.assertTrue(il.annotate(sites, create_functions=False)["data_xrefs_inside_function"])
+        self.assertTrue(w.data_xrefs)
+        for s in sites:
+            self.assertEqual([r[2] for r in il.targets_rows(s)], [""] * len(s.targets))
+            self.assertEqual(w.cmts[s.call_ea or s.check_ea], il.describe(s))
+        X = sys.modules["ida_xref"]
+        s = next(x for x in sites if len(x.targets) >= 2 and (x.call_ea, x.targets[-1], X.dr_O | X.XREF_USER) in w.data_xrefs)
+        w.data_xrefs.add((0xffff0000, s.targets[-1], X.dr_O))    # a pointer in data after the code: listed after ours
+        self.assertEqual(il.targets_rows(s)[0][:3:2], (s.targets[-1], "address taken"))
+
+    def test_rescan_keeps_one_xref_per_call_and_candidate(self):
+        # A candidate inside a function: No gives a data xref, a later Scan answered Yes replaces it with the call xref,
+        # and a later No turns it back; Remove annotations deletes either kind.
+        w, il = self.make("x86_64-plain", "metapc")
+        sites, _ = il.scan()
+        self.inside(sites)
+        X = sys.modules["ida_xref"]
+        pairs = {(s.call_ea, t) for s in sites if s.call_ea and 0 < len(s.targets) <= il.DEFAULT_XREF_LIMIT for t in s.targets}
+        self.assertTrue(pairs)
+        il.annotate(sites, create_functions=False)
+        self.assertEqual((w.crefs, w.data_xrefs), (set(), {p + (X.dr_O | X.XREF_USER,) for p in pairs}))
+        il.annotate(sites)
+        self.assertEqual((w.crefs, w.data_xrefs), ({p + (X.fl_CN | X.XREF_USER,) for p in pairs}, set()))
+        il.annotate(sites, create_functions=False)
+        self.assertEqual((w.crefs, w.data_xrefs), (set(), {p + (X.dr_O | X.XREF_USER,) for p in pairs}))
+        self.assertEqual(il.remove_annotations(sites), len(pairs))
+        self.assertEqual((w.crefs, w.data_xrefs), (set(), set()))
 
     def test_raw_load_without_permissions_scans_everything(self):
         w, il = self.make("x86_64-plain", "metapc", perm=0, type_=0)
