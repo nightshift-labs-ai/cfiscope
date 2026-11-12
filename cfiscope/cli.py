@@ -8,8 +8,10 @@
 
 Input is a 64-bit little-endian ELF (a vmlinux, or a kernel whose symbols
 were restored with vmlinux-to-elf, or a relocatable .o/.ko), or a raw kernel
-image with --raw.  Symbols, when the ELF has them, are used only to print
-names; the scan itself reads code bytes alone.  Add --json for machine output.
+image with --raw.  Symbols print names and, when the ELF names _stext,
+_etext, _sinittext and _einittext, leave out kCFI candidates between _etext
+and _sinittext outside the code areas named there (core.kernel_text()); the
+scan itself reads code bytes alone.  Add --json for machine output.
 """
 import argparse
 import bisect
