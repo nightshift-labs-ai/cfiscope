@@ -1149,7 +1149,7 @@ def callers(sites, reaches, in_runtime=None):
     for s in sites:
         if not any(reaches(t) for t in s.targets):
             continue
-        if s.call_ea:
+        if s.call_ea or getattr(s, "kind", "kcfi") == "kcfi":  # kCFI: every check is a call site, as before 0.1.18
             calls.append(s)
         elif not (s.runtime_check or (s.kind != "kcfi" and in_runtime is not None and in_runtime(s.check_ea))):
             checks.append(s)

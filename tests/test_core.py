@@ -100,5 +100,12 @@ class Decoders(unittest.TestCase):
             core.resolve([(0, b"")], "mips")
 
 
+class KcfiCallers(unittest.TestCase):
+    def test_kcfi_check_without_call_is_still_a_call_site(self):
+        from cfiscope import core
+        s = core.Site(check_ea=0x1000, call_ea=0, hash=1, disp=0, is_tail=False, targets=[0x2000])
+        calls, checks = core.callers([s], lambda t: t == 0x2000)
+        self.assertEqual((calls, checks), ([s], []))
+
 if __name__ == "__main__":
     unittest.main()
