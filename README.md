@@ -94,7 +94,7 @@ $ python3 -m cfiscope gki.elf --callers tcp_sendmsg --max-list 3
 
 ## What the plugin writes into IDA (fake IDA, not a screenshot)
 
-`tools/showcase_ida_stub.py` loads the same kernel's code segments and symbol names into the fake IDA modules of the stub tests, runs the plugin's own IDA layer (Scan, the two lists, the pseudocode comment) and prints what it wrote. These are the exact strings the plugin hands to IDA; real IDA has not run them and draws its own listing around them. The cross-reference count is that of answering Yes to "Create functions" (after No, candidates IDA has no function for get none). The fake database has no data cross-references, so no candidate is marked "address taken" here; in IDA, candidates whose address is stored in data are marked and listed first, so the first names in a comment can differ.
+`tools/showcase_ida_stub.py` loads the same kernel's code segments and symbol names into the fake IDA modules of the stub tests, runs the plugin's own IDA layer (Scan, the two lists, the pseudocode comment) and prints what it wrote. These are the exact strings the plugin hands to IDA; real IDA has not run them and draws its own listing around them. The fake database puts every address inside the function of the symbol before it, so the count is 44718 whether you answer Yes or No to "Create functions"; in IDA, after No, candidates IDA has no function for get no cross-reference, so the count can be lower. The fake database has no data cross-references, so no candidate is marked "address taken" here; in IDA, candidates whose address is stored in data are marked and listed first, so the first names in a comment can differ.
 
 ```
 $ python3 -I tools/showcase_ida_stub.py gki.elf sock_sendmsg+0xb4 tcp_sendmsg
