@@ -182,6 +182,17 @@ class TextBounds(unittest.TestCase):
             sites, stats = core.resolve([(KB, code)], "aarch64", core.kernel_text(named))
             self.assertEqual((sites[0].targets, stats["outside_text"]), ([KB + 0x24, KB + 0x2104], 1), named)
 
+    def test_code_area_with_one_name_filters_nothing(self):
+        # IDA keeps one name per address and __idmap_text_start shares its address with enter_vhe, so a database may
+        # name only the end of the idmap code: its start is unknown, and nothing is left out rather than its functions.
+        code, bounds = kernel_with_rodata_hash()
+        code = with_functions(code, 0x1800)
+        both = dict(bounds, __idmap_text_start=KB + 0x1800, __idmap_text_end=KB + 0x1900)
+        self.assertEqual(core.resolve([(KB, code)], "aarch64", core.kernel_text(both))[0][0].targets,
+                         [KB + 0x24, KB + 0x1800])
+        for lost in ("__idmap_text_start", "__idmap_text_end"):
+            self.assertIsNone(core.kernel_text({k: v for k, v in both.items() if k != lost}), lost)
+
 
 class KcfiCallers(unittest.TestCase):
     def test_kcfi_check_without_call_is_still_a_call_site(self):

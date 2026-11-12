@@ -271,9 +271,11 @@ class NoXrefsIntoData(unittest.TestCase):
     """tests/test_core.kernel_with_rodata_hash() in one RWX segment, as IDA loads a vmlinux-to-elf ELF: the hash value
     in 'rodata' yields a candidate at KB + 0x1004 next to the real one at KB + 0x24."""
 
-    def make(self):
-        from test_core import kernel_with_rodata_hash, KB
+    def make(self, *functions):
+        """functions: offsets of more functions of the call's type (test_core.with_functions)."""
+        from test_core import kernel_with_rodata_hash, with_functions, KB
         code, bounds = kernel_with_rodata_hash()
+        code = with_functions(code, *functions)
         w = World([Seg(KB, KB + len(code), 7, 2)], {KB: code}); w.proc = "ARM"
         il = install(w)
         sys.modules["ida_funcs"].get_func = lambda ea: ea in w.funcs or None
@@ -329,6 +331,27 @@ class NoXrefsIntoData(unittest.TestCase):
             sites, stats = il.scan()
             self.assertEqual(sites[0].targets, [kb + 0x10024, kb + 0x11004])
             self.assertNotIn("outside_text", stats)
+
+    def test_one_name_per_address_without_input_file(self):
+        # IDA keeps one name per address, and the input file is gone (database moved to another machine).
+        # Exit text: x86-64 never names it, and on arm64 __exittext_begin shares its address with _einittext. A
+        # function after _einittext is kept whichever name the database kept; only the 'rodata' hit is left out.
+        w, il, kb, bounds = self.make(0x2104)
+        for exit_names in ([], [(kb + 0x2100, "__exittext_end")]):
+            w.nlist = sorted([(ea, n) for n, ea in bounds.items()] + exit_names)
+            sites, stats = il.scan()
+            self.assertEqual((sites[0].targets, stats["outside_text"]), ([kb + 0x24, kb + 0x2104], 1))
+        # idmap code between _etext and _sinittext (arm64 6.6 and later), its start named enter_vhe in the database:
+        # with only __idmap_text_end the area cannot be placed, so nothing is left out (not its functions).
+        w, il, kb, bounds = self.make(0x1800)
+        w.nlist = sorted([(ea, n) for n, ea in bounds.items()] + [(kb + 0x1800, "enter_vhe"),
+                                                                   (kb + 0x1900, "__idmap_text_end")])
+        sites, stats = il.scan()
+        self.assertEqual(sites[0].targets, [kb + 0x24, kb + 0x1004, kb + 0x1800])
+        self.assertNotIn("outside_text", stats)
+        w.nlist = sorted((ea, "__idmap_text_start" if n == "enter_vhe" else n) for ea, n in w.nlist)
+        sites, stats = il.scan()
+        self.assertEqual((sites[0].targets, stats["outside_text"]), ([kb + 0x24, kb + 0x1800], 1))
 
 
 if __name__ == "__main__":

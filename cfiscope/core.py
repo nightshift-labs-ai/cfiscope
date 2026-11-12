@@ -187,10 +187,14 @@ TEXT_BOUND_NAMES = frozenset(TEXT_REQUIRED + tuple(n for pair in CODE_AREAS for 
 def kernel_text(named):
     """[(start, end)] where resolve() keeps kCFI candidates, from the kernel's symbols (named: {name: address}): all
     addresses but those from _etext to _sinittext that are not in a named code area.  None (resolve() then filters
-    nothing) when _stext, _etext, _sinittext or _einittext is missing or out of order (no symbols, or not a kernel)."""
+    nothing) when _stext, _etext, _sinittext or _einittext is missing or out of order (no symbols, or not a kernel),
+    or when a code area has only one of its two names: IDA keeps one name per address and each area's start shares
+    its address with another symbol (enter_vhe, tramp_vectors, ...), so a database may lack it."""
     if not all(n in named for n in TEXT_REQUIRED):
         return None
     if not named["_stext"] < named["_etext"] <= named["_sinittext"] < named["_einittext"]:
+        return None
+    if any((a in named) != (b in named) for a, b in CODE_AREAS):
         return None
     return [(0, named["_etext"]), (named["_sinittext"], 1 << 64)] + [
         (named[a], named[b]) for a, b in CODE_AREAS if a in named and named[a] < named[b]]
