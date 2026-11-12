@@ -224,6 +224,20 @@ $ python3 -m cfiscope gki515.elf --sites --max-list 4 | grep vfs_read+
 0xffffffc00854021c  vfs_read+0x348                           call range long (kiocb*, iov_iter*)  64 candidate(s): devkmsg_write, generic_file_write_iter, __generic_file_write_iter, generic_file_direct_write ...
 ```
 
+The summary for the whole kernel (real output):
+
+```
+$ python3 -m cfiscope gki515.elf
+arch aarch64, 95566 named functions
+Linux 5.x jump-table CFI: jump table 0xffffffc0096da488-0xffffffc00971c3f0, 33773 entries of 8 bytes
+checked sites 16350: range checks 12117, single-member checks 2146, slow path only 2087 (type ids 3433; checks named from __typeid symbols 14550)
+indirect calls (blr/br) 23224, with candidates 14053
+sites with candidates 14209, none 2141, exactly one 2145
+median candidates per site with candidates 6 (over all sites 5), max 1310
+```
+
+Its call totals differ from the table below on purpose: the summary counts every `blr` and `br` in the executable segments (21,739 `blr` and 1,485 `br`), the table counts only `blr` in kernel text (21,738), which leaves out one call with candidates in exit text (`dm_exit+0x4c`): 14,053 here, 14,052 there. On the 5.10 kernel the summary says 22,461 and 14,137 (20,940 `blr`, 1,521 `br`; again one call in exit text, `dm_exit+0x40`).
+
 Which indirect calls can reach `tcp_sendmsg` on that kernel (real output):
 
 ```
