@@ -225,7 +225,7 @@ class CallersAction(ida_kernwin.action_handler_t):
         if not rows:
             ida_kernwin.warning("No %s call site can reach this function." % idalayer.scheme_name(sites))
             return 0
-        idalayer.Chooser("%s callers of %s" % (idalayer.scheme_name(sites), idalayer.target_name(ea)), rows).Show()
+        idalayer.Chooser(idalayer.callers_title(sites, ea, rows), rows).Show()
         return 1
 
     def update(self, ctx):

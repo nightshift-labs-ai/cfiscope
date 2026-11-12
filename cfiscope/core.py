@@ -35,6 +35,7 @@ class Site:
     jt_count: int = 0      # number of entries it accepts
     jt_range_from: str = None  # "code" (read at this check), or "same-id check" (copied from another check of its id)
     runtime_call_ea: int = 0   # blr of this check's inlined slow path: the CFI runtime calling __cfi_check (kernel's or a module's)
+    runtime_check: bool = False  # a check that guards no call and passes no type id: the CFI runtime's own (__cfi_check)
     extra_checks: list = field(default_factory=list)   # other checks guarding the same call (their own Sites)
     note: str = None       # caveat for the user, e.g. a slow-path-only site whose type does have functions here
 
@@ -843,7 +844,13 @@ def resolve_jump_table_cfi(ranges):
             site.extra_checks = parts[1:]
         sites.append(site)
         linked.update(id(x) for x in chks)
-    sites.extend(_check_site(jt, x, 0, False) for x in checks if id(x) not in linked)
+    for x in checks:
+        if id(x) not in linked:
+            s = _check_site(jt, x, 0, False)
+            # No call after it and no slow-path call passing a type id: the runtime's __cfi_check, which receives the
+            # id as an argument (x0), range-checks the pointer (x1) and returns or branches to __cfi_check_fail.
+            s.runtime_check = x.slow_bl is None
+            sites.append(s)
     # A type id names one range: every parsed check of that id accepts the same entries.
     ranges_of = defaultdict(set)
     for chk in checks:
@@ -917,6 +924,7 @@ def resolve_jump_table_cfi(ranges):
         "checks_range_copied": sum(1 for chk in checks if getattr(chk, "base_from", None) == "same-id check"),
         "runtime_calls": len({x.runtime_call_ea for t in sites for x in [t] + t.extra_checks if x.runtime_call_ea}),
         "checks_without_call": sum(1 for s in sites if not s.call_ea and s.kind != "slowpath"),
+        "runtime_checks": sum(1 for s in sites if s.runtime_check),
         "indirect_calls": len(all_calls),
         "calls_with_candidates": len({s.call_ea for s in sites if s.call_ea and s.targets}),
         "jump_table": {"start": "0x%x" % jt.start, "end": "0x%x" % jt.end,
@@ -1118,3 +1126,42 @@ def type_label(site):
         if text and text not in out:
             out.append(text)
     return " | ".join(out)
+
+
+# ---- callers of a function ----
+
+RUNTIME_CHECK_FUNCTION = "__cfi_check"   # jump-table CFI: the runtime's check function (kernel and each module)
+
+
+def has_indirect_call(mem):
+    """Does this aarch64 code hold a blr or br? A function without one calls no checked pointer itself."""
+    return next(_aligned(_BRANCH_REG, bytes(mem)), None) is not None
+
+
+def callers(sites, reaches, in_runtime=None):
+    """(calls, checks) among the sites with a candidate for which reaches(target) is true, each in address order.
+
+    calls: sites with a linked call instruction, the only ones that are call sites.  checks: type checks whose call
+    was not linked, without the CFI runtime's own checks, which guard no call: Site.runtime_check (read from the
+    code), or a jump-table CFI check for which in_runtime(check address) is true (the caller's test by function
+    name or bounds, when it has them)."""
+    calls, checks = [], []
+    for s in sites:
+        if not any(reaches(t) for t in s.targets):
+            continue
+        if s.call_ea:
+            calls.append(s)
+        elif not (s.runtime_check or (s.kind != "kcfi" and in_runtime is not None and in_runtime(s.check_ea))):
+            checks.append(s)
+    return calls, checks
+
+
+UNLINKED = "type check only (call not linked)"
+
+
+def callers_header(calls, checks, label):
+    """'6 call site(s) can reach tcp_sendmsg', plus the number of unlinked type checks listed after them."""
+    text = "%d call site(s) can reach %s" % (calls, label)
+    if checks:
+        text += " (+%d type check(s) whose call was not linked, listed last)" % checks
+    return text

@@ -8,7 +8,8 @@ compiled objects, so the scanner can be scored.
 
 Jump-table CFI (Linux 5.x, aarch64) fixture, no compiler needed: aarch64-jtcfi.elf is
 assembled word by word below in the shapes Clang uses in Android GKI 5.15 kernels, and
-jtcfi_truth.json lists every call site with its expected kind, type and candidates.
+jtcfi_truth.json lists every call site with its expected kind, type and candidates, and the checks with no
+linked call (one of them the runtime's own __cfi_check).
 
     python3 tools/gen_fixtures.py              # both
     python3 tools/gen_fixtures.py --jtcfi-only # only the jump-table CFI fixture
@@ -122,6 +123,8 @@ def cmp_imm(rn, imm): return 0xf100001f | imm << 10 | rn << 5
 def cmp_reg(rn, rm): return 0xeb00001f | rm << 16 | rn << 5
 def subs_w(rd, rn, imm): return 0x71000000 | imm << 10 | rn << 5 | rd
 def blr(rn): return 0xd63f0000 | rn << 5
+def str_(rt, rn): return 0xf9000000 | rn << 5 | rt
+def ldr(rt, rn): return 0xf9400000 | rn << 5 | rt
 def adrp(rd, label): return lambda pc, L: (0x90000000 | rd | ((((L[label] & ~0xfff) - (pc & ~0xfff)) >> 12) & 3) << 29
                                           | (((((L[label] & ~0xfff) - (pc & ~0xfff)) >> 14) & 0x7ffff) << 5))
 def lo12(rd, rn, label, plus=0): return lambda pc, L: add_imm(rd, rn, (L[label] + plus) & 0xfff)
@@ -253,6 +256,36 @@ def jtcfi_program():
     a.label("rt_inline")
     a.emit(blr(8), b("back_inline"))
 
+    # 10. a type check whose call is not linked: the checked pointer is stored and called after a reload
+    a.label("call_unlinked")
+    a.emit(*prologue)
+    a.emit(mov(21, 1), adrp(9, "jt"), lo12(9, 9, "jt"))
+    a.label("unlinked_check")
+    a.emit(sub(10, 21, 9), ror(10, 10, 3), cmp_imm(10, 3), bcond(HS, "slow_unlinked"))
+    a.label("back_unlinked")
+    a.emit(str_(21, 0), ldr(8, 0))                             # str x21, [x0]; ldr x8, [x0]
+    a.label("site_unlinked")
+    a.emit(blr(8), *epilogue)
+    a.label("slow_unlinked")
+    a.emit(*load_id(_type_id(T_FILE)))
+    a.emit(mov(1, 21), bl("__cfi_slowpath_diag"), b("back_unlinked"))
+
+    # 11. the CFI runtime's own check function: the type id arrives in x0 and the pointer in x1; it range-checks the
+    #     pointer and returns, or branches to __cfi_check_fail. No call: its check guards none.
+    tid = _type_id(T_FILE)
+    a.label("__cfi_check")
+    a.emit(PACIASP, movz(8, tid & 0xffff), *[movk(8, (tid >> 16 * h) & 0xffff, h) for h in (1, 2, 3)], cmp_reg(0, 8),
+           bcond(NE, "cfi_check_fail"))
+    a.emit(adrp(8, "jt"), lo12(8, 8, "jt"))
+    a.label("runtime_check")
+    a.emit(sub(8, 1, 8), ror(8, 8, 3), cmp_imm(8, 3), bcond(LO, "cfi_check_ok"))
+    a.label("cfi_check_fail")
+    a.emit(mov(0, 2), AUTIASP, b("__cfi_check_fail"))
+    a.label("cfi_check_ok")
+    a.emit(AUTIASP, RET)
+    a.label("__cfi_check_fail")
+    a.emit(BTI_C, RET, NOP, NOP)
+
     a.align(64)
     a.label("jt")                                              # 4 entries: bti c; b <function>
     for name, _ in members:
@@ -264,7 +297,7 @@ def jtcfi_program():
     L = a.labels
     symbols = [(n, L[n]) for n in ("f_a", "f_b", "f_c", "g_one", "__cfi_slowpath_diag", "call_hs", "call_lo",
                                    "call_hi", "call_hoisted", "call_single", "call_slow", "call_gap", "call_gapcopy",
-                                   "find_check_fn", "call_inline")]
+                                   "find_check_fn", "call_inline", "call_unlinked", "__cfi_check", "__cfi_check_fail")]
     symbols += [(n + ".cfi_jt", L[n + ".cfi_jt"]) for n, _ in members]
     symbols += [("__typeid_%s_global_addr" % T_FILE, L["jt"]), ("__typeid_%s_global_addr" % T_VOID, L["g_one.cfi_jt"]),
                 ("__cfi_jt_start", L["jt"]), ("__cfi_jt_end", L["jt_end"])]
@@ -281,11 +314,21 @@ def jtcfi_program():
         dict(function="call_inline", call=L["site_inline"], kind="range", type=T_FILE, candidates=fa,
              runtime_call="0x%x" % L["rt_inline"]),
     ]
-    for site in sites:
+    # Checks with no linked call: not call sites. Callers lists the first after the calls; the second, the runtime's
+    # own check (it passes no type id), it leaves out.
+    checks = [
+        dict(function="call_unlinked", check=L["unlinked_check"], kind="range", type=T_FILE, candidates=fa,
+             runtime_check=False, blr=L["site_unlinked"]),
+        dict(function="__cfi_check", check=L["runtime_check"], kind="range", type=T_FILE, candidates=fa,
+             runtime_check=True),
+    ]
+    for site in sites + checks:
         site["type_id"] = "0x%016x" % _type_id(site["type"])
-        site["call"] = "0x%x" % site["call"]
+        for key in ("call", "check", "blr"):
+            if key in site:
+                site[key] = "0x%x" % site[key]
     truth = dict(base="0x%x" % JT_BASE, jump_table=["0x%x" % L["jt"], len(members)],
-                 slowpath="0x%x" % L["__cfi_slowpath_diag"], sites=sites,
+                 slowpath="0x%x" % L["__cfi_slowpath_diag"], sites=sites, checks=checks,
                  symbols={n: "0x%x" % v for n, v in symbols},
                  type_names={T_FILE: "int (file*, int)", T_VOID: "void (void*)",
                              T_READ: "long (file*, char*, unsigned long, long long*)"})

@@ -6,7 +6,7 @@ Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 
 
 - **Scan kCFI calls** (`Ctrl-Alt-K`): finds every check, comments the call site with the type hash and candidate count, adds cross-references when the candidate list is short (at most 16), and offers to create functions at candidates IDA has not recognised. Your own comments are kept.
 - **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach. If the cursor is not on a kCFI check or its call, the nearest check in the same function is used; the list's title names the call address it chose.
-- **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give.
+- **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give. Only calls are counted: with the Linux 5.x jump-table CFI, a check whose call was not linked comes after the calls as a type check only, and the CFI runtime's own checks (in `__cfi_check`, which guard no call) are left out.
 - **Remove annotations**: removes the comments and cross-references the scan added, and turns the pseudocode comments off.
 - **Pseudocode comments** (with the Hex-Rays decompiler): after a scan, the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2` (at most 5 names, then "and N more"). The line is found through the decompiler's address map when a function is printed; the comment is display text only, nothing is saved in the database. Not yet run in IDA and not tested with the real decompiler, only against a fake `ida_hexrays` module.
 
@@ -184,6 +184,21 @@ $ python3 -m cfiscope gki515.elf --sites --max-list 4 | grep vfs_read+
 0xffffffc0085400c0  vfs_read+0x1ec  call range long (file*, char*, unsigned long, long long*)  166 candidate(s): kvm_vm_stats_read, ...
 ```
 
+Which indirect calls can reach `tcp_sendmsg` on that kernel (real output):
+
+```
+$ python3 -m cfiscope gki515.elf --callers tcp_sendmsg --max-list 3
+6 call site(s) can reach tcp_sendmsg
+0xffffffc00921bd4c  kernel_sendmsg_locked+0x5c               call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
+0xffffffc0092276c0  sock_no_sendpage_locked+0xc4             call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
+0xffffffc009234540  skb_send_sock_locked+0x180               call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
+0xffffffc009434050  inet_sendmsg+0x5c                        call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
+0xffffffc0094c3d7c  inet6_sendmsg+0x5c                       call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
+0xffffffc00969f60c  ieee802154_sock_sendmsg+0x38             call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
+```
+
+Only calls are counted. A check whose call was not linked would follow them, marked `type check only (call not linked)`, and the first line would add `(+N type check(s) whose call was not linked, listed last)`; the IDA list does the same, with that line in its title. The CFI runtime's own checks are left out: `__cfi_check` receives a type id and a pointer, tests the pointer against that type's range and returns or branches to `__cfi_check_fail`, so its checks guard no call. CFIScope recognises them from the code (a check with no linked call whose failure path passes no type id) and, where names or function bounds are known, by the function's name or by a function with no `blr`/`br`. `--sites` and Scan still show every check; `--json` marks these with `runtime_check`.
+
 Measured on `gki-certified-boot-android13-5.15-2024-01_r1` ([zip](https://dl.google.com/android/gki/gki-certified-boot-android13-5.15-2024-01_r1.zip), kernel extracted with `python3 tools/extract_bootimg.py boot-5.15.img Image`, symbols restored by vmlinux-to-elf), with `python3 tools/eval_gki_oldcfi.py --cxxfilt Image gki515.elf`. The symbols are only used to score: which words are kernel text, where functions start, the names of the jump-table entries, and the `__typeid` symbols.
 
 | Measure | Result |
@@ -205,22 +220,39 @@ Limits, read before relying on it:
 - **Two kernels were measured.** On Android 12 GKI `gki-certified-boot-android12-5.10-2024-01_r1` ([zip](https://dl.google.com/android/gki/gki-certified-boot-android12-5.10-2024-01_r1.zip), kernel from `boot-5.10.img`; same scanner, same `tools/eval_gki_oldcfi.py`, symbols from vmlinux-to-elf): 14,136 of 20,939 `blr` in kernel text get candidates (67.5%), median 6; all 23,399 distinct candidates start at a kallsyms function and every entry's name matches its target; the jump table ends where its entries end, and the rest up to `__cfi_jt_end` is zero padding. That kernel's kallsyms keeps only one `__typeid` name, so its types show as 64-bit ids and the `__typeid` row of the table above cannot be checked there. The scanner reads only 8-byte `bti c; b` jump-table entries; a build without BTI lays its jump table out differently (we expect 4-byte `b` entries, not checked), and CFIScope does not look for that. x86-64 kernels with this CFI are not read.
 - **Module targets are not listed.** A call whose type has no function in the kernel image is checked only by `__cfi_slowpath`; CFIScope shows its type and "no candidate in this image" (2,087 slow-path-only sites on this kernel, the two cases below included). The same applies to a copy of a call that the compiler placed on a check's slow path: it runs only when the pointer is not one of the image's functions of that type. When symbols are available, 241 of these slow-path sites belong to a type that does have functions in the image, which means an inline check was not decoded; those are marked "candidates unknown".
 - **Tracepoint and vendor-hook calls are not checked by design** (the kernel calls them without CFI), so there is nothing to read and they stay unresolved, like assembly and `__nocfi` code. These, the slow-path-only calls and the checks this scanner does not decode make up the 7,686 unresolved `blr`. `tools/eval_gki_oldcfi.py` splits them: 1,950 are linked to a check that has no candidates in the image (slow-path-only types, ranges not found); 1,537 sit in tracepoint and vendor-hook iterators (`__traceiter_*`; none of these functions has a `ror #3` or a `__cfi_slowpath` call before the call); 1,015 are the CFI runtime's own calls: an inlined slow path calls `find_check_fn` and then the `__cfi_check` of the kernel or module that holds the pointer through a register; 2,030 look like tracepoint loops inlined into other functions (the probe's function and data read as a pair: `ldar xR, [xM]; ldr x0, [xM, #8]; blr xR`), which are also called without a check; 225 have a `ror #3` or a `__cfi_slowpath` call in the 32 instructions before them (most likely checks this scanner does not decode, such as a `sub` and `ror` more than four instructions apart); and 929 have none of these (most likely calls without a CFI check: assembly, `__nocfi` code, BPF dispatch). The last three numbers come from pattern matches, not from decoding. Leaving out the runtime's own calls, 14,052 of 20,723 `blr` (67.8%) get candidates.
-- **Linking is linear.** A check is linked to the first `blr` of its register on the straight path after it (following up to two unconditional branches), or to a later call that reuses it. The register holding the type's first entry is found by walking back from the check, stopping at function starts and at code that does not fall through. Checks whose base or call is found only through the control-flow graph are missed (on this kernel, the walk finds no base for 1,033 checks: 979 of them take the range of another check with the same type id, 54 have no range; 156 checks have no linked call, including the leaf checks inside `__cfi_check`).
+- **Linking is linear.** A check is linked to the first `blr` of its register on the straight path after it (following up to two unconditional branches), or to a later call that reuses it. The register holding the type's first entry is found by walking back from the check, stopping at function starts and at code that does not fall through. Checks whose base or call is found only through the control-flow graph are missed (on this kernel, the walk finds no base for 1,033 checks: 979 of them take the range of another check with the same type id, 54 have no range; 156 checks have no linked call: 141 are the CFI runtime's own, all the checks inside `__cfi_check`, which Callers leaves out; the other 15 are listed by Callers after the calls and not counted. GKI 5.10: 140, of them 131 in `__cfi_check`).
 - **Not run in IDA.** Like the rest of CFIScope, the IDA side was tested only against fake `ida_*` modules (`tests/test_plugin_stub.py`, `tests/test_entry_stub.py`). The scanner is the same code as the command line.
 
-Known-answer test: `tests/fixtures/aarch64-jtcfi.elf` is assembled by `tools/gen_fixtures.py --jtcfi-only` (no compiler): a 4-entry jump table and nine calls (a `b.hs` range check, a `b.lo` check with the base in a register copy and the count in a register, a `b.hi` check, a check hoisted out of a loop, a single-member check, a slow-path-only call, a range check with an unrelated instruction between the subtract and the rotate, the same with the pointer copied to another register there and called through it, and a check whose slow path is inlined). `tests/test_oldcfi.py` checks each call's kind, type id, type name and exact candidates against `tests/fixtures/jtcfi_truth.json`. The command line gives (spacing condensed):
+Known-answer test: `tests/fixtures/aarch64-jtcfi.elf` is assembled by `tools/gen_fixtures.py --jtcfi-only` (no compiler): a 4-entry jump table and nine calls (a `b.hs` range check, a `b.lo` check with the base in a register copy and the count in a register, a `b.hi` check, a check hoisted out of a loop, a single-member check, a slow-path-only call, a range check with an unrelated instruction between the subtract and the rotate, the same with the pointer copied to another register there and called through it, and a check whose slow path is inlined), plus two checks with no linked call: one whose pointer is stored and called after a reload, and the check inside a small `__cfi_check` runtime function. `tests/test_oldcfi.py` checks each call's kind, type id, type name and exact candidates against `tests/fixtures/jtcfi_truth.json`, and that Callers counts the seven calls of `f_b`, lists the first unlinked check after them and leaves out the runtime's. The command line gives:
 
 ```
 $ python3 -m cfiscope tests/fixtures/aarch64-jtcfi.elf --sites
-0xffffffc008000088  call_hs+0x28       call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080000fc  call_lo+0x48       call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc008000130  call_hi+0x24       call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc008000188  call_hoisted+0x2c  call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080001dc  call_single+0x20   call single void (void*)  1 candidate(s): g_one
-0xffffffc008000230  call_slow+0x28     call slowpath type id 0x07ff5a213d37b1a6  no candidate in this image (module functions only)
-0xffffffc008000268  call_gap+0x28      call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080002bc  call_gapcopy+0x28  call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc00800030c  call_inline+0x24   call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000088  call_hs+0x28                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080000fc  call_lo+0x48                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000130  call_hi+0x24                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000188  call_hoisted+0x2c                        call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080001dc  call_single+0x20                         call single void (void*)  1 candidate(s): g_one
+0xffffffc008000230  call_slow+0x28                           call slowpath type id 0x07ff5a213d37b1a6  no candidate in this image (module functions only)
+0xffffffc008000268  call_gap+0x28                            call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080002bc  call_gapcopy+0x28                        call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc00800030c  call_inline+0x24                         call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000358  call_unlinked+0x14                       type check only (call not linked) range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080003c0  __cfi_check+0x24                         type check only (call not linked) range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+```
+
+and its callers of `f_b`: seven calls, then the unlinked check in `call_unlinked`; the runtime's check in `__cfi_check` is left out:
+
+```
+$ python3 -m cfiscope tests/fixtures/aarch64-jtcfi.elf --callers f_b
+7 call site(s) can reach f_b (+1 type check(s) whose call was not linked, listed last)
+0xffffffc008000088  call_hs+0x28                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080000fc  call_lo+0x48                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000130  call_hi+0x24                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000188  call_hoisted+0x2c                        call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000268  call_gap+0x28                            call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080002bc  call_gapcopy+0x28                        call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc00800030c  call_inline+0x24                         call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc008000358  call_unlinked+0x14                       type check only (call not linked) range int (file*, int)  3 candidate(s): f_a, f_b, f_c
 ```
 
 ## How it works

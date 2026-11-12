@@ -44,7 +44,7 @@ class Fixture(unittest.TestCase):
         self.assertEqual(self.stats["slowpath_functions"], [self.t["slowpath"]])
 
     def test_every_site_exact(self):
-        self.assertEqual(self.stats["sites"], len(self.t["sites"]))
+        self.assertEqual(self.stats["sites"], len(self.t["sites"]) + len(self.t["checks"]))
         by_call = {s.call_ea: s for s in self.sites}
         for want in self.t["sites"]:
             with self.subTest(want["function"]):
@@ -54,7 +54,17 @@ class Fixture(unittest.TestCase):
                 self.assertEqual("0x%016x" % s.type_id, want["type_id"])
                 self.assertFalse(s.is_tail)
         self.assertEqual(self.stats["calls_with_candidates"], 8)
-        self.assertEqual(self.stats["indirect_calls"], 10)
+        self.assertEqual(self.stats["indirect_calls"], 11)
+        # Checks with no linked call: one in a program function (its call goes through memory), and the CFI runtime's
+        # own check in __cfi_check, which passes no type id and guards no call.
+        by_check = {s.check_ea: s for s in self.sites if not s.call_ea}
+        self.assertEqual(sorted(by_check), sorted(int(w["check"], 16) for w in self.t["checks"]))
+        for want in self.t["checks"]:
+            s = by_check[int(want["check"], 16)]
+            self.assertEqual((s.kind, s.runtime_check), (want["kind"], want["runtime_check"]))
+            self.assertEqual([self.name_of[x] for x in s.targets], want["candidates"])
+            self.assertEqual(s.type_id, None if want["runtime_check"] else int(want["type_id"], 16))
+        self.assertEqual((self.stats["checks_without_call"], self.stats["runtime_checks"]), (2, 1))
         # call_gap: a mov between sub and ror; read as one range check that starts at its sub (call_gap+0x14),
         # not only through the slow path as a hoisted check starting at the cmp.
         # The inlined slow path's blr is the CFI runtime calling __cfi_check (kernel's or a module's): recorded, never a call site.
@@ -66,8 +76,60 @@ class Fixture(unittest.TestCase):
         gap = by_call[int(self.t["sites"][6]["call"], 16)]
         self.assertEqual(gap.check_ea, int(self.t["symbols"]["call_gap"], 16) + 0x14)
 
+    def test_callers_leave_out_runtime_checks(self):
+        sym = self.t["symbols"]
+        f_b = int(sym["f_b"], 16)
+        calls_want = [int(w["call"], 16) for w in self.t["sites"] if "f_b" in w["candidates"]]
+        unlinked, runtime = (int(w["check"], 16) for w in self.t["checks"])
+        # Code alone (no names): the runtime's check is left out, the other unlinked check comes after the calls.
+        calls, checks = core.callers(self.sites, lambda t: t == f_b)
+        self.assertEqual([s.call_ea for s in calls], calls_want)
+        self.assertEqual([s.check_ea for s in checks], [unlinked])
+        # With names or function bounds, a runtime check is left out even if the code test missed it.
+        rt = next(s for s in self.sites if s.check_ea == runtime)
+        rt.runtime_check = False
+        self.assertEqual([s.check_ea for s in core.callers(self.sites, lambda t: t == f_b)[1]], [unlinked, runtime])
+        names = cli.Names(self.symbols)
+        test = cli.runtime_test(names, self.ranges)
+        self.assertEqual([s.check_ea for s in core.callers(self.sites, lambda t: t == f_b, test)[1]], [unlinked])
+        renamed = cli.Names({ea: ("other" if n == "__cfi_check" else n) for ea, n in self.symbols.items()})
+        test = cli.runtime_test(renamed, self.ranges)          # by code: a function with no blr/br
+        self.assertTrue(test(runtime))
+        self.assertFalse(test(unlinked))
+        self.assertEqual([s.check_ea for s in core.callers(self.sites, lambda t: t == f_b, test)[1]], [unlinked])
+        self.assertEqual(core.callers_header(7, 1, "f_b"),
+                         "7 call site(s) can reach f_b (+1 type check(s) whose call was not linked, listed last)")
+        self.assertEqual(core.callers_header(6, 0, "f_b"), "6 call site(s) can reach f_b")
+
+    def test_cli_callers_count_calls_only(self):
+        rc, out, _ = run(ELF, "--callers", "f_b")
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "7 call site(s) can reach f_b (+1 type check(s) whose call was not linked, listed last)")
+        self.assertEqual(len(lines), 1 + 7 + 1)
+        self.assertTrue(all(" call range " in x for x in lines[1:8]))
+        self.assertIn("call_unlinked+0x14", lines[8])
+        self.assertIn("type check only (call not linked) range int (file*, int)", lines[8])
+        self.assertNotIn("__cfi_check", out)
+        rc, out, _ = run(ELF, "--callers", "f_b", "--json")
+        doc = json.loads(out)
+        self.assertEqual(doc["callers"], {"call_sites": 7, "unlinked_checks": 1})
+        self.assertEqual([s["check"] for s in doc["sites"] if s["call"] is None], [self.t["checks"][0]["check"]])
+        # --sites still lists both checks; --json marks the runtime's.
+        rc, out, _ = run(ELF, "--sites", "--json")
+        flags = {s["check"]: s["runtime_check"] for s in json.loads(out)["sites"] if s["call"] is None}
+        self.assertEqual(flags, {w["check"]: w["runtime_check"] for w in self.t["checks"]})
+        # A raw image has no names: the code test alone leaves the runtime's check out.
+        base, code = self.ranges[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = os.path.join(tmp, "Image")
+            with open(raw, "wb") as fh:
+                fh.write(code)
+            rc, out, _ = run(raw, "--raw", "--arch", "aarch64", "--base", hex(base), "--callers", self.t["symbols"]["f_b"])
+        self.assertTrue(out.startswith("7 call site(s) can reach %s (+1 type check(s)" % self.t["symbols"]["f_b"]), out)
+        self.assertNotIn(self.t["checks"][1]["check"][2:], out)
+
     def test_type_names(self):
-        self.assertEqual(core.name_jt_types(self.sites, self.every), 8)
+        self.assertEqual(core.name_jt_types(self.sites, self.every), 10)
         names = self.t["type_names"]
         by_call = {s.call_ea: s for s in self.sites}
         for want in self.t["sites"]:
@@ -112,10 +174,10 @@ class Fixture(unittest.TestCase):
                 fh.write(code)
             rc, out, _ = run(raw, "--raw", "--arch", "aarch64", "--base", hex(base), "--json")
             st = json.loads(out)["stats"]
-            self.assertEqual((st["sites"], st["calls_with_candidates"], st["named_checks"]), (9, 8, 0))
+            self.assertEqual((st["sites"], st["calls_with_candidates"], st["named_checks"]), (11, 8, 0))
             # adrp is relative to the pc: a base off by whole pages only moves every address.
             rc, out, _ = run(raw, "--raw", "--arch", "aarch64", "--base", hex(base + 0x1000), "--sites", "--json")
-            calls = sorted(int(s["call"], 16) for s in json.loads(out)["sites"])
+            calls = sorted(int(s["call"], 16) for s in json.loads(out)["sites"] if s["call"])
             self.assertEqual(calls, sorted(int(w["call"], 16) + 0x1000 for w in self.t["sites"]))
 
     def test_kcfi_objects_unchanged(self):

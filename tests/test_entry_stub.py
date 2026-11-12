@@ -233,7 +233,7 @@ class JumpTableCfi(unittest.TestCase):
         p.init()
         self.assertEqual(self.E.ScanAction().activate(None), 1)
         sites = self.E.STATE["sites"]
-        self.assertEqual(len(sites), 9)
+        self.assertEqual(len(sites), 11)
         self.assertFalse(any("WARN" in m for m in self.log["msgs"]))
         hs = self.truth["sites"][0]
         call = self.shift(hs["call"])
@@ -248,7 +248,13 @@ class JumpTableCfi(unittest.TestCase):
         self.assertEqual([r[1] for r in rows], ["f_a", "f_b", "f_c"])
         kw.get_screen_ea = lambda: self.shift(self.truth["symbols"]["g_one"])
         self.assertEqual(self.E.CallersAction().activate(None), 1)
-        self.assertEqual(shown[-1][0], "jump-table CFI callers of g_one")
+        self.assertEqual(shown[-1][0], "jump-table CFI callers: 1 call site(s) can reach g_one")
+        kw.get_screen_ea = lambda: self.shift(self.truth["symbols"]["f_b"])
+        self.assertEqual(self.E.CallersAction().activate(None), 1)
+        title, rows = shown[-1]
+        self.assertEqual(title, "jump-table CFI callers: 7 call site(s) can reach f_b (+1 type check(s) whose call "
+                         "was not linked, listed last)")
+        self.assertEqual(len(rows), 8)
         self.assertEqual(self.E.RemoveAction().activate(None), 1)
         self.assertEqual(self.w.cmts, {})
         p.term()

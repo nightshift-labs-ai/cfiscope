@@ -1,7 +1,7 @@
 """Runs the IDA layer on fake ida_* modules, feeding it a compiled fixture."""
 import importlib, os, struct, sys, types, unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, ".."))
+sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, ".."))
 from test_core import sections  # noqa: E402
 
 class Seg:
@@ -18,7 +18,8 @@ def install(world):
     m = {n: types.ModuleType(n) for n in "ida_bytes ida_funcs ida_ida ida_idaapi ida_kernwin ida_nalt ida_name ida_segment ida_xref".split()}
     m["ida_nalt"].get_input_file_path = lambda: world.input_path
     m["ida_idaapi"].BADADDR = 2**64 - 1
-    m["ida_bytes"].get_bytes = lambda ea, n: world.mem[ea]
+    m["ida_bytes"].get_bytes = lambda ea, n: next((data[ea - b:ea - b + n] for b, data in world.mem.items()
+                                                   if b <= ea < b + len(data)), None)
     m["ida_bytes"].get_cmt = lambda ea, rep: world.cmts.get(ea)
     def set_cmt(ea, text, rep):
         if text: world.cmts[ea] = text
@@ -125,10 +126,10 @@ class IdaLayer(unittest.TestCase):
         names = {shift(v): k for k, v in truth["symbols"].items()}
         sys.modules["ida_name"].get_ea_name = lambda ea: names.get(ea, "")
         sites, stats = il.scan()
-        self.assertEqual((stats["scheme"], stats["sites"], stats["named_checks"]), ("jump-table CFI", 9, 8))
+        self.assertEqual((stats["scheme"], stats["sites"], stats["named_checks"]), ("jump-table CFI", 11, 10))
         self.assertEqual(il.scheme_name(sites), "jump-table CFI")
         res = il.annotate(sites)
-        self.assertEqual(res["comments"], 9)
+        self.assertEqual(res["comments"], 11)                     # Scan still comments both unlinked checks
         rt = shift(truth["sites"][-1]["runtime_call"])           # the inlined slow path's call into __cfi_check
         self.assertEqual(res["runtime_comments"], 1)
         self.assertTrue(w.cmts[rt].startswith("jtCFI runtime: calls __cfi_check (kernel's or the pointer's module's) for int (file*, int)"), w.cmts[rt])
@@ -154,8 +155,9 @@ class IdaLayer(unittest.TestCase):
         self.assertEqual(il.scan()[1]["named_checks"], 0)
         w.input_path = os.path.join(HERE, "fixtures", "aarch64-jtcfi.elf")
         sites2, stats2 = il.scan()
-        self.assertEqual(stats2["named_checks"], 8)
-        self.assertEqual({il.core.type_label(s) for s in sites2 if s.targets}, {"int (file*, int)", "void (void*)"})
+        self.assertEqual(stats2["named_checks"], 9)    # not the runtime's check: it has no id, file names no address
+        self.assertEqual({il.core.type_label(s) for s in sites2 if s.targets and not s.runtime_check},
+                         {"int (file*, int)", "void (void*)"})
         w.input_path = os.path.join(HERE, "fixtures", "missing.elf")
         self.assertEqual(il.scan()[1]["named_checks"], 0)
         lo = by_call[shift(truth["sites"][1]["call"])]               # b.lo: the call sits after the check here
@@ -173,13 +175,58 @@ class IdaLayer(unittest.TestCase):
         self.assertEqual(il.callers_rows(sites, shift(truth["symbols"]["g_one.cfi_jt"])), rows)
         self.assertEqual(il.callers_rows(sites, shift(truth["symbols"]["f_a.cfi_jt"])),
                          il.callers_rows(sites, shift(truth["symbols"]["f_a"])))
-        self.assertEqual(len(il.callers_rows(sites, shift(truth["symbols"]["f_a.cfi_jt"]))), 7)
+        rows = il.callers_rows(sites, shift(truth["symbols"]["f_a.cfi_jt"]))
+        # Seven calls, then the check whose call was not linked (not a call site); never the runtime's own check.
+        unlinked, runtime = (shift(c["check"]) for c in truth["checks"])
+        self.assertEqual([r[0] for r in rows], [shift(w["call"]) for w in truth["sites"] if "f_a" in w["candidates"]]
+                         + [unlinked])
+        self.assertEqual(rows[-1][2], "type check only (call not linked), 3 candidate(s)")
+        self.assertEqual(il.callers_title(sites, shift(truth["symbols"]["f_a"]), rows), "jump-table CFI callers: 7 call "
+                         "site(s) can reach f_a (+1 type check(s) whose call was not linked, listed last)")
+        self.assertIn(runtime, {s.check_ea for s in sites})      # it is still a site (Scan comments it)
         # The cursor exactly on a call (or check) always selects that site, even inside another site's span.
         for s in sites:
             if s.call_ea:
                 self.assertIs(il.site_at(sites, s.call_ea), s)
         self.assertEqual(il.remove_annotations(sites), res["xrefs"])
         self.assertEqual(w.cmts, {}); self.assertEqual(w.crefs, set())
+
+    def test_jump_table_cfi_callers_runtime_by_function(self):
+        """A runtime check the code test missed is still left out: by IDA's function name, or because its function
+        has no blr/br."""
+        import json
+        with open(os.path.join(HERE, "fixtures", "jtcfi_truth.json")) as fh:
+            truth = json.load(fh)
+        w, il = self.make("aarch64-jtcfi", "ARM", ext=".elf")
+        base = w.segs[0].start_ea
+        shift = lambda a: base + int(a, 16) - int(truth["base"], 16)
+        starts = sorted((shift(v), k) for k, v in truth["symbols"].items() if not k.startswith("__typeid_"))
+        func_name = {"__cfi_check": "__cfi_check"}
+        class F:
+            def __init__(self, lo, hi): self.start_ea, self.end_ea = lo, hi
+        def get_func(ea):
+            for (lo, _), (hi, _) in zip(starts, starts[1:]):
+                if lo <= ea < hi:
+                    return F(lo, hi)
+        names = {a: k for a, k in starts}
+        sys.modules["ida_funcs"].get_func = get_func
+        sys.modules["ida_funcs"].get_func_name = lambda ea: func_name.get(names.get(ea), names.get(ea, ""))
+        sites, _ = il.scan()
+        unlinked, runtime = (shift(c["check"]) for c in truth["checks"])
+        f_a = shift(truth["symbols"]["f_a"])
+        next(s for s in sites if s.check_ea == runtime).runtime_check = False
+        self.assertTrue(il.in_cfi_runtime(runtime))
+        self.assertFalse(il.in_cfi_runtime(unlinked))
+        self.assertEqual(il.callers_rows(sites, f_a)[-1][0], unlinked)
+        func_name["__cfi_check"] = "renamed"                    # by code only: no blr/br in that function
+        sites, _ = il.scan()
+        next(s for s in sites if s.check_ea == runtime).runtime_check = False
+        self.assertTrue(il.in_cfi_runtime(runtime))
+        self.assertNotIn(runtime, [r[0] for r in il.callers_rows(sites, f_a)])
+        sys.modules["ida_funcs"].get_func = lambda ea: None     # no function there: listed as an unlinked check
+        sites, _ = il.scan()
+        next(s for s in sites if s.check_ea == runtime).runtime_check = False
+        self.assertEqual([r[0] for r in il.callers_rows(sites, f_a)][-2:], [unlinked, runtime])
 
 if __name__ == "__main__":
     unittest.main()

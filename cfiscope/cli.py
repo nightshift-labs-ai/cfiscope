@@ -17,6 +17,7 @@ import json
 import struct
 import sys
 
+from . import core
 from .core import name_jt_types, resolve, type_label
 
 EM_X86_64, EM_AARCH64 = 62, 183
@@ -128,6 +129,13 @@ class Names:
         for ea, nm in sorted(symbols.items()):
             self.by_name.setdefault(nm, []).append(ea)
 
+    def function(self, ea):
+        """(start, end, name) of the symbol holding ea, the next symbol being its end; None if there is none."""
+        i = bisect.bisect_right(self.eas, ea) - 1
+        if i < 0 or i + 1 >= len(self.eas) or self.eas[i + 1] - self.eas[i] > 0x100000:
+            return None
+        return self.eas[i], self.eas[i + 1], self.by_ea[self.eas[i]]
+
     def __call__(self, ea):
         if ea in self.by_ea:
             return self.by_ea[ea]
@@ -146,6 +154,22 @@ def parse_target(text, names):
     if text in names.by_name:
         return set(names.by_name[text])
     raise InputError("unknown function %r (no such symbol; give an address instead)" % text)
+
+
+def runtime_test(names, ranges):
+    """in_runtime for core.callers: is the address in __cfi_check, or in a function with no blr/br (by symbols)?"""
+    def in_runtime(ea):
+        fn = names.function(ea)
+        if fn is None:
+            return False
+        lo, hi, name = fn
+        if name == core.RUNTIME_CHECK_FUNCTION:
+            return True
+        for base, mem in ranges:
+            if base <= lo and hi <= base + len(mem):
+                return not core.has_indirect_call(mem[lo - base:hi - base])
+        return False
+    return in_runtime
 
 
 def _site_dict(s, names, limit):
@@ -176,6 +200,7 @@ def _jt_dict(s):
         "note": s.note,
         "range_from": s.jt_range_from,
         "runtime_call": "0x%x" % s.runtime_call_ea if s.runtime_call_ea else None,
+        "runtime_check": s.runtime_check,
     }
 
 
@@ -189,7 +214,7 @@ def _site_line(s, names, limit):
     more = " ..." if len(s.targets) > limit else ""
     kind = "jump" if s.is_tail else "call"
     if s.kind != "kcfi":
-        kind = "%s %s" % (kind if s.call_ea else "check (call not linked)", s.kind)
+        kind = "%s %s" % (kind if s.call_ea else core.UNLINKED, s.kind)
         if s.kind == "slowpath" and not s.targets:
             count = "no candidate in this image (%s)" % (s.note or "module functions only")
         else:
@@ -255,11 +280,14 @@ def main(argv=None):
         return 2
 
     if a.callers:
-        chosen = [s for s in sites if want & set(s.targets)]
+        # Call sites first; then type checks whose call was not linked (not counted); the CFI runtime's own checks
+        # (in __cfi_check: they guard no call) are left out.
+        calls, checks = core.callers(sites, want.__contains__, runtime_test(names, ranges))
+        chosen = calls + checks
         label = a.callers if len(want) > 1 else names(min(want))
         if len(want) > 1:
             label += " (%d functions of that name)" % len(want)
-        header = "%d call site(s) can reach %s" % (len(chosen), label)
+        header = core.callers_header(len(calls), len(checks), label)
     elif a.targets:
         chosen = [s for s in sites if want & {s.call_ea, s.check_ea}]
         if not chosen:
@@ -274,6 +302,8 @@ def main(argv=None):
 
     if a.json:
         out = {"stats": stats}
+        if a.callers:
+            out["callers"] = {"call_sites": len(calls), "unlinked_checks": len(checks)}
         if chosen is not None:
             limit = 1 << 30 if a.targets or a.max_list is None else a.max_list
             out["sites"] = [_site_dict(s, names, limit) for s in chosen]

@@ -1,7 +1,36 @@
 {
  "base": "0xffffffc008000000",
+ "checks": [
+  {
+   "blr": "0xffffffc008000370",
+   "candidates": [
+    "f_a",
+    "f_b",
+    "f_c"
+   ],
+   "check": "0xffffffc008000358",
+   "function": "call_unlinked",
+   "kind": "range",
+   "runtime_check": false,
+   "type": "_ZTSFiP4fileiE",
+   "type_id": "0x95a8373040082c4d"
+  },
+  {
+   "candidates": [
+    "f_a",
+    "f_b",
+    "f_c"
+   ],
+   "check": "0xffffffc0080003c0",
+   "function": "__cfi_check",
+   "kind": "range",
+   "runtime_check": true,
+   "type": "_ZTSFiP4fileiE",
+   "type_id": "0x95a8373040082c4d"
+  }
+ ],
  "jump_table": [
-  "0xffffffc008000380",
+  "0xffffffc008000400",
   4
  ],
  "sites": [
@@ -111,11 +140,13 @@
  ],
  "slowpath": "0xffffffc008000040",
  "symbols": {
-  "__cfi_jt_end": "0xffffffc0080003a0",
-  "__cfi_jt_start": "0xffffffc008000380",
+  "__cfi_check": "0xffffffc00800039c",
+  "__cfi_check_fail": "0xffffffc0080003e4",
+  "__cfi_jt_end": "0xffffffc008000420",
+  "__cfi_jt_start": "0xffffffc008000400",
   "__cfi_slowpath_diag": "0xffffffc008000040",
-  "__typeid__ZTSFiP4fileiE_global_addr": "0xffffffc008000380",
-  "__typeid__ZTSFvPvE_global_addr": "0xffffffc008000398",
+  "__typeid__ZTSFiP4fileiE_global_addr": "0xffffffc008000400",
+  "__typeid__ZTSFvPvE_global_addr": "0xffffffc008000418",
   "call_gap": "0xffffffc008000240",
   "call_gapcopy": "0xffffffc008000294",
   "call_hi": "0xffffffc00800010c",
@@ -125,15 +156,16 @@
   "call_lo": "0xffffffc0080000b4",
   "call_single": "0xffffffc0080001bc",
   "call_slow": "0xffffffc008000208",
+  "call_unlinked": "0xffffffc008000344",
   "f_a": "0xffffffc008000000",
-  "f_a.cfi_jt": "0xffffffc008000380",
+  "f_a.cfi_jt": "0xffffffc008000400",
   "f_b": "0xffffffc008000010",
-  "f_b.cfi_jt": "0xffffffc008000388",
+  "f_b.cfi_jt": "0xffffffc008000408",
   "f_c": "0xffffffc008000020",
-  "f_c.cfi_jt": "0xffffffc008000390",
+  "f_c.cfi_jt": "0xffffffc008000410",
   "find_check_fn": "0xffffffc008000050",
   "g_one": "0xffffffc008000030",
-  "g_one.cfi_jt": "0xffffffc008000398"
+  "g_one.cfi_jt": "0xffffffc008000418"
  },
  "type_names": {
   "_ZTSFiP4fileiE": "int (file*, int)",

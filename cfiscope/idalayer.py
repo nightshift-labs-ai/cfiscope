@@ -77,7 +77,8 @@ def typeid_names():
     return out
 
 
-JT = {"table": None, "entry_of": {}}   # the last jump-table CFI scan: its jump table, target -> first entry
+# The last jump-table CFI scan: its jump table, target -> first entry, function start -> has no blr/br (in_cfi_runtime).
+JT = {"table": None, "entry_of": {}, "runtime_fn": {}}
 
 
 def scan():
@@ -91,6 +92,7 @@ def scan():
         stats = dict(stats, named_checks=core.name_jt_types(sites, typeid_names()))
         JT["table"] = core.find_jump_table(ranges)    # so that a foo.cfi_jt entry can stand for foo (callers_rows)
     jt = JT["table"]
+    JT["runtime_fn"] = {}
     JT["entry_of"] = {} if jt is None else {t: jt.start + k * jt.entry_size for k, t in reversed(list(enumerate(jt.targets)))}
     return sites, stats
 
@@ -304,7 +306,26 @@ def targets_rows(site):
             for t in ranked(site)]
 
 
+def in_cfi_runtime(ea):
+    """Is ea in the CFI runtime's check function: one named __cfi_check, or one with no blr/br (it calls no checked
+    pointer itself, so its checks guard no call)? False outside a function."""
+    func = ida_funcs.get_func(ea)
+    if func is None:
+        return False
+    if ida_funcs.get_func_name(func.start_ea) == core.RUNTIME_CHECK_FUNCTION:
+        return True
+    if not func.start_ea <= ea < func.end_ea:      # in a tail chunk: the bytes read below are not its code
+        return False
+    known = JT["runtime_fn"].get(func.start_ea)
+    if known is None:
+        code = ida_bytes.get_bytes(func.start_ea, func.end_ea - func.start_ea)
+        known = JT["runtime_fn"][func.start_ea] = bool(code) and not core.has_indirect_call(code)
+    return known
+
+
 def callers_rows(sites, ea):
+    """(address, name, note) of the call sites that can reach the function at ea, then of the type checks whose
+    call was not linked (note core.UNLINKED; not call sites). The CFI runtime's own checks are left out."""
     jt = JT["table"]
     if jt is not None and jt.start <= ea < jt.end:
         # A jump-table entry (foo.cfi_jt): every pointer to foo points here, so answer for foo itself.
@@ -315,9 +336,14 @@ def callers_rows(sites, ea):
     # The kCFI target may sit inside IDA's function (e.g. after a __cfi_ preamble IDA merged in),
     # so accept the cursor address, the function start, or any target inside the function.
     lo, hi = (func.start_ea, func.end_ea) if func is not None else (ea, ea + 1)
-    rows = []
-    for s in sites:
-        if ea in s.targets or any(lo <= t < hi for t in s.targets):
-            at = s.call_ea or s.check_ea
-            rows.append((at, target_name(at), "%d candidate(s)" % len(s.targets)))
+    calls, checks = core.callers(sites, lambda t: t == ea or lo <= t < hi, in_cfi_runtime)
+    rows = [(s.call_ea, target_name(s.call_ea), "%d candidate(s)" % len(s.targets)) for s in calls]
+    rows += [(s.check_ea, target_name(s.check_ea), "%s, %d candidate(s)" % (core.UNLINKED, len(s.targets)))
+             for s in checks]
     return rows
+
+
+def callers_title(sites, ea, rows):
+    """Title of the callers list: counts call sites only, as the command line does."""
+    checks = sum(1 for r in rows if r[2].startswith(core.UNLINKED))
+    return "%s callers: %s" % (scheme_name(sites), core.callers_header(len(rows) - checks, checks, target_name(ea)))

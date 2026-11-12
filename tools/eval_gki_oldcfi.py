@@ -60,8 +60,9 @@ if stats.get("scheme") != "jump-table CFI":
     sys.exit("no jump-table CFI found")
 resolved = [s for s in sites if s.call_ea and s.targets]
 print("sites %d: range %d, single %d, slowpath %d; with candidates %d (calls %d); checks with no call linked %d"
+      " (of them the CFI runtime's own, passing no type id: %d)"
       % (stats["sites"], stats["range_sites"], stats["single_sites"], stats["slowpath_sites"], stats["resolved"],
-         stats["calls_with_candidates"], stats["checks_without_call"]))
+         stats["calls_with_candidates"], stats["checks_without_call"], stats["runtime_checks"]))
 if len(args) < 2:
     sys.exit(0)
 
@@ -144,6 +145,20 @@ print("linked sites whose check and call are in the same kallsyms function: %s"
 fname = {a: n for a, n, t in syms if a in func_starts and t == 2}
 slowfns = {addr[n] for n in ("__cfi_slowpath", "__cfi_slowpath_diag") if n in addr}
 find_check = addr.get("find_check_fn")
+
+# Callers: checks with no linked call are not call sites. The runtime's own (Site.runtime_check, from the code) are
+# left out of callers lists; the others are listed after the calls and not counted.
+unlinked = [s for s in sites if not s.call_ea and s.kind != "slowpath"]
+cfi_check = addr.get("__cfi_check")
+in_cfi_check = lambda s: cfi_check is not None and fname.get(fn(s.check_ea)) == "__cfi_check"
+rt_checks = [s for s in unlinked if s.runtime_check]
+print("checks with no linked call: %d; the CFI runtime's own (code: no type id passed): %d, inside __cfi_check by"
+      " symbols: %d of the %d checks there; the other %d (callers lists them last, not counted): inside __cfi_check %d"
+      % (len(unlinked), len(rt_checks), sum(1 for s in rt_checks if in_cfi_check(s)),
+         sum(1 for s in sites if in_cfi_check(s)), len(unlinked) - len(rt_checks),
+         sum(1 for s in unlinked if not s.runtime_check and in_cfi_check(s))))
+print("distinct candidates of the runtime's own checks (their callers list no longer shows such a check): %d of %d"
+      % (len({t for s in rt_checks for t in s.targets}), len(cands)))
 
 
 def is_bl(p, target):
