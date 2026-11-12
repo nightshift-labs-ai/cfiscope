@@ -60,7 +60,7 @@ if stats.get("scheme") != "jump-table CFI":
     sys.exit("no jump-table CFI found")
 resolved = [s for s in sites if s.call_ea and s.targets]
 print("sites %d: range %d, single %d, slowpath %d; with candidates %d (calls %d); checks with no call linked %d"
-      " (of them the CFI runtime's own, passing no type id: %d)"
+      " (of them the CFI runtime's own, passing no type id, pointer in x1: %d)"
       % (stats["sites"], stats["range_sites"], stats["single_sites"], stats["slowpath_sites"], stats["resolved"],
          stats["calls_with_candidates"], stats["checks_without_call"], stats["runtime_checks"]))
 if len(args) < 2:
@@ -190,7 +190,7 @@ unlinked = [s for s in sites if not s.call_ea and s.kind != "slowpath"]
 cfi_check = addr.get("__cfi_check")
 in_cfi_check = lambda s: cfi_check is not None and fname.get(fn(s.check_ea)) == "__cfi_check"
 rt_checks = [s for s in unlinked if s.runtime_check]
-print("checks with no linked call: %d; the CFI runtime's own (code: no type id passed): %d, inside __cfi_check by"
+print("checks with no linked call: %d; the CFI runtime's own (code: no type id passed, pointer in x1): %d, inside __cfi_check by"
       " symbols: %d of the %d checks there; the other %d (callers lists them last, not counted): inside __cfi_check %d"
       % (len(unlinked), len(rt_checks), sum(1 for s in rt_checks if in_cfi_check(s)),
          sum(1 for s in sites if in_cfi_check(s)), len(unlinked) - len(rt_checks),

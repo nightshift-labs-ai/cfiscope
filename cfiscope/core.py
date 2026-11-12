@@ -35,7 +35,7 @@ class Site:
     jt_count: int = 0      # number of entries it accepts
     jt_range_from: str = None  # "code" (read at this check), or "same-id check" (copied from another check of its id)
     runtime_call_ea: int = 0   # blr of this check's inlined slow path: the CFI runtime calling __cfi_check (kernel's or a module's)
-    runtime_check: bool = False  # a check that guards no call and passes no type id: the CFI runtime's own (__cfi_check)
+    runtime_check: bool = False  # guards no call, passes no type id, pointer in x1: the CFI runtime's own (__cfi_check)
     extra_checks: list = field(default_factory=list)   # other checks guarding the same call (their own Sites)
     note: str = None       # caveat for the user, e.g. a slow-path-only site whose type does have functions here
 
@@ -847,9 +847,12 @@ def resolve_jump_table_cfi(ranges):
     for x in checks:
         if id(x) not in linked:
             s = _check_site(jt, x, 0, False)
-            # No call after it and no slow-path call passing a type id: the runtime's __cfi_check, which receives the
-            # id as an argument (x0), range-checks the pointer (x1) and returns or branches to __cfi_check_fail.
-            s.runtime_check = x.slow_bl is None
+            # No call after it, no slow-path call passing a type id, and the pointer in x1: the runtime's __cfi_check,
+            # which receives the id as an argument (x0), range-checks the pointer (x1) and returns or branches to
+            # __cfi_check_fail. (GKI 5.15 and 5.10: every runtime check uses x1; the 12 linked program checks on 5.15
+            # whose slow path was not decoded use x8, x20, x21 or x22; had one been unlinked, a test without x1 would
+            # have hidden it from Callers.)
+            s.runtime_check = x.slow_bl is None and x.xF == 1
             sites.append(s)
     # A type id names one range: every parsed check of that id accepts the same entries.
     ranges_of = defaultdict(set)

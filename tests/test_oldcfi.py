@@ -101,6 +101,34 @@ class Fixture(unittest.TestCase):
                          "7 call site(s) can reach f_b (+1 type check(s) whose call was not linked, listed last)")
         self.assertEqual(core.callers_header(6, 0, "f_b"), "6 call site(s) can reach f_b")
 
+    def test_unlinked_check_without_slow_path_not_in_x1_stays(self):
+        # The runtime's check tests the pointer in x1 (sub x8, x1, x8). With the pointer in x2 instead, the same check
+        # (no linked call, no slow path) is not the runtime's by the code: an unlinked program check whose slow path
+        # was not decoded looks like that, and Callers must keep it after the calls.
+        unlinked, runtime = (int(w["check"], 16) for w in self.t["checks"])
+        base, code = self.ranges[0]
+        off = runtime - base
+        w = struct.unpack_from("<I", code, off)[0]
+        self.assertEqual((w & 0xffe0fc00, (w >> 5) & 31), (0xcb000000, 1))      # sub xS, x1, xB
+        patched = bytearray(code)
+        struct.pack_into("<I", patched, off, (w & ~(31 << 5)) | (2 << 5))      # sub xS, x2, xB
+        sites, stats = core.resolve([(base, bytes(patched))], self.arch)
+        s = next(x for x in sites if x.check_ea == runtime)
+        self.assertEqual((s.kind, s.call_ea, s.type_id, s.runtime_check), ("range", 0, None, False))
+        self.assertEqual(stats["runtime_checks"], 0)
+        f_b = int(self.t["symbols"]["f_b"], 16)
+        self.assertEqual([x.check_ea for x in core.callers(sites, lambda t: t == f_b)[1]], [unlinked, runtime])
+        with tempfile.TemporaryDirectory() as tmp:          # --raw: no names, so only the code decides
+            raw = os.path.join(tmp, "Image")
+            with open(raw, "wb") as fh:
+                fh.write(patched)
+            rc, out, _ = run(raw, "--raw", "--arch", "aarch64", "--base", hex(base), "--callers", hex(f_b))
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "7 call site(s) can reach %s (+2 type check(s) whose call was not linked, listed "
+                                   "last)" % hex(f_b))
+        self.assertTrue(lines[-1].startswith("0x%x " % runtime), lines[-1])
+        self.assertIn(" type check only (call not linked) range ", lines[-1])
+
     def test_cli_callers_count_calls_only(self):
         rc, out, _ = run(ELF, "--callers", "f_b")
         lines = out.splitlines()
