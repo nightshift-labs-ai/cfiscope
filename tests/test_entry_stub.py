@@ -101,7 +101,7 @@ class Entry(unittest.TestCase):
         self.assertTrue({t for _, t, _ in w.crefs} <= w.funcs)
         res = [m for m in log["msgs"] if '"xrefs_skipped_no_function"' in m]
         self.assertEqual(len(res), 1)
-        self.assertNotIn('"xrefs_skipped_no_function": 0,', res[0])
+        self.assertNotIn('"xrefs_skipped_no_function": 0}', res[0])
         # Remove annotations takes out every xref the scan added.
         self.assertEqual(E.RemoveAction().activate(None), 1)
         self.assertEqual(w.crefs, set())
