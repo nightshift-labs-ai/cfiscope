@@ -138,6 +138,18 @@ class Fixture(unittest.TestCase):
         self.assertTrue(lines[-1].startswith("0x%x " % runtime), lines[-1])
         self.assertIn(" type check only (call not linked) range ", lines[-1])
 
+    def test_sites_label_slow_path_only_without_call(self):
+        # A slow-path-only site has no inline type check: with its call not linked it keeps the 0.1.17 label
+        # "check (call not linked)", not "type check only (call not linked)" (that is for range and single checks).
+        import dataclasses
+        names = cli.Names(self.symbols)
+        slow = next(s for s in self.sites if s.kind == "slowpath")
+        line = cli._site_line(dataclasses.replace(slow, call_ea=0), names, 8)
+        self.assertIn(" check (call not linked) slowpath type id 0x", line)
+        self.assertNotIn("type check only", line)
+        unlinked = next(s for s in self.sites if s.check_ea == int(self.t["checks"][0]["check"], 16))
+        self.assertIn(" type check only (call not linked) range ", cli._site_line(unlinked, names, 8))
+
     def test_cli_callers_count_calls_only(self):
         rc, out, _ = run(ELF, "--callers", "f_b")
         lines = out.splitlines()

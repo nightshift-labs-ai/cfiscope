@@ -214,8 +214,7 @@ def _site_line(s, names, limit):
     more = " ..." if len(s.targets) > limit else ""
     kind = "jump" if s.is_tail else "call"
     if s.kind != "kcfi":
-        kind = "%s %s" % (kind if s.call_ea else core.RUNTIME_CHECK if getattr(s, "runtime_check", False) else core.UNLINKED,
-                          s.kind)
+        kind = "%s %s" % (kind if s.call_ea else core.unlinked_label(s), s.kind)
         if s.kind == "slowpath" and not s.targets:
             count = "no candidate in this image (%s)" % (s.note or "module functions only")
         else:
