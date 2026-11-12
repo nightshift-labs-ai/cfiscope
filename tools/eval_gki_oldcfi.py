@@ -131,6 +131,36 @@ for kind in ("range", "single"):
           " id: %s; range copied from another check of the same id: %d" % (
               kind, pct(sum(1 for x in own if by_id.get(x.type_id) == x.jt_base), len(own)), len(checks) - len(own)))
 
+# Precision 3 (can fail): the entry count read from the code. A type's run of entries is the first entry and count that
+# its checks read: range checks whose base was read at the check (count from cmp xT, #N or the register holding N), and
+# single-member checks (their one entry). Left out: ranges copied from another check of the same id (equal by
+# construction) and checks without a type id (the runtime's own). Runs sorted by first entry; two neighbouring runs of
+# different type ids overlap when the second starts before the first ends. A count read too large (or a base too low)
+# makes runs overlap, or run past the next type's __typeid symbol; a count read too small shows in neither.
+runs = {}
+for s in sites:
+    for x in [s] + s.extra_checks:
+        if x.targets and x.type_id is not None and not x.runtime_check and x.jt_range_from == "code" \
+                and x.kind in ("range", "single"):
+            runs.setdefault(x.type_id, set()).add((x.jt_base, x.jt_base + jt.entry_size * x.jt_count, x.kind))
+spans = sorted((lo, hi, t) for t, v in runs.items() for lo, hi, _ in v)
+pairs = [(p, q) for p, q in zip(spans, spans[1:]) if p[2] != q[2]]
+overlaps = [(p, q) for p, q in pairs if q[0] < p[1]]
+print("count check: type ids with a run read at their checks %d (range %d, single %d; ids whose checks read more than"
+      " one run: %d); neighbouring runs of different type ids that overlap: %d of %d pairs"
+      % (len(runs), sum(1 for v in runs.values() if any(k == "range" for _, _, k in v)),
+         sum(1 for v in runs.values() if all(k == "single" for _, _, k in v)),
+         sum(1 for v in runs.values() if len({(lo, hi) for lo, hi, _ in v}) > 1), len(overlaps), len(pairs)))
+for p, q in overlaps[:10]:
+    print("  overlap: %#x..%#x (id %#018x) and %#x..%#x (id %#018x)" % (p[0], p[1], p[2], q[0], q[1], q[2]))
+starts = sorted(a for a in set(by_id.values()) if jt.start <= a < jt.end)
+past = [(lo, hi, t) for lo, hi, t in spans
+        if bisect.bisect_right(starts, lo) < len(starts) and starts[bisect.bisect_right(starts, lo)] < hi]
+print("count check with symbols: runs that extend past the next __typeid symbol in the table: %d of %d"
+      " (__typeid symbols in the table: %d)" % (len(past), len(spans), len(starts)))
+for lo, hi, t in past[:10]:
+    print("  past the next __typeid symbol: %#x..%#x (id %#018x)" % (lo, hi, t))
+
 # Linking: the check and the call it was linked to lie in the same function.
 fa = sorted(func_starts)
 fn = lambda a: fa[bisect.bisect_right(fa, a) - 1]
