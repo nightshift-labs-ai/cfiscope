@@ -325,6 +325,11 @@ class NoXrefsIntoData(unittest.TestCase):
             kernel_elf(w.input_path)
             sites, stats = il.scan()
             self.assertEqual((sites[0].targets, stats["outside_text"]), ([kb + 0x24], 1))
+            # The file's bytes at its _stext but not at its _sinittext (another build): its symbols are not used.
+            code = w.mem[kb]
+            w.mem[kb] = code[:0x2000] + struct.pack("<I", 0xd503201f) + code[0x2004:]
+            self.assertEqual(il.scan()[0][0].targets, [kb + 0x24, kb + 0x1004])
+            w.mem[kb] = code
             w.nlist = []
             code = w.mem.pop(kb)
             w.segs = [Seg(kb + 0x10000, kb + 0x10000 + len(code), 7, 2)]; w.mem = {kb + 0x10000: code}

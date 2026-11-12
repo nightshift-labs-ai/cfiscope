@@ -182,6 +182,14 @@ class TextBounds(unittest.TestCase):
             sites, stats = core.resolve([(KB, code)], "aarch64", core.kernel_text(named))
             self.assertEqual((sites[0].targets, stats["outside_text"]), ([KB + 0x24, KB + 0x2104], 1), named)
 
+    def test_bounds_are_half_open(self):
+        # A function exactly at _etext or at a code area's end is outside; one at _sinittext or an area's start inside.
+        code, bounds = kernel_with_rodata_hash()
+        code = with_functions(code, 0x40, 0x1800, 0x1900, 0x2000)
+        named = dict(bounds, __idmap_text_start=KB + 0x1800, __idmap_text_end=KB + 0x1900)
+        sites, stats = core.resolve([(KB, code)], "aarch64", core.kernel_text(named))
+        self.assertEqual((sites[0].targets, stats["outside_text"]), ([KB + 0x24, KB + 0x1800, KB + 0x2000], 3))
+
     def test_code_area_with_one_name_filters_nothing(self):
         # IDA keeps one name per address and __idmap_text_start shares its address with enter_vhe, so a database may
         # name only the end of the idmap code: its start is unknown, and nothing is left out rather than its functions.
