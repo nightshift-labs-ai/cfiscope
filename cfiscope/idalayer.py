@@ -308,13 +308,14 @@ def targets_rows(site):
 
 def in_cfi_runtime(ea):
     """Is ea in the CFI runtime's check function: one named __cfi_check, or one with no blr/br (it calls no checked
-    pointer itself, so its checks guard no call)? False outside a function."""
+    pointer itself, so its checks guard no call)? False outside a function. A function with tail chunks is judged by
+    its name only: the code test reads the entry chunk alone."""
     func = ida_funcs.get_func(ea)
     if func is None:
         return False
     if ida_funcs.get_func_name(func.start_ea) == core.RUNTIME_CHECK_FUNCTION:
         return True
-    if not func.start_ea <= ea < func.end_ea:      # in a tail chunk: the bytes read below are not its code
+    if func.tailqty:            # a blr/br in a tail chunk (ea itself may be in one) is not in the entry chunk's bytes
         return False
     known = JT["runtime_fn"].get(func.start_ea)
     if known is None:

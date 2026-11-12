@@ -30,7 +30,7 @@ def main(argv):
     sys.modules["ida_name"].get_ea_name = lambda ea: symbols.get(ea, "")
     class F:
         def __init__(self, s, e):
-            self.start_ea, self.end_ea = s, e
+            self.start_ea, self.end_ea, self.tailqty = s, e, 0
     def get_func(ea):
         i = bisect.bisect_right(eas, ea) - 1
         if i < 0:

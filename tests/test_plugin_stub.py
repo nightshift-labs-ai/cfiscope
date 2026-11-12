@@ -95,7 +95,7 @@ class IdaLayer(unittest.TestCase):
         sites, _ = il.scan()
         t = sites[0].targets[0]
         class F:
-            start_ea, end_ea = t - 16, t + 64
+            start_ea, end_ea, tailqty = t - 16, t + 64, 0
         sys.modules["ida_funcs"].get_func = lambda ea: F if F.start_ea <= ea < F.end_ea else None
         sys.modules["ida_funcs"].get_func_name = lambda ea: "__cfi_impl" if ea == F.start_ea else ""
         self.assertEqual(il.target_name(t), "__cfi_impl+0x10")
@@ -203,8 +203,9 @@ class IdaLayer(unittest.TestCase):
         shift = lambda a: base + int(a, 16) - int(truth["base"], 16)
         starts = sorted((shift(v), k) for k, v in truth["symbols"].items() if not k.startswith("__typeid_"))
         func_name = {"__cfi_check": "__cfi_check"}
+        tails = set()                                         # functions given a tail chunk (func_t.tailqty)
         class F:
-            def __init__(self, lo, hi): self.start_ea, self.end_ea = lo, hi
+            def __init__(self, lo, hi): self.start_ea, self.end_ea, self.tailqty = lo, hi, int(lo in tails)
         def get_func(ea):
             for (lo, _), (hi, _) in zip(starts, starts[1:]):
                 if lo <= ea < hi:
@@ -235,6 +236,16 @@ class IdaLayer(unittest.TestCase):
             func_name["__cfi_check"] = "renamed"
             self.assertFalse(il.in_cfi_runtime(runtime))
             self.assertEqual([r[0] for r in il.callers_rows(sites, f_a)][-2:], [unlinked, runtime])
+        # A function with tail chunks: its entry chunk has no blr/br, but a tail may, so only the name can mark it.
+        sites, _ = il.scan()
+        next(s for s in sites if s.check_ea == runtime).runtime_check = False
+        tails.add(shift(truth["symbols"]["__cfi_check"]))
+        self.assertFalse(il.in_cfi_runtime(runtime))                # renamed, with a tail: kept
+        self.assertEqual([r[0] for r in il.callers_rows(sites, f_a)][-2:], [unlinked, runtime])
+        func_name["__cfi_check"] = "__cfi_check"
+        self.assertTrue(il.in_cfi_runtime(runtime))                 # named __cfi_check: left out, tail or not
+        tails.clear()
+        func_name["__cfi_check"] = "renamed"
         sys.modules["ida_funcs"].get_func = lambda ea: None     # no function there: listed as an unlinked check
         sites, _ = il.scan()
         next(s for s in sites if s.check_ea == runtime).runtime_check = False

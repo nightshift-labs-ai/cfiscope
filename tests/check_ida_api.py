@@ -26,12 +26,13 @@ for f in FILES:
             checked += 1
             if not re.search(r"(?:def|class)\s+%s\b|^\s*%s\s*:" % (name, name), src, re.M):
                 print("MISSING", ".".join(d)); missing += 1
-# Methods and attributes the pseudocode hook uses on objects IDA hands it (not visible as ida_* names above).
+# Methods and attributes the plugin uses on objects IDA hands it (not visible as ida_* names above).
 MEMBERS = [("ida_hexrays", "Hexrays_Hooks", m) for m in ("func_printed", "hook", "unhook")] + \
     [("ida_hexrays", "cfunc_t", m) for m in ("get_eamap", "find_item_coords", "get_pseudocode")] + \
     [("ida_hexrays", "eamap_t", "__iter__"), ("ida_hexrays", "eamap_t", "__getitem__"),
      ("ida_hexrays", "cinsnptrvec_t", "__iter__"), ("ida_pro", "strvec_t", "__getitem__"),
-     ("ida_pro", "strvec_t", "__len__"), ("ida_kernwin", "simpleline_t", "line")]
+     ("ida_pro", "strvec_t", "__len__"), ("ida_kernwin", "simpleline_t", "line"),
+     ("ida_funcs", "func_t", "tailqty")]   # in_cfi_runtime: a function with tail chunks is judged by name only
 for mod, cls, name in MEMBERS:
     checked += 1
     body = re.search(r"^class %s\b.*?(?=^class |\Z)" % cls, open(os.path.join(sys.argv[1], mod + ".pyi")).read(), re.M | re.S)
