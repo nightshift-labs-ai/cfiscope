@@ -110,6 +110,11 @@ class Fixture(unittest.TestCase):
         self.assertIn("call_unlinked+0x14", lines[8])
         self.assertIn("type check only (call not linked) range int (file*, int)", lines[8])
         self.assertNotIn("__cfi_check", out)
+        rc, out, _ = run(ELF, "--sites")  # --sites still lists the runtime's own check, labelled as such
+        rt = [x for x in out.splitlines() if "__cfi_check+" in x]
+        self.assertEqual(len(rt), 1)
+        self.assertIn("CFI runtime check (guards no call) range int (file*, int)", rt[0])
+        self.assertIn("type check only (call not linked)", next(x for x in out.splitlines() if "call_unlinked+" in x))
         rc, out, _ = run(ELF, "--callers", "f_b", "--json")
         doc = json.loads(out)
         self.assertEqual(doc["callers"], {"call_sites": 7, "unlinked_checks": 1})

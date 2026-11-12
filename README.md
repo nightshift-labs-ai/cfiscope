@@ -292,7 +292,7 @@ $ python3 -m cfiscope tests/fixtures/aarch64-jtcfi.elf --sites
 0xffffffc0080002bc  call_gapcopy+0x28                        call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
 0xffffffc00800030c  call_inline+0x24                         call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
 0xffffffc008000358  call_unlinked+0x14                       type check only (call not linked) range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080003c0  __cfi_check+0x24                         type check only (call not linked) range int (file*, int)  3 candidate(s): f_a, f_b, f_c
+0xffffffc0080003c0  __cfi_check+0x24                         CFI runtime check (guards no call) range int (file*, int)  3 candidate(s): f_a, f_b, f_c
 ```
 
 and its callers of `f_b`: seven calls, then the unlinked check in `call_unlinked`; the runtime's check in `__cfi_check` is left out:

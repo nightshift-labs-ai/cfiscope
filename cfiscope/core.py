@@ -1157,6 +1157,7 @@ def callers(sites, reaches, in_runtime=None):
 
 
 UNLINKED = "type check only (call not linked)"
+RUNTIME_CHECK = "CFI runtime check (guards no call)"  # inside __cfi_check: listed by --sites, never a caller
 
 
 def callers_header(calls, checks, label):
