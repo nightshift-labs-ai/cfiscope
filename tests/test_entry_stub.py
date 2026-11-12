@@ -43,6 +43,10 @@ def load_entry(name="x86_64-kernel", proc="metapc", ext=".o"):
     return w, importlib.import_module("cfiscope_entry"), log
 
 
+INTERRUPTED = ("[CFIScope] interrupted: the action stopped part-way; run it again (Scan kCFI calls or Remove "
+               "annotations) to finish\n")
+
+
 class Entry(unittest.TestCase):
     def test_cache_and_rebase(self):
         w, E, log = load_entry()
@@ -154,8 +158,13 @@ class Entry(unittest.TestCase):
         self.answers(log, create=1)
         self.assertEqual(E.ScanAction().activate(None), 0)
         self.assertEqual([m for m in log["msgs"] if "interrupted" in m],
-                         ["[CFIScope] interrupted: run Scan again to finish, or Remove annotations\n"])
+                         [INTERRUPTED])
         self.assertFalse([m for m in log["msgs"] if m.startswith("WARN")])
+        # Remove annotations is guarded the same way, and the line does not send the user to Scan only.
+        sys.modules["ida_xref"].del_cref = lambda *a: (_ for _ in ()).throw(KeyboardInterrupt("User interrupted"))
+        log["msgs"].clear()
+        self.assertEqual(E.RemoveAction().activate(None), 0)
+        self.assertEqual([m for m in log["msgs"] if "interrupted" in m], [INTERRUPTED])
 
     def test_waits_for_auto_analysis(self):
         # ask_yn: -1 Cancel (nothing happens), 1 Yes (auto_wait, then scan), 0 No (scan now).

@@ -90,7 +90,7 @@ def guarded(activate):
         try:
             return activate(self, ctx)
         except KeyboardInterrupt:  # IDAPython's own "Running Python script" box was cancelled
-            ida_kernwin.msg("[CFIScope] interrupted: run Scan again to finish, or Remove annotations\n")
+            ida_kernwin.msg("[CFIScope] interrupted: the action stopped part-way; run it again (Scan kCFI calls or Remove annotations) to finish\n")
             return 0
         except Exception:  # noqa: BLE001  (last line of defence inside IDA)
             ida_kernwin.msg("[CFIScope] unexpected error:\n%s\n" % traceback.format_exc())
