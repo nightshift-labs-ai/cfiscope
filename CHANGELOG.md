@@ -5,6 +5,7 @@ Taken from the GitHub release notes. Newest first.
 ## Unreleased
 
 - **IDA: answering No to "Create functions" no longer leaves functions behind** (fake IDA modules only). A call cross-reference (`fl_CN`) makes IDA create a function at its target (SDK `xref.hpp`), so Scan, which asked only after adding its cross-references, produced functions at candidates even after No, and Remove annotations did not undo them. Scan now asks first; after No, a candidate IDA has no function for gets no cross-reference (`xrefs_skipped_no_function` in Scan's result), and `tools/cfiscope_headless.py` does the same without `--define-functions`. Functions created after Yes stay after Remove annotations.
+- **IDA: Scan offers to wait for auto-analysis** (fake IDA modules only). During analysis, a candidate in bytes IDA has not classified yet passes the data check, and data references IDA has not found yet are missing; Scan now asks first (`ida_auto.auto_is_ok`): Yes waits (`auto_wait`, which its Cancel button stops, and then nothing is scanned), No scans now, Cancel does nothing. IDA API names: 80 checked against the official stubs, 0 missing; 62 `ida_*` names in the stubs of IDA 9.1 to 9.5.
 
 ## v0.1.19 (2026-11-15)
 

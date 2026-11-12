@@ -112,6 +112,29 @@ class Entry(unittest.TestCase):
         self.assertTrue(w.crefs)
         self.assertTrue({t for _, t, _ in w.crefs} <= w.funcs | w.planned_funcs)
 
+    def test_waits_for_auto_analysis(self):
+        # ask_yn: -1 Cancel (nothing happens), 1 Yes (auto_wait, then scan), 0 No (scan now).
+        for wait, expect_scan, expect_waited in ((-1, False, False), (1, True, True), (0, True, False)):
+            with self.subTest(wait=wait):
+                w, E, log = load_entry()
+                w.auto_ok = False
+                waited = []
+                sys.modules["ida_auto"].auto_wait = lambda: waited.append(1) or setattr(w, "auto_ok", True) or True
+                self.answers(log, create=0, wait=wait)
+                self.assertEqual(E.ScanAction().activate(None), int(expect_scan))
+                self.assertEqual(log["asked"][0][0], "IDA is still analysing this database.\nWait for auto-analysis to "
+                                                     "finish before scanning")
+                self.assertEqual(bool(w.cmts), expect_scan)
+                self.assertEqual(E.STATE["sites"] is not None, expect_scan)
+                self.assertEqual(waited, [1] if expect_waited else [])
+        # auto_wait returns false (Cancel in its wait box): nothing is scanned or written.
+        w, E, log = load_entry()
+        w.auto_ok = False
+        sys.modules["ida_auto"].auto_wait = lambda: False
+        self.answers(log, create=0, wait=1)
+        self.assertEqual(E.ScanAction().activate(None), 0)
+        self.assertEqual((w.cmts, w.crefs, E.STATE["sites"]), ({}, set(), None))
+
     def test_menus_and_popup(self):
         _, E, log = load_entry()
         p = E.PLUGIN_ENTRY()

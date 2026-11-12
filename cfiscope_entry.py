@@ -11,6 +11,7 @@ import json
 import os
 import sys
 
+import ida_auto
 import ida_idaapi
 import ida_kernwin
 import ida_lines
@@ -53,6 +54,24 @@ def scan_or_warn():
         ida_kernwin.warning(problem)
         return None
     return sites
+
+
+def analysis_finished():
+    """True when IDA's auto-analysis is done, or the user chose to scan anyway; False to stop (Cancel).
+    A scan during analysis sees unexplored bytes as code and misses the data xrefs that rank candidates."""
+    if ida_auto.auto_is_ok():
+        return True
+    answer = ida_kernwin.ask_yn(ida_kernwin.ASKBTN_YES, "IDA is still analysing this database.\n"
+                                "Wait for auto-analysis to finish before scanning? (No: scan now)")
+    if answer == ida_kernwin.ASKBTN_NO:
+        return True
+    if answer != ida_kernwin.ASKBTN_YES:
+        return False
+    ida_kernwin.show_wait_box("CFIScope: waiting for IDA's auto-analysis")
+    try:
+        return bool(ida_auto.auto_wait())   # False if the user clicked Cancel (auto.hpp)
+    finally:
+        ida_kernwin.hide_wait_box()
 
 
 def report(text):
@@ -163,6 +182,8 @@ def flush_pseudocode():
 class ScanAction(ida_kernwin.action_handler_t):
     @guarded
     def activate(self, ctx):
+        if not analysis_finished():
+            return 0
         STATE["sites"] = STATE["pseudo"] = None
         sites = scan_or_warn()
         if sites is None:

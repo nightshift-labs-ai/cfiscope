@@ -16,9 +16,12 @@ class World:
         self.input_path = None
         self.flags = {}   # ea -> IDA flags: FF_DATA (0x400) for a data item's start, FF_TAIL (0x200) inside an item
         self.planned_funcs = set()   # call-xref targets IDA's auto-analysis would make functions (xref.hpp fl_CN)
+        self.auto_ok = True          # ida_auto.auto_is_ok(): auto-analysis has finished
 
 def install(world):
-    m = {n: types.ModuleType(n) for n in "ida_bytes ida_funcs ida_ida ida_idaapi ida_kernwin ida_nalt ida_name ida_segment ida_xref".split()}
+    m = {n: types.ModuleType(n) for n in "ida_auto ida_bytes ida_funcs ida_ida ida_idaapi ida_kernwin ida_nalt ida_name ida_segment ida_xref".split()}
+    m["ida_auto"].auto_is_ok = lambda: world.auto_ok
+    m["ida_auto"].auto_wait = lambda: setattr(world, "auto_ok", True) or True
     m["ida_nalt"].get_input_file_path = lambda: world.input_path
     m["ida_idaapi"].BADADDR = 2**64 - 1
     m["ida_bytes"].get_bytes = lambda ea, n: next((data[ea - b:ea - b + n] for b, data in world.mem.items()
