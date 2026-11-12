@@ -190,7 +190,8 @@ class ScanAction(ida_kernwin.action_handler_t):
             report("pseudocode comments on: functions decompiled from now on show the candidates at their call sites")
         if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO,
                               "Create functions at candidates IDA has not recognised?") == ida_kernwin.ASKBTN_YES:
-            report("functions created: %d" % idalayer.define_functions(sites))
+            report("functions created: %(functions_created)d; candidates skipped (data, or not in a code segment): "
+                   "%(skipped_not_code)d" % idalayer.define_functions(sites))
         return 1
 
     def update(self, ctx):

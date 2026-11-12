@@ -57,6 +57,20 @@ class Entry(unittest.TestCase):
         self.assertEqual(len(s2), 21)
         self.assertTrue(any("scanning again" in m for m in log["msgs"]))
 
+    def test_create_functions_reports_skipped(self):
+        # "Create functions" answered yes: functions at the candidates IDA has none for, none where IDA holds data.
+        w, E, log = load_entry()
+        w.funcs = set()
+        sys.modules["ida_funcs"].get_func = lambda ea: ea in w.funcs or None
+        sys.modules["ida_kernwin"].ask_yn = lambda default, text: 1
+        sites = E.scan_or_warn()
+        targets = sorted({t for s in sites for t in s.targets})
+        w.flags = {targets[0]: 0x400}
+        self.assertEqual(E.ScanAction().activate(None), 1)
+        self.assertIn("[CFIScope] functions created: %d; candidates skipped (data, or not in a code segment): 1\n"
+                      % (len(targets) - 1), log["msgs"])
+        self.assertEqual(w.funcs, set(targets[1:]))
+
     def test_menus_and_popup(self):
         _, E, log = load_entry()
         p = E.PLUGIN_ENTRY()

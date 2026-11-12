@@ -14,6 +14,7 @@ class World:
         self.segs, self.mem, self.cmts, self.crefs, self.funcs, self.drefs = segs, mem, {}, set(), set(), set()
         self.nlist = []   # (ea, name) as IDA's name list holds them
         self.input_path = None
+        self.flags = {}   # ea -> IDA flags: FF_DATA (0x400) for a data item's start, FF_TAIL (0x200) inside an item
 
 def install(world):
     m = {n: types.ModuleType(n) for n in "ida_bytes ida_funcs ida_ida ida_idaapi ida_kernwin ida_nalt ida_name ida_segment ida_xref".split()}
@@ -30,6 +31,10 @@ def install(world):
     m["ida_segment"].SEGPERM_EXEC = 1; m["ida_segment"].SEG_CODE = 2
     m["ida_segment"].get_segm_qty = lambda: len(world.segs)
     m["ida_segment"].getnseg = lambda i: world.segs[i]
+    m["ida_segment"].getseg = lambda ea: next((g for g in world.segs if g.start_ea <= ea < g.end_ea), None)
+    m["ida_bytes"].get_flags = lambda ea: world.flags.get(ea, 0)
+    m["ida_bytes"].is_data = lambda f: f & 0x600 == 0x400
+    m["ida_bytes"].is_tail = lambda f: f & 0x600 == 0x200
     m["ida_ida"].inf_get_procname = lambda: world.proc
     m["ida_ida"].inf_is_64bit = lambda: True
     m["ida_xref"].fl_CN, m["ida_xref"].fl_JN, m["ida_xref"].XREF_USER = 17, 19, 32
@@ -46,6 +51,7 @@ def install(world):
     m["ida_name"].get_nlist_size = lambda: len(world.nlist)
     m["ida_name"].get_nlist_ea = lambda i: world.nlist[i][0]
     m["ida_name"].get_nlist_name = lambda i: world.nlist[i][1]
+    m["ida_name"].get_name_ea = lambda frm, name: next((ea for ea, n in world.nlist if n == name), 2**64 - 1)
     class Choose:
         CHCOL_HEX, CH_RESTORE, NOTHING_CHANGED = 1, 2, 0
         def __init__(self, title, cols, flags=0): pass
@@ -260,6 +266,70 @@ class IdaLayer(unittest.TestCase):
         sites, _ = il.scan()
         next(s for s in sites if s.check_ea == runtime).runtime_check = False
         self.assertEqual([r[0] for r in il.callers_rows(sites, f_a)][-2:], [unlinked, runtime])
+
+class NoXrefsIntoData(unittest.TestCase):
+    """tests/test_core.kernel_with_rodata_hash() in one RWX segment, as IDA loads a vmlinux-to-elf ELF: the hash value
+    in 'rodata' yields a candidate at KB + 0x1004 next to the real one at KB + 0x24."""
+
+    def make(self):
+        from test_core import kernel_with_rodata_hash, KB
+        code, bounds = kernel_with_rodata_hash()
+        w = World([Seg(KB, KB + len(code), 7, 2)], {KB: code}); w.proc = "ARM"
+        il = install(w)
+        sys.modules["ida_funcs"].get_func = lambda ea: ea in w.funcs or None
+        return w, il, KB, bounds
+
+    def test_no_xref_or_function_at_data(self):
+        w, il, kb, _ = self.make()
+        sites, stats = il.scan()                              # no names, no input file: both candidates
+        self.assertEqual(sites[0].targets, [kb + 0x24, kb + 0x1004])
+        self.assertNotIn("outside_text", stats)
+        for flags in (0x400, 0x200):                          # IDA holds it as data, or it is inside another item
+            w.flags = {kb + 0x1004: flags}; w.crefs.clear(); w.funcs.clear()
+            res = il.annotate(sites)
+            self.assertEqual({(f, t) for f, t, _ in w.crefs}, {(sites[0].call_ea, kb + 0x24)})
+            self.assertEqual((res["xrefs"], res["xrefs_skipped_not_code"]), (1, 1))
+            self.assertEqual(il.define_functions(sites), {"functions_created": 1, "skipped_not_code": 1})
+            self.assertEqual(w.funcs, {kb + 0x24})
+            self.assertEqual(il.remove_annotations(sites), 1)
+        # The same bytes, but in a data segment while the database has a code segment: no xref, no function.
+        w.flags = {}; w.crefs.clear(); w.funcs.clear()
+        w.segs = [Seg(kb, kb + 0x1000, 5, 2), Seg(kb + 0x1000, kb + 0x2100, 4, 3)]
+        self.assertEqual(il.annotate(sites)["xrefs_skipped_not_code"], 1)
+        self.assertEqual(il.define_functions(sites), {"functions_created": 1, "skipped_not_code": 1})
+        self.assertEqual({t for _, t, _ in w.crefs} | w.funcs, {kb + 0x24})
+        # Raw load: no segment is code or executable, every segment is scanned, and only the item flags count.
+        w.segs = [Seg(kb, kb + 0x2100, 0, 0)]; w.crefs.clear(); w.funcs.clear()
+        self.assertEqual(il.annotate(sites)["xrefs"], 2)
+
+    def test_text_bounds_from_names(self):
+        w, il, kb, bounds = self.make()
+        w.nlist = sorted((ea, n) for n, ea in bounds.items())
+        sites, stats = il.scan()
+        self.assertEqual((sites[0].targets, stats["outside_text"]), ([kb + 0x24], 1))
+        self.assertEqual(il.annotate(sites)["xrefs"], 1)
+        self.assertEqual(il.define_functions(sites), {"functions_created": 1, "skipped_not_code": 0})
+
+    def test_text_bounds_from_input_file(self):
+        # IDA keeps one name per address: with _stext lost to another name, the input ELF's symbols bound the text,
+        # unless the database was rebased (then its bytes at the file's _stext differ).
+        import tempfile
+        from test_cli import kernel_elf
+        w, il, kb, bounds = self.make()
+        w.nlist = [(ea, n) for n, ea in bounds.items() if n != "_stext"] + [(kb, "__irqentry_text_start")]
+        self.assertEqual(il.scan()[0][0].targets, [kb + 0x24, kb + 0x1004])
+        with tempfile.TemporaryDirectory() as tmp:
+            w.input_path = os.path.join(tmp, "k.elf")
+            kernel_elf(w.input_path)
+            sites, stats = il.scan()
+            self.assertEqual((sites[0].targets, stats["outside_text"]), ([kb + 0x24], 1))
+            w.nlist = []
+            code = w.mem.pop(kb)
+            w.segs = [Seg(kb + 0x10000, kb + 0x10000 + len(code), 7, 2)]; w.mem = {kb + 0x10000: code}
+            sites, stats = il.scan()
+            self.assertEqual(sites[0].targets, [kb + 0x10024, kb + 0x11004])
+            self.assertNotIn("outside_text", stats)
+
 
 if __name__ == "__main__":
     unittest.main()

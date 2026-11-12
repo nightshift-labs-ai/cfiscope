@@ -58,7 +58,8 @@ def main(argv=None):
             return 0
         print("[CFIScope] %s" % json.dumps(idalayer.annotate(sites)))
         if args.define_functions:
-            print("[CFIScope] functions created: %d" % idalayer.define_functions(sites))
+            print("[CFIScope] functions created: %(functions_created)d; candidates skipped (data, or not in a code "
+                  "segment): %(skipped_not_code)d" % idalayer.define_functions(sites))
         return 0
     finally:
         idapro.close_database(True)

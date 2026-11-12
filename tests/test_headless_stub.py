@@ -20,7 +20,7 @@ def scan():
 layer.scan = scan
 layer.annotate = lambda s: calls.append(("annotate", len(s))) or {"comments": len(s), "xrefs": 2, "kept_user_comments": 0}
 layer.remove_annotations = lambda s: calls.append(("remove", len(s))) or 2
-layer.define_functions = lambda s: calls.append(("define", len(s))) or 1
+layer.define_functions = lambda s: calls.append(("define", len(s))) or {"functions_created": 1, "skipped_not_code": 0}
 saved = {name: sys.modules.get(name) for name in ("idapro", "cfiscope.idalayer")}
 saved_attr = cfiscope.__dict__.get("idalayer")
 sys.modules.update(idapro=idapro, **{"cfiscope.idalayer": layer})

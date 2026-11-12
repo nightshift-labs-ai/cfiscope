@@ -51,17 +51,10 @@ def layout():
     return tuple((seg.start_ea, seg.end_ea) for seg in segments if seg is not None)
 
 
-def typeid_names():
-    """(address, name) of the __typeid_<type>_global_addr names (kallsyms keeps them).
-
-    IDA keeps one name per address, and each of these shares its address with a `foo.cfi_jt` entry name, so the
-    database may have lost them: the input file's own ELF symbol table, if it is still there, is read as well.
-    Names from the file come without an address (the database may be rebased); they are matched by type id."""
-    out = []
-    for i in range(ida_name.get_nlist_size()):
-        name = ida_name.get_nlist_name(i)
-        if name and name.startswith("__typeid_"):
-            out.append((ida_name.get_nlist_ea(i), name))
+def input_elf():
+    """(every, bounds, ranges) from the input file, if it is still where it was loaded from and is an ELF; else None.
+    every: (address, name) of its function symbols, several per address; bounds: {name: address} of its kernel text
+    bound symbols (core.TEXT_BOUND_NAMES); ranges: its code, as the command line reads it."""
     try:
         from . import cli
         path = ida_nalt.get_input_file_path()
@@ -69,12 +62,58 @@ def typeid_names():
             with open(path, "rb") as fh:
                 data = fh.read()
             if data[:4] == b"\x7fELF":
-                every = []
-                cli.load_elf(data, every)
-                out.extend((None, name) for _, name in every if name.startswith("__typeid_"))
+                every, bounds = [], {}
+                _, ranges, _ = cli.load_elf(data, every, bounds)
+                return every, bounds, ranges
     except Exception:  # noqa: BLE001  names are a bonus: an unreadable input file only means fewer of them
         pass
+    return None
+
+
+def typeid_names(elf=False):
+    """(address, name) of the __typeid_<type>_global_addr names (kallsyms keeps them).
+
+    IDA keeps one name per address, and each of these shares its address with a `foo.cfi_jt` entry name, so the
+    database may have lost them: the input file's own ELF symbol table, if it is still there, is read as well
+    (elf: input_elf(), read here if not given).
+    Names from the file come without an address (the database may be rebased); they are matched by type id."""
+    out = []
+    for i in range(ida_name.get_nlist_size()):
+        name = ida_name.get_nlist_name(i)
+        if name and name.startswith("__typeid_"):
+            out.append((ida_name.get_nlist_ea(i), name))
+    if elf is False:
+        elf = input_elf()
+    if elf is not None:
+        out.extend((None, name) for _, name in elf[0] if name.startswith("__typeid_"))
     return out
+
+
+def _bytes_at(ranges, ea, n=64):
+    """Up to n bytes at ea from (base, bytes) ranges; None unless at least 4 are there."""
+    for base, mem in ranges:
+        if base <= ea and ea + 4 <= base + len(mem):
+            return bytes(mem[ea - base:ea - base + n])
+    return None
+
+
+def text_bounds(ranges, elf=None):
+    """{name: address} of the kernel text bounds (core.TEXT_BOUND_NAMES): the database's names and, since IDA keeps
+    one name per address and these share theirs with other names (_stext with __irqentry_text_start, _etext with
+    __start_rodata in GKI kernels), the input file's symbols (elf: input_elf()) when the database still has the
+    file's layout: the same bytes at the file's _stext and _sinittext (not rebased)."""
+    named = {}
+    for name in sorted(core.TEXT_BOUND_NAMES):
+        ea = ida_name.get_name_ea(BADADDR, name)
+        if ea != BADADDR:
+            named[name] = ea
+    if elf is not None:
+        bounds, file_ranges = elf[1], elf[2]
+        if all(n in bounds and _bytes_at(file_ranges, bounds[n]) is not None
+               and _bytes_at(file_ranges, bounds[n]) == _bytes_at(ranges, bounds[n]) for n in ("_stext", "_sinittext")):
+            for name, ea in bounds.items():
+                named.setdefault(name, ea)
+    return named
 
 
 # The last jump-table CFI scan: its jump table, target -> first entry, function start -> has no blr/br (in_cfi_runtime).
@@ -86,10 +125,12 @@ def scan():
     if arch is None:
         raise RuntimeError("CFIScope supports 64-bit x86 and AArch64 databases only.")
     ranges = code_ranges()
-    sites, stats = core.resolve(ranges, arch)
+    elf = input_elf()
+    # With the kernel's text bounds named, kCFI candidates outside kernel code (a hash value in .rodata) are left out.
+    sites, stats = core.resolve(ranges, arch, core.kernel_text(text_bounds(ranges, elf)))
     JT["table"] = None
     if stats.get("scheme") == "jump-table CFI":
-        stats = dict(stats, named_checks=core.name_jt_types(sites, typeid_names()))
+        stats = dict(stats, named_checks=core.name_jt_types(sites, typeid_names(elf)))
         JT["table"] = core.find_jump_table(ranges)    # so that a foo.cfi_jt entry can stand for foo (callers_rows)
     jt = JT["table"]
     JT["runtime_fn"] = {}
@@ -190,9 +231,36 @@ def describe_runtime(site):
             % (JT_COMMENT_TAG, core.type_label(site) or "this type", site.check_ea))
 
 
+def _code_segment(seg):
+    return bool(seg.perm & ida_segment.SEGPERM_EXEC) or seg.type == ida_segment.SEG_CODE
+
+
+def target_check():
+    """A test for a candidate before it gets a cross-reference or a function: it must lie in a segment the scan reads
+    (executable or code; any segment when the database has neither, as after a raw load) and must not be an item IDA
+    holds as data, nor inside another item. (Without the kernel's symbols, a type hash that happens to occur in
+    .rodata yields a candidate there.)"""
+    segs = [ida_segment.getnseg(i) for i in range(ida_segment.get_segm_qty())]
+    any_code = any(seg is not None and _code_segment(seg) for seg in segs)
+    seen = {}
+
+    def ok(ea):
+        if ea not in seen:
+            seg = ida_segment.getseg(ea)
+            if seg is None or (any_code and not _code_segment(seg)):
+                seen[ea] = False
+            else:
+                flags = ida_bytes.get_flags(ea)
+                seen[ea] = not (ida_bytes.is_data(flags) or ida_bytes.is_tail(flags))
+        return seen[ea]
+    return ok
+
+
 def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT):
-    """Comment every check; add user xrefs where the candidate list is short."""
-    res = {"comments": 0, "xrefs": 0, "kept_user_comments": 0, "runtime_comments": 0}
+    """Comment every check; add user xrefs where the candidate list is short, never to a candidate target_check() rejects
+    (counted in xrefs_skipped_not_code)."""
+    res = {"comments": 0, "xrefs": 0, "kept_user_comments": 0, "runtime_comments": 0, "xrefs_skipped_not_code": 0}
+    ok = target_check()
     for ea, x in runtime_calls(sites).items():
         old = ida_bytes.get_cmt(ea, False)
         if old and not old.startswith(OWN_TAGS):
@@ -211,7 +279,9 @@ def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT):
         if s.call_ea and 0 < len(s.targets) <= xref_limit:
             # Call-type even for tail calls: a jump xref could fold a target into the caller as a chunk.
             for t in s.targets:
-                if ida_xref.add_cref(s.call_ea, t, ida_xref.fl_CN | ida_xref.XREF_USER):
+                if not ok(t):
+                    res["xrefs_skipped_not_code"] += 1
+                elif ida_xref.add_cref(s.call_ea, t, ida_xref.fl_CN | ida_xref.XREF_USER):
                     res["xrefs"] += 1
     return res
 
@@ -249,12 +319,18 @@ def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
 
 
 def define_functions(sites):
-    """A kCFI preamble, or a CFI jump-table entry's branch, marks a real entry point: create functions IDA missed."""
-    made = 0
+    """A kCFI preamble, or a CFI jump-table entry's branch, marks a real entry point: create functions IDA missed,
+    never at a candidate target_check() rejects (data, or outside the code segments)."""
+    ok = target_check()
+    made = skipped = 0
     for t in sorted({t for s in sites for t in s.targets}):
-        if ida_funcs.get_func(t) is None and ida_funcs.add_func(t):
+        if ida_funcs.get_func(t) is not None:
+            continue
+        if not ok(t):
+            skipped += 1
+        elif ida_funcs.add_func(t):
             made += 1
-    return made
+    return {"functions_created": made, "skipped_not_code": skipped}
 
 
 class Chooser(ida_kernwin.Choose):
