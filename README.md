@@ -157,7 +157,7 @@ Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google downlo
 
 | Measure | Result |
 |---|---|
-| Indirect call sites found | 13,897, using 4,184 distinct type hashes, in about a second (see below) |
+| Indirect call sites found | 13,897, using 4,184 distinct type hashes, in 1 to 3 s (see below) |
 | Sites with at least one candidate | 11,960 (86.1%) |
 | Sites with exactly one candidate | 1,695 |
 | Median candidates per site with at least one candidate (over all sites, unresolved included: 4) | 6 |
