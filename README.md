@@ -32,7 +32,7 @@ CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
 hcli plugin install cfiscope
 ```
 
-Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later. The plugin index can lag a day or more behind the [GitHub releases](https://github.com/nightshift-labs-ai/cfiscope/releases) (on Nov 12 it still offered 0.1.15, which has no Linux 5.x support and no headless runner); if `hcli plugin status` shows an older version, install a release zip directly: `hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/tags/v0.1.18.zip`.
+Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later. The plugin index can lag a day or more behind the [GitHub releases](https://github.com/nightshift-labs-ai/cfiscope/releases) (on Nov 12 it still offered 0.1.15, which has no Linux 5.x support and no headless runner); if `hcli plugin status` shows an older version, install a release zip directly: `hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/tags/v0.1.19.zip`.
 
 
 ## Try it
@@ -40,7 +40,7 @@ Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later. The plu
 Install the current release (the plugin index can lag a day behind; see [Install](#install)):
 
 ```
-hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/tags/v0.1.18.zip
+hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/tags/v0.1.19.zip
 ```
 
 Quick try, no download (about a minute): the repository ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`: the generator wrote each function-pointer type and its implementations into `t.c`, and Clang built the objects.
