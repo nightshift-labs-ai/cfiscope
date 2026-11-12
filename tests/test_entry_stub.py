@@ -106,6 +106,25 @@ class Entry(unittest.TestCase):
         self.assertEqual(E.RemoveAction().activate(None), 1)
         self.assertEqual(w.crefs, set())
 
+    def test_no_skips_candidate_inside_a_function(self):
+        # "No": a candidate inside a function IDA has, but not at its start, gets no call xref either (xref.hpp: fl_CN
+        # "creates a function at the referenced location", and that location is not where the function starts).
+        w, E, log = load_entry()
+        sites = E.scan_or_warn()
+        targets = sorted({t for s in sites for t in s.targets})
+        inside = set(targets[1::2])                               # these lie 0x10 into a function IDA has
+        F = lambda ea: types.SimpleNamespace(start_ea=ea - 0x10 if ea in inside else ea, end_ea=ea + 4, tailqty=0)
+        sys.modules["ida_funcs"].get_func = lambda ea: F(ea) if ea in targets else None
+        self.answers(log, create=0)
+        self.assertEqual(E.ScanAction().activate(None), 1)
+        self.assertEqual(w.planned_funcs, set())
+        self.assertTrue(w.crefs)
+        self.assertEqual({t for _, t, _ in w.crefs} & inside, set())
+        limit = sys.modules["cfiscope.idalayer"].DEFAULT_XREF_LIMIT
+        skipped = sum(t in inside for s in sites if s.call_ea and 0 < len(s.targets) <= limit for t in s.targets)
+        self.assertTrue(skipped)
+        self.assertIn('"xrefs_skipped_no_function": %d}' % skipped, "".join(log["msgs"]))
+
     def test_yes_asked_before_xrefs(self):
         w, E, log = load_entry()
         w.funcs = set()

@@ -26,7 +26,7 @@ if ROOT not in sys.path:
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Apply CFIScope to a kernel with idalib (no IDA window).")
     parser.add_argument("input", help="kernel file to open in IDA (vmlinux, Image, .ko, or an existing database)")
-    parser.add_argument("--no-analysis", action="store_true", help="skip IDA's auto-analysis (faster; on a fresh kernel file IDA then has no functions, so add --define-functions to get cross-references)")
+    parser.add_argument("--no-analysis", action="store_true", help="skip IDA's auto-analysis (faster; it is what creates functions, so on a fresh kernel file add --define-functions to get cross-references)")
     parser.add_argument("--define-functions", action="store_true", help="create functions at candidates IDA has not recognised")
     parser.add_argument("--remove", action="store_true", help="remove CFIScope's comments and xrefs instead of adding them")
     args = parser.parse_args(argv)
@@ -56,7 +56,8 @@ def main(argv=None):
             print("[CFIScope] no kCFI checks found, and no aarch64 jump-table CFI either: this binary may not be built with "
                   "-fsanitize=kcfi (Linux 6.1+ CONFIG_CFI_CLANG) or with the jump-table CFI of Linux 5.x (aarch64 only)")
             return 0
-        # Without --define-functions, no call xref to a candidate IDA has no function for: IDA would make one there.
+        # Without --define-functions, no call xref to a candidate that does not start a function IDA has: IDA would make
+        # one there.
         print("[CFIScope] %s" % json.dumps(idalayer.annotate(sites, create_functions=args.define_functions)))
         if args.define_functions:
             print("[CFIScope] functions created: %(functions_created)d; candidates skipped (data, or not in a code "

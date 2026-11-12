@@ -195,7 +195,7 @@ class ScanAction(ida_kernwin.action_handler_t):
         if sites is None:
             return 0
         # Asked before any xref is added: a call xref makes IDA create a function at its target (xref.hpp, fl_CN),
-        # so after "No" a candidate IDA has no function for gets no xref.
+        # so after "No" a candidate that does not start a function IDA has gets no xref.
         answer = ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO, "Create functions at candidates IDA has not recognised?") \
             if sites else ida_kernwin.ASKBTN_NO
         if answer == ida_kernwin.ASKBTN_CANCEL:

@@ -45,8 +45,9 @@ def install(world):
     m["ida_ida"].inf_is_auto_enabled = lambda: world.auto_enabled
     m["ida_xref"].fl_CN, m["ida_xref"].fl_JN, m["ida_xref"].XREF_USER = 17, 19, 32
     def add_cref(f, t, k):
-        # xref.hpp: fl_CF (16) and fl_CN (17) "create a function at the referenced location" (through auto-analysis).
-        if (k & 0x1F) in (16, 17) and sys.modules["ida_funcs"].get_func(t) is None:
+        # xref.hpp: fl_CF (16) and fl_CN (17) "create a function at the referenced location" (through auto-analysis),
+        # also where t lies inside a function that starts elsewhere.
+        if (k & 0x1F) in (16, 17) and getattr(sys.modules["ida_funcs"].get_func(t), "start_ea", None) != t:
             world.planned_funcs.add(t)
         world.crefs.add((f, t, k))
         return True

@@ -47,10 +47,18 @@ with tempfile.NamedTemporaryFile() as f:
     assert h.main([f.name]) == 1 and calls == [], calls
     run = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "cfiscope_headless.py"), f.name], capture_output=True, text=True)
     assert run.returncode == 2 and "idalib is not available" in run.stderr, (run.returncode, run.stderr)
-    # --no-analysis leaves a fresh kernel without functions, so its help points to --define-functions.
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
-        h.main(["--help"])
+    # --no-analysis skips the auto-analysis that creates functions, so its help points to --define-functions.
+    # Wide COLUMNS: argparse wraps help to the terminal width and may break "--define-functions" at its hyphen.
+    out, columns = io.StringIO(), os.environ.get("COLUMNS")
+    os.environ["COLUMNS"] = "1000"
+    try:
+        with contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
+            h.main(["--help"])
+    finally:
+        if columns is None:
+            os.environ.pop("COLUMNS", None)
+        else:
+            os.environ["COLUMNS"] = columns
     assert "--define-functions to get cross-references" in " ".join(out.getvalue().split()), out.getvalue()
 # unittest discover imports every test script in one process: put the real modules back.
 for name, module in saved.items():
