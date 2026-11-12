@@ -26,7 +26,7 @@ if ROOT not in sys.path:
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Apply CFIScope to a kernel with idalib (no IDA window).")
     parser.add_argument("input", help="kernel file to open in IDA (vmlinux, Image, .ko, or an existing database)")
-    parser.add_argument("--no-analysis", action="store_true", help="skip IDA's auto-analysis (faster; it is what creates functions, so on a fresh kernel file add --define-functions to get cross-references)")
+    parser.add_argument("--no-analysis", action="store_true", help="skip IDA's auto-analysis, which creates the functions (faster; on a fresh kernel file add --define-functions to get cross-references)")
     parser.add_argument("--define-functions", action="store_true", help="create functions at candidates IDA has not recognised")
     parser.add_argument("--remove", action="store_true", help="remove CFIScope's comments and xrefs instead of adding them")
     args = parser.parse_args(argv)
