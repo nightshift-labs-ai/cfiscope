@@ -1161,7 +1161,7 @@ def callers(sites, reaches, in_runtime=None):
 
 UNLINKED = "type check only (call not linked)"       # a range or single-member check whose call was not linked
 RUNTIME_CHECK = "CFI runtime check (guards no call)"  # inside __cfi_check: listed by --sites, never a caller
-SLOWPATH_UNLINKED = "check (call not linked)"         # a slow-path-only site (no inline check) whose call was not linked
+SLOWPATH_UNLINKED = "check (call not linked)"         # a slow-path-only site (no inline check was decoded for it) whose call was not linked
 
 
 def unlinked_label(s):

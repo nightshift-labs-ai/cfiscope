@@ -338,7 +338,8 @@ def callers_rows(sites, ea):
     # so accept the cursor address, the function start, or any target inside the function.
     lo, hi = (func.start_ea, func.end_ea) if func is not None else (ea, ea + 1)
     calls, checks = core.callers(sites, lambda t: t == ea or lo <= t < hi, in_cfi_runtime)
-    rows = [(s.call_ea, target_name(s.call_ea), "%d candidate(s)" % len(s.targets)) for s in calls]
+    # a kCFI check whose call was not recognised still counts as a call site: list it at its check address
+    rows = [(s.call_ea or s.check_ea, target_name(s.call_ea or s.check_ea), "%d candidate(s)" % len(s.targets)) for s in calls]
     rows += [(s.check_ea, target_name(s.check_ea), "%s, %d candidate(s)" % (core.UNLINKED, len(s.targets)))
              for s in checks]
     return rows

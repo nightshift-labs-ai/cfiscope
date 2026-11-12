@@ -139,7 +139,7 @@ class Fixture(unittest.TestCase):
         self.assertIn(" type check only (call not linked) range ", lines[-1])
 
     def test_sites_label_slow_path_only_without_call(self):
-        # A slow-path-only site has no inline type check: with its call not linked it keeps the 0.1.17 label
+        # A slow-path-only site (no inline check was decoded for it): with its call not linked it keeps the 0.1.17 label
         # "check (call not linked)", not "type check only (call not linked)" (that is for range and single checks).
         import dataclasses
         names = cli.Names(self.symbols)

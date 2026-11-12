@@ -104,6 +104,16 @@ class IdaLayer(unittest.TestCase):
         rows = il.callers_rows(sites, F.start_ea)
         self.assertIn(sites[0].call_ea or sites[0].check_ea, [r[0] for r in rows])
 
+    def test_kcfi_call_not_recognised_listed_at_check(self):
+        # A kCFI check whose call was not recognised still counts as a call site; it is listed at its check address
+        # (v0.1.17 behaviour), never at address 0.
+        w, il = self.make("x86_64-plain", "metapc")
+        sites, _ = il.scan()
+        t = sites[0].targets[0]
+        lone = il.core.Site(check_ea=0x1000, call_ea=0, hash=sites[0].hash, disp=sites[0].disp, targets=[t])
+        rows = il.callers_rows([lone], t)
+        self.assertEqual([r[0] for r in rows], [0x1000])
+
     def test_address_taken_ranked_first(self):
         w, il = self.make("x86_64-plain", "metapc")
         sites, _ = il.scan()
