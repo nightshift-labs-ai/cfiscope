@@ -12,6 +12,7 @@ import os
 import sys
 
 import ida_auto
+import ida_ida
 import ida_idaapi
 import ida_kernwin
 import ida_lines
@@ -60,7 +61,7 @@ def scan_or_warn():
 def analysis_finished():
     """True when IDA's auto-analysis is done, or the user chose to scan anyway; False to stop (Cancel).
     A scan during analysis sees unexplored bytes as code and misses the data xrefs that rank candidates."""
-    if ida_auto.auto_is_ok():
+    if ida_auto.auto_is_ok() or not ida_ida.inf_is_auto_enabled():   # analysis turned off: its queues never empty
         return True
     answer = ida_kernwin.ask_yn(ida_kernwin.ASKBTN_YES, "IDA is still analysing this database.\n"
                                 "Wait for auto-analysis to finish before scanning? (No: scan now)")

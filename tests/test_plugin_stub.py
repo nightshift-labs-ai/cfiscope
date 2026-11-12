@@ -17,6 +17,7 @@ class World:
         self.flags = {}   # ea -> IDA flags: FF_DATA (0x400) for a data item's start, FF_TAIL (0x200) inside an item
         self.planned_funcs = set()   # call-xref targets IDA's auto-analysis would make functions (xref.hpp fl_CN)
         self.auto_ok = True          # ida_auto.auto_is_ok(): auto-analysis has finished
+        self.auto_enabled = True     # ida_ida.inf_is_auto_enabled(): auto-analysis is turned on
 
 def install(world):
     m = {n: types.ModuleType(n) for n in "ida_auto ida_bytes ida_funcs ida_ida ida_idaapi ida_kernwin ida_nalt ida_name ida_segment ida_xref".split()}
@@ -41,6 +42,7 @@ def install(world):
     m["ida_bytes"].is_tail = lambda f: f & 0x600 == 0x200
     m["ida_ida"].inf_get_procname = lambda: world.proc
     m["ida_ida"].inf_is_64bit = lambda: True
+    m["ida_ida"].inf_is_auto_enabled = lambda: world.auto_enabled
     m["ida_xref"].fl_CN, m["ida_xref"].fl_JN, m["ida_xref"].XREF_USER = 17, 19, 32
     def add_cref(f, t, k):
         # xref.hpp: fl_CF (16) and fl_CN (17) "create a function at the referenced location" (through auto-analysis).

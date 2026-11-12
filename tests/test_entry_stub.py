@@ -189,6 +189,18 @@ class Entry(unittest.TestCase):
         self.assertEqual(E.ScanAction().activate(None), 0)
         self.assertEqual((w.cmts, w.crefs, E.STATE["sites"]), ({}, set(), None))
 
+    def test_analysis_turned_off_counts_as_finished(self):
+        # Analysis disabled (INFFL_AUTO off): its queues stay full, so no question and no auto_wait; Scan runs.
+        w, E, log = load_entry()
+        w.auto_ok, w.auto_enabled = False, False
+        waited = []
+        sys.modules["ida_auto"].auto_wait = lambda: waited.append(1) or True
+        self.answers(log, create=0, wait=-1)
+        self.assertEqual(E.ScanAction().activate(None), 1)
+        self.assertEqual([q for q in log["asked"] if q[0].startswith("IDA is still")], [])
+        self.assertEqual(waited, [])
+        self.assertTrue(w.cmts)
+
     def test_menus_and_popup(self):
         _, E, log = load_entry()
         p = E.PLUGIN_ENTRY()
