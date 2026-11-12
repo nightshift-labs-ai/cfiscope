@@ -1,5 +1,5 @@
 """The command-line scanner gives the compiler's answers, by name, with no IDA."""
-import contextlib, io, json, os, struct, sys, tempfile, unittest
+import contextlib, io, json, os, struct, subprocess, sys, tempfile, unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, ".."))
 from cfiscope import cli
@@ -95,13 +95,15 @@ class Cli(unittest.TestCase):
         self.assertIn("unknown function", err)
 
 
-def kernel_elf(path, bound_type=0x12, bounds=True):
+def kernel_elf(path, bound_type=0x12, bounds=True, extra=None):
     """tests/test_core.kernel_with_rodata_hash() as an ELF (gen_fixtures' writer), with its text bound symbols typed
-    bound_type: 0x12 (global FUNC) as vmlinux-to-elf writes them, 0x10 (global NOTYPE) as in a vmlinux."""
+    bound_type: 0x12 (global FUNC) as vmlinux-to-elf writes them, 0x10 (global NOTYPE) as in a vmlinux.
+    extra: {name: address} added to (or replacing) those bound symbols."""
     sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, "..", "tools"))
     from test_core import kernel_with_rodata_hash, KB
     import gen_fixtures
     code, named = kernel_with_rodata_hash()
+    named.update(extra or {})
     symbols = [("caller", KB), ("impl", KB + 0x24)] + (sorted(named.items()) if bounds else [])
     d = bytearray(gen_fixtures.elf64_aarch64(code, KB, symbols))
     sym = next(s for s in cli._sections(bytes(d)) if s[1] == 2)
@@ -139,6 +141,53 @@ class TextBounds(unittest.TestCase):
                 self.assertEqual([t["ea"] for t in doc["sites"][0]["targets"]], [hex(kb + 0x24), hex(kb + 0x1004)])
                 self.assertNotIn("outside_text", doc["stats"])
                 self.assertNotIn("outside kernel code", run(*argv)[1])
+
+
+class EvalGki(unittest.TestCase):
+    """tools/eval_gki.py names the bounds it filters with: only the code areas that reach between _etext and
+    _sinittext, and only when kCFI candidates were filtered (jump-table CFI candidates never are)."""
+
+    def eval_gki(self, image, elf, base):
+        argv = [sys.executable, os.path.join(HERE, "..", "tools", "eval_gki.py"), "--base", hex(base), image, elf]
+        done = subprocess.run(argv, capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout.splitlines()
+
+    def test_bounds_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            elf, image = os.path.join(tmp, "k.elf"), os.path.join(tmp, "Image")
+            # Listed: the entry trampoline between _etext and _sinittext. Not listed: idmap code inside .text (as GKI 6.1
+            # names it), an area starting at _sinittext and an empty one, which keep nothing between the two.
+            kb = 0xffffffc008000000
+            kernel_elf(elf, extra={"__idmap_text_start": kb + 0x10, "__idmap_text_end": kb + 0x20,
+                                   "__entry_tramp_text_start": kb + 0x1800, "__entry_tramp_text_end": kb + 0x1900,
+                                   "__hibernate_exit_text_start": kb + 0x2000, "__hibernate_exit_text_end": kb + 0x2010,
+                                   "__relocate_new_kernel_start": kb + 0x1a00, "__relocate_new_kernel_end": kb + 0x1a00})
+            with open(elf, "rb") as fh:
+                code = cli.load_elf(fh.read())[1][0][1]
+            with open(image, "wb") as fh:
+                fh.write(code)
+            self.assertEqual(self.eval_gki(image, elf, kb)[0],
+                             "candidates left out between _etext and _sinittext (%#x-%#x) except in the code areas "
+                             "named there (%#x-%#x): 1" % (kb + 0x40, kb + 0x2000, kb + 0x1800, kb + 0x1900))
+            kernel_elf(elf, bounds=False)
+            self.assertEqual(self.eval_gki(image, elf, kb)[0],
+                             "kernel code not named in the ELF's symbols: nothing left out")
+            # A jump-table CFI kernel whose ELF names the four bounds: its candidates are not filtered.
+            sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+            import gen_fixtures
+            every = []
+            with open(os.path.join(FIX, "aarch64-jtcfi.elf"), "rb") as fh:
+                base, code = cli.load_elf(fh.read(), every)[1][0]
+            end = base + len(code)
+            with open(elf, "wb") as fh:
+                fh.write(gen_fixtures.elf64_aarch64(code, base, [(name, ea) for ea, name in every] + [
+                    ("_stext", base), ("_etext", end), ("_sinittext", end + 0x1000), ("_einittext", end + 0x1100)]))
+            with open(image, "wb") as fh:
+                fh.write(code)
+            lines = self.eval_gki(image, elf, base)
+            self.assertEqual(lines[0], "jump-table CFI: candidates are branch targets, nothing left out")
+            self.assertIn("'scheme': 'jump-table CFI'", lines[2])
 
 
 class Version(unittest.TestCase):

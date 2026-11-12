@@ -50,13 +50,21 @@ funcs, text = None, None
 if len(sys.argv) > 2:
     funcs, bounds = functions(sys.argv[2])
     text = kernel_text(bounds)
-    areas = ", ".join("%#x-%#x" % (bounds[a], bounds[b]) for a, b in CODE_AREAS if a in bounds and b in bounds)
-    print("candidates left out between _etext and _sinittext (%#x-%#x) except in the code areas named there (%s)"
-          % (bounds["_etext"], bounds["_sinittext"], areas or "none") if text else
-          "kernel code not named in the ELF's symbols: nothing left out")
 t0 = time.time()
 sites, stats = resolve([(BASE, image)], "aarch64", text)
-print("seconds %.1f" % (time.time() - t0)); print(stats)
+seconds = time.time() - t0
+if "outside_text" in stats:
+    # Only the code areas that reach into the gap keep candidates there (GKI 6.1 names its idmap code inside .text).
+    etext, sinittext = bounds["_etext"], bounds["_sinittext"]
+    areas = ", ".join("%#x-%#x" % (bounds[a], bounds[b]) for a, b in CODE_AREAS if a in bounds and b in bounds
+                      and bounds[a] < bounds[b] and bounds[a] < sinittext and bounds[b] > etext)
+    print("candidates left out between _etext and _sinittext (%#x-%#x) except in the code areas named there (%s): %d"
+          % (etext, sinittext, areas or "none", stats["outside_text"]))
+elif funcs is not None:
+    # No bounds, or jump-table CFI, whose candidates are branch targets and are not filtered (core.resolve()).
+    print("kernel code not named in the ELF's symbols: nothing left out" if text is None else
+          "jump-table CFI: candidates are branch targets, nothing left out")
+print("seconds %.1f" % seconds); print(stats)
 counts = sorted(len(s.targets) for s in sites)
 print("resolved %.1f%%" % (100 * stats["resolved"] / stats["sites"]))
 print("1..8 candidates:", sum(1 for c in counts if 1 <= c <= 8), " 1..16:", sum(1 for c in counts if 1 <= c <= 16))
