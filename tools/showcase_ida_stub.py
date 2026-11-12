@@ -5,7 +5,10 @@ stub tests use (tests/test_plugin_stub.py), runs the plugin's own IDA layer (sca
 what it wrote: the comment on the call, the cross-references, the two jump lists and the pseudocode comment.
 Real IDA will show the same text; its own disassembly, names and layout around it are not modelled.
 
-    python3 -I tools/showcase_ida_stub.py gki.elf sock_sendmsg+0xb4 tcp_sendmsg
+    python3 -I tools/showcase_ida_stub.py gki.elf sock_sendmsg+0xb4 tcp_sendmsg [--no]
+
+--no: Scan as after answering No to "Create functions" (annotate(sites, create_functions=False)); without it, as
+after Yes (the call xrefs; the functions themselves are not modelled).
 """
 import bisect, os, struct, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -15,7 +18,8 @@ import test_plugin_stub as T  # noqa: E402
 from cfiscope import cli  # noqa: E402
 
 def main(argv):
-    path, call, callee = argv[1], argv[2], argv[3]
+    create = "--no" not in argv
+    path, call, callee = [a for a in argv if a != "--no"][1:4]
     with open(path, "rb") as fh:
         d = fh.read()
     arch, ranges, symbols = cli.load_elf(d)
@@ -53,12 +57,21 @@ def main(argv):
     insn = ("blr x%d" % ((word >> 5) & 31)) if word is not None and word & 0xfffffc1f == 0xd63f0000 else "(indirect call)"
     print("BEFORE (no CFIScope): %s  %s  %s" % (hex(at), names(at), insn))
     print("  comment: none; code xrefs from this call: none (indirect)")
-    res = il.annotate(sites)
+    res = il.annotate(sites, create_functions=create)
     print()
-    print("AFTER Scan kCFI calls (Ctrl-Alt-K): %d sites, %d comments, %d cross-references in the whole database" % (stats["sites"], res["comments"], res["xrefs"]))
+    if create:
+        print("AFTER Scan kCFI calls (Ctrl-Alt-K): %d sites, %d comments, %d cross-references in the whole database" % (stats["sites"], res["comments"], res["xrefs"]))
+    else:
+        print('AFTER Scan kCFI calls (Ctrl-Alt-K), answered No to "Create functions": %d sites, %d comments, %d call and '
+              '%d data cross-references in the whole database; %d skipped (no function there)'
+              % (stats["sites"], res["comments"], res["xrefs"], res["data_xrefs_inside_function"],
+                 res["xrefs_skipped_no_function"]))
     print("%s  %s  %s    ; %s" % (hex(at), names(at), insn, w.cmts.get(at, "")))
     tos = sorted({t for (f, t, _) in w.crefs if f == at})
     print("  code xrefs from this call (%d): %s" % (len(tos), ", ".join(il.target_name(t) for t in tos)))
+    if not create:
+        tos = sorted({t for (f, t, _) in w.data_xrefs if f == at})
+        print("  data xrefs from this call (%d): %s" % (len(tos), ", ".join(il.target_name(t) for t in tos)))
     print()
     print("Candidates for this call (Ctrl-Alt-T): window '%s'" % il.targets_title(site))
     for ea, nm, note in il.targets_rows(site):
