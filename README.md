@@ -4,7 +4,7 @@ Resolve **indirect calls** in Linux and Android kernels built with kCFI, directl
 
 Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 32-bit function-type hash in front of every function and checks it at every indirect call. Both ends survive stripping. CFIScope matches them, so an unresolved `blr x8` or `call rax` becomes a list of the type-compatible functions it may reach, usually a short one.
 
-- **Scan kCFI calls** (`Ctrl-Alt-K`): finds every check, comments the call site with the type hash and candidate count, adds cross-references when the candidate list is short (at most 16), and offers to create functions at candidates IDA has not recognised. Your own comments are kept.
+- **Scan kCFI calls** (`Ctrl-Alt-K`): finds every check, comments the call site with the type hash and candidate count, adds cross-references when the candidate list is short (at most 16), and offers to create functions at candidates IDA has not recognised. Your own comments are kept. No cross-reference or function is made at a candidate that IDA holds as data (or inside another item) or that lies outside the code segments, and when the database or the input ELF names the kernel's text bounds, candidates outside kernel code are left out as on the [command line](#without-ida-scripts-other-tools-ci); the Output window counts both (tested on fake IDA modules only).
 - **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach. If the cursor is not on a kCFI check or its call, the nearest check in the same function is used; the list's title names the call address it chose.
 - **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give. Only calls are counted: with the Linux 5.x jump-table CFI, a check whose call was not linked comes after the calls as a type check only, and the CFI runtime's own checks (in `__cfi_check`, which guard no call) are left out.
 - **Remove annotations**: removes the comments and cross-references the scan added, and turns the pseudocode comments off.
@@ -12,7 +12,7 @@ Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 
 
 All four actions are under Edit > Plugins. Scan and the two lookups are also on the right-click menu of disassembly and pseudocode views (CFIScope submenu). Many Linux desktops take `Ctrl-Alt-T` for a terminal and Keypatch uses `Ctrl-Alt-K`: use the menus, or rebind the keys in Options > Shortcuts.
 
-Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that a given call ever reaches it. Most lists are short (median 6 candidates per call that has any on both 6.1 GKI kernels below, 6 and 7 on the 6.6 and 6.12 ones), but a few common types have hundreds or more (the largest lists have 1,458 to 1,580). Treat a long list as a type filter and a short one as a strong lead.
+Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that a given call ever reaches it. Most lists are short (median 6 candidates per call that has any, on each of the four GKI kernels below), but a few common types have hundreds or more (the largest lists have 1,458 to 1,580). Treat a long list as a type filter and a short one as a strong lead.
 
 Supported targets: aarch64 and x86-64 kernels built by Clang with kCFI (`CONFIG_CFI_CLANG` on Linux 6.1 or later), for example Android GKI android14-6.1 and later. Since v0.1.17 also aarch64 kernels built with the older jump-table CFI of Linux 5.x, measured on an Android 12 GKI 5.10 and an Android 13 GKI 5.15 kernel (see [Linux 5.x jump-table CFI](#linux-5x-jump-table-cfi-android-1213-gki-510-and-515) for what it reads and what it does not). Not supported: GCC-built kernels (most desktop distribution kernels have no kCFI checks to read) and x86-64 kernels with the jump-table CFI; on those the scan finds 0 sites and says so. The scanner was scored on a real Android GKI kernel for each architecture (numbers below); the IDA layer has not been run in IDA yet (see Status).
 
@@ -101,7 +101,7 @@ $ python3 -I tools/showcase_ida_stub.py gki.elf sock_sendmsg+0xb4 tcp_sendmsg
 BEFORE (no CFIScope): 0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8
   comment: none; code xrefs from this call: none (indirect)
 
-AFTER Scan kCFI calls (Ctrl-Alt-K): 13897 sites, 13897 comments, 44724 cross-references in the whole database
+AFTER Scan kCFI calls (Ctrl-Alt-K): 13897 sites, 13897 comments, 44718 cross-references in the whole database
 0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI 0x1EBDA935: 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
   code xrefs from this call (14): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
 
@@ -141,7 +141,7 @@ python3 -m cfiscope vmlinux --targets 0xffffffc008cc55ac
 python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
 ```
 
-Run it from this folder. Input is a 64-bit ELF (a `vmlinux`, a kernel with symbols restored by vmlinux-to-elf, or a `.o`/`.ko`) or, with `--raw`, a bare kernel image. Symbols are only used to print names. `--json` gives machine-readable output. On the GKI aarch64 `Image` from the walkthrough above, `--raw` prints the same totals as the table below in about a second (0.91 to 1.00 s in three runs on the machine named under the table below).
+Run it from this folder. Input is a 64-bit ELF (a `vmlinux`, a kernel with symbols restored by vmlinux-to-elf, or a `.o`/`.ko`) or, with `--raw`, a bare kernel image. Symbols are used to print names and, when the ELF names `_stext`, `_etext`, `_sinittext` and `_einittext` (a `vmlinux` with its symbols, or the output of vmlinux-to-elf), to leave out kCFI candidates outside kernel code: on aarch64 the type hash in front of a function is a bare 32-bit word, and the same value can occur in `.rodata`. Kernel code is `.text`, init text and, where the kernel names them, exit text and the idmap, trampoline, hibernate and kexec code that arm64 keeps outside `.text`. Without those four symbols (`--raw`, a stripped `vmlinux`, a `.o`) nothing is left out and the output is as before. `--json` gives machine-readable output. On the GKI aarch64 `Image` from the walkthrough above, `--raw` prints the totals of the table below except for the 6 candidates in `.rodata` (11,961 sites with candidates and 1,694 with exactly one, against 11,960 and 1,695), in about a second (1.05 to 1.40 s in six runs on the machine named under the table below).
 
 Headless inside IDA, with idalib (cfiscope 0.1.17 or later; IDA 9.0 or newer; set up the `idapro` module as Hex-Rays describes):
 
@@ -153,20 +153,22 @@ It opens the file as a database, adds the same comments and cross-references as 
 
 ## Verification
 
-Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google download), aarch64, stripped. Reproduce with `python3 tools/eval_gki.py Image gki.elf` (`Image` and `gki.elf` as in the walkthrough).
+Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google download), aarch64, stripped. Reproduce with `python3 tools/eval_gki.py Image gki.elf` (`Image` and `gki.elf` as in the walkthrough). The script scans `Image` within the kernel code that `gki.elf` names (`_stext`, `_etext` and the others above), as the command line does on `gki.elf` and the plugin does with those names, and also prints the numbers for `Image` alone.
 
 | Measure | Result |
 |---|---|
-| Indirect call sites found | 13,897, using 4,184 distinct type hashes, in about 1 s (see below) |
-| Sites with at least one candidate | 11,961 (86.1%) |
-| Sites with exactly one candidate | 1,694 |
+| Indirect call sites found | 13,897, using 4,184 distinct type hashes, in about a second (see below) |
+| Sites with at least one candidate | 11,960 (86.1%) |
+| Sites with exactly one candidate | 1,695 |
 | Median candidates per site with at least one candidate (over all sites, unresolved included: 4) | 6 |
-| Sites with 1 to 8 candidates / 1 to 16 | 7,092 / 8,999 |
-| Candidate start precision: distinct candidates that begin exactly at a kallsyms function symbol (symbols restored by [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf), used only to score). This checks that candidates are real function starts, not that a call reaches them | 30,357 of 30,567 (99.31%) |
+| Sites with 1 to 8 candidates / 1 to 16 | 7,091 / 8,998 |
+| Candidate start precision: distinct candidates that begin exactly at a kallsyms function symbol (symbols restored by [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf); besides scoring, they bound kernel code, which leaves out 6 candidates in `.rodata`). This checks that candidates are real function starts, not that a call reaches them | 30,357 of 30,561 (99.33%) |
 
-Scan time: the script prints it; three runs gave 0.9, 0.9 and 1.1 s (1.1 to 1.4 s for the whole command) on an Intel i9-13900H laptop under WSL2, in single-threaded Python. Expect a different figure on another machine.
+Scan time: the script prints it; about a second: 0.7 to 1.6 s in our runs (once 3.5 s), depending on what else was running, and 1.3 to 1.8 s for the whole command, on an Intel i9-13900H laptop under WSL2, in single-threaded Python. Expect a different figure on another machine.
 
-The 1,936 sites with no candidate carry a hash that no function in this image has; a likely reason is callees that live in loadable modules, not checked one by one.
+The 6 candidates left out are in `.rodata`: the hash value occurs in strings or other data (hash `0x4f5f504f` is the text `OP_O`; it gave a vendor-hook call 4 "candidates" in strings). Without the bounds (`Image` alone) they made 30,567 distinct candidates, 30,357 at a kallsyms function (99.31%), and Scan added 6 cross-references to them (in the fake IDA modules of the showcase above; 44,724 then, 44,718 now). The 204 candidates that do not start at a kallsyms function are all in kernel text (199) or init text (5), and each begins with code after its hash word: 166 are `mov x0, #-ENOSYS; ret` stubs of the syscall-handler type, 12 bytes apart in runs after named handlers such as `sys_ni_syscall` (they look like the weak `COND_SYSCALL` stubs of syscalls this kernel does not build); 24 return at once (`ret`, or one `mov` of a constant into `w0`/`x0` and `ret`); 11 start with a `paciasp` prologue; 3 are other short code. The kallsyms names that vmlinux-to-elf restored include none of them; we have not checked them against another symbol source.
+
+The 1,937 sites with no candidate carry a hash that no function in this image has; a likely reason is callees that live in loadable modules, not checked one by one.
 
 Newer aarch64 GKI kernels, measured the same way: [gki-certified-boot-android15-6.6-2025-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android15-6.6-2025-01_r1.zip) and [gki-certified-boot-android16-6.12-2025-06_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android16-6.12-2025-06_r1.zip), kernel extracted with `tools/extract_bootimg.py`, symbols restored by vmlinux-to-elf, then `python3 tools/eval_gki.py --base 0xffffffc080000000 Image gki.elf` (these kernels start at a different address than 6.1).
 
@@ -174,11 +176,13 @@ Newer aarch64 GKI kernels, measured the same way: [gki-certified-boot-android15-
 |---|---|---|
 | Indirect call sites found (distinct type hashes) | 14,694 (4,466) | 16,164 (4,626) |
 | Sites with at least one candidate | 12,917 (87.9%) | 14,232 (88.0%) |
-| Sites with exactly one candidate | 1,974 | 2,019 |
-| Median candidates per site with at least one (over all sites) | 6 (5) | 7 (5) |
+| Sites with exactly one candidate | 1,975 | 2,019 |
+| Median candidates per site with at least one (over all sites) | 6 (5) | 6 (5) |
 | Sites with 1 to 8 candidates / 1 to 16 | 7,435 / 9,681 | 8,404 / 10,684 |
 | Largest candidate list | 1,536 | 1,580 |
-| Candidate start precision (distinct candidates at a kallsyms function symbol) | 33,743 of 33,967 (99.34%) | 35,248 of 35,481 (99.34%) |
+| Candidate start precision (distinct candidates at a kallsyms function symbol) | 33,743 of 33,960 (99.36%) | 35,248 of 35,480 (99.35%) |
+
+Left out as outside kernel code: 7 candidates on 6.6 and 1 on 6.12, all in `.rodata`. The one on 6.12 was in the lists of 187 calls, each 7 long; without the bounds (`Image` alone) the 6.12 median is 7 and its precision row 35,248 of 35,481. Of the candidates not at a kallsyms function (217 on 6.6, 232 on 6.12), 181 and 189 are `-ENOSYS` stubs as on 6.1. On 6.6 and 6.12 the idmap code (`__idmap_text_start`..`__idmap_text_end`) lies outside `.text` and holds 2 candidates, which is why the named code areas besides `.text` and init text are kept.
 
 Real x86-64 kernel: the public GKI prebuilt `kernel-6.1` from [kernel/prebuilts/6.1/x86-64](https://android.googlesource.com/kernel/prebuilts/6.1/x86-64) (6.1.84), scored against its own `System.map`, which names a `__cfi_` preamble for each protected function. Reproduce with `python3 tools/extract_bzimage.py kernel-6.1 vmlinux`, then `python3 tools/eval_gki_x86.py vmlinux System.map`.
 
@@ -191,11 +195,11 @@ Real x86-64 kernel: the public GKI prebuilt `kernel-6.1` from [kernel/prebuilts/
 | Sites with 1 to 8 candidates / 1 to 16 | 7,093 / 8,601 |
 | Distinct candidates that are a `__cfi_`-protected function | 32,393 of 33,015 (98.12%) |
 
-The other 622 candidates: 244 sit at weak (`W`) symbols in the map, mostly syscall entry stubs such as `__ia32_sys_msgctl`, and 378 are at no symbol in the map; those 378 were not checked one by one. Only 63.50% of the protected functions appear as candidates, which is expected for a kernel image alone: a function's hash only matches when some call site in the image uses that type.
+The other 622 candidates: 244 sit at weak (`W`) symbols in the map, mostly syscall entry stubs such as `__ia32_sys_msgctl`, and 378 are at no symbol in the map; those 378 were not checked one by one. This `vmlinux` comes from a bzImage, whose build strips its symbols, so the kernel-code bounds above do not apply and these numbers should be unchanged by them (not re-measured: that kernel was not at hand for this change). Only 63.50% of the protected functions appear as candidates, which is expected for a kernel image alone: a function's hash only matches when some call site in the image uses that type.
 
 Known-answer objects: `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the table of signatures and implementations that `tools/gen_fixtures.py` wrote into the source; function offsets come from the compiled objects. `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the known candidate sets for the same objects, and that bad input gives a clear error.
 
-Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer and `tests/test_entry_stub.py` the plugin wiring (menus, right-click hooks, rescan after a rebase, pseudocode comments on a fake decompiler) against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 73 IDA API names used, including the decompiler methods the pseudocode hook calls and `func_t.tailqty`, exist in the official stubs; `python3 tests/check_ida_names.py <stub dir>...` checks that the 55 `ida_*` / `idc` names alone also exist in older stubs (0 missing in those of IDA 9.1, 9.2, 9.3 and 9.4: PyPI `idapro` 0.0.5, 0.0.7, 0.0.9, 0.0.11). None of these is a test in real IDA.
+Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer and `tests/test_entry_stub.py` the plugin wiring (menus, right-click hooks, rescan after a rebase, pseudocode comments on a fake decompiler) against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 78 IDA API names used, including the decompiler methods the pseudocode hook calls and `func_t.tailqty`, exist in the official stubs; `python3 tests/check_ida_names.py <stub dir>...` checks that the 60 `ida_*` / `idc` names alone also exist in older stubs (0 missing in those of IDA 9.1, 9.2, 9.3 and 9.4: PyPI `idapro` 0.0.5, 0.0.7, 0.0.9, 0.0.11). None of these is a test in real IDA.
 
 Not verified: behaviour inside real IDA.
 
