@@ -201,7 +201,7 @@ Not verified: behaviour inside real IDA.
 
 ## Linux 5.x jump-table CFI (Android 12/13 GKI 5.10 and 5.15)
 
-Needs cfiscope 0.1.17 or later (see [Install](#install) if `hcli` gives an older version).
+Needs cfiscope 0.1.18 or later (see [Install](#install) if `hcli` gives an older version).
 
 Before kCFI, Clang's CFI for the kernel (`CONFIG_CFI_CLANG` on Linux 5.x, used by Android 12 and 13 GKI) worked differently: every function whose address is taken gets an 8-byte entry `bti c; b <function>` in one jump table, the functions of one type sit next to each other in it, and a checked call tests that the pointer lies in its type's run of entries before calling it:
 
