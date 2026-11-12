@@ -9,7 +9,7 @@ import test_plugin_stub as T  # noqa: E402
 def load_entry(name="x86_64-kernel", proc="metapc", ext=".o"):
     w, _ = T.IdaLayer("test_flow").make(name, proc, ext=ext)
     kw, ia = sys.modules["ida_kernwin"], sys.modules["ida_idaapi"]
-    log = {"msgs": [], "menu": [], "popup": [], "registered": [], "hooked": 0}
+    log = {"msgs": [], "menu": [], "popup": [], "registered": [], "hooked": 0, "asked": [], "world": w}
     kw.msg = lambda t: log["msgs"].append(t)
     kw.show_wait_box = lambda t: None
     kw.hide_wait_box = lambda: None
@@ -70,6 +70,47 @@ class Entry(unittest.TestCase):
         self.assertIn("[CFIScope] functions created: %d; candidates skipped (data, or not in a code segment): 1\n"
                       % (len(targets) - 1), log["msgs"])
         self.assertEqual(w.funcs, set(targets[1:]))
+
+    def answers(self, log, create=0, wait=None):
+        """ask_yn by question: create-functions -> create; any other question -> wait. Records each question with the
+        number of xrefs and functions-to-be that existed when it was asked."""
+        w = log["world"]
+        def ask_yn(default, text):
+            log["asked"].append((text.split("?")[0], len(w.crefs), len(w.planned_funcs)))
+            return create if text.startswith("Create functions") else wait
+        sys.modules["ida_kernwin"].ask_yn = ask_yn
+
+    def test_no_creates_no_function(self):
+        # "No": no add_func, and no call xref to a candidate without a function (IDA would make one: fl_CN).
+        w, E, log = load_entry()
+        sites = E.scan_or_warn()
+        targets = sorted({t for s in sites for t in s.targets})
+        w.funcs = set(targets[::2])                               # IDA already has functions at half of them
+        F = lambda ea: types.SimpleNamespace(start_ea=ea, end_ea=ea + 4, tailqty=0)
+        sys.modules["ida_funcs"].get_func = lambda ea: F(ea) if ea in w.funcs else None
+        self.answers(log, create=0)
+        self.assertEqual(E.ScanAction().activate(None), 1)
+        self.assertEqual(log["asked"], [("Create functions at candidates IDA has not recognised", 0, 0)])
+        self.assertEqual(w.funcs, set(targets[::2]))
+        self.assertEqual(w.planned_funcs, set())
+        self.assertTrue(w.crefs)
+        self.assertTrue({t for _, t, _ in w.crefs} <= w.funcs)
+        res = [m for m in log["msgs"] if '"xrefs_skipped_no_function"' in m]
+        self.assertEqual(len(res), 1)
+        self.assertNotIn('"xrefs_skipped_no_function": 0,', res[0])
+        # Remove annotations takes out every xref the scan added.
+        self.assertEqual(E.RemoveAction().activate(None), 1)
+        self.assertEqual(w.crefs, set())
+
+    def test_yes_asked_before_xrefs(self):
+        w, E, log = load_entry()
+        w.funcs = set()
+        sys.modules["ida_funcs"].get_func = lambda ea: ea in w.funcs or None
+        self.answers(log, create=1)
+        self.assertEqual(E.ScanAction().activate(None), 1)
+        self.assertEqual(log["asked"], [("Create functions at candidates IDA has not recognised", 0, 0)])
+        self.assertTrue(w.crefs)
+        self.assertTrue({t for _, t, _ in w.crefs} <= w.funcs | w.planned_funcs)
 
     def test_menus_and_popup(self):
         _, E, log = load_entry()

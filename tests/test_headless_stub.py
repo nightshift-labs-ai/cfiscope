@@ -18,7 +18,8 @@ def scan():
         raise result["sites"]
     return result["sites"], {"sites": len(result["sites"])}
 layer.scan = scan
-layer.annotate = lambda s: calls.append(("annotate", len(s))) or {"comments": len(s), "xrefs": 2, "kept_user_comments": 0}
+layer.annotate = lambda s, create_functions: calls.append(("annotate", len(s), create_functions)) or \
+    {"comments": len(s), "xrefs": 2, "kept_user_comments": 0}
 layer.remove_annotations = lambda s: calls.append(("remove", len(s))) or 2
 layer.define_functions = lambda s: calls.append(("define", len(s))) or {"functions_created": 3, "skipped_not_code": 2}
 saved = {name: sys.modules.get(name) for name in ("idapro", "cfiscope.idalayer")}
@@ -30,9 +31,12 @@ with tempfile.NamedTemporaryFile() as f:
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         assert h.main([f.name, "--define-functions"]) == 0
-    assert calls == [("open", True), ("scan",), ("annotate", 1), ("define", 1), ("close", True)], calls
+    assert calls == [("open", True), ("scan",), ("annotate", 1, True), ("define", 1), ("close", True)], calls
     assert out.getvalue().splitlines()[-1] == \
         "[CFIScope] functions created: 3; candidates skipped (data, or not in a code segment): 2", out.getvalue()
+    # Without --define-functions: annotate is told not to add call xrefs that would make IDA create functions.
+    del calls[:]; assert h.main([f.name]) == 0
+    assert calls == [("open", True), ("scan",), ("annotate", 1, False), ("close", True)], calls
     del calls[:]; assert h.main([f.name, "--remove", "--no-analysis"]) == 0
     assert calls == [("open", False), ("scan",), ("remove", 1), ("close", True)], calls
     result["sites"] = []; del calls[:]

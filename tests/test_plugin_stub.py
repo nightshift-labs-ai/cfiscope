@@ -15,6 +15,7 @@ class World:
         self.nlist = []   # (ea, name) as IDA's name list holds them
         self.input_path = None
         self.flags = {}   # ea -> IDA flags: FF_DATA (0x400) for a data item's start, FF_TAIL (0x200) inside an item
+        self.planned_funcs = set()   # call-xref targets IDA's auto-analysis would make functions (xref.hpp fl_CN)
 
 def install(world):
     m = {n: types.ModuleType(n) for n in "ida_bytes ida_funcs ida_ida ida_idaapi ida_kernwin ida_nalt ida_name ida_segment ida_xref".split()}
@@ -38,7 +39,13 @@ def install(world):
     m["ida_ida"].inf_get_procname = lambda: world.proc
     m["ida_ida"].inf_is_64bit = lambda: True
     m["ida_xref"].fl_CN, m["ida_xref"].fl_JN, m["ida_xref"].XREF_USER = 17, 19, 32
-    m["ida_xref"].add_cref = lambda f, t, k: world.crefs.add((f, t, k)) or True
+    def add_cref(f, t, k):
+        # xref.hpp: fl_CF (16) and fl_CN (17) "create a function at the referenced location" (through auto-analysis).
+        if (k & 0x1F) in (16, 17) and sys.modules["ida_funcs"].get_func(t) is None:
+            world.planned_funcs.add(t)
+        world.crefs.add((f, t, k))
+        return True
+    m["ida_xref"].add_cref = add_cref
     m["ida_xref"].del_cref = lambda f, t, e: {world.crefs.discard(x) for x in list(world.crefs) if x[:2] == (f, t)} or True
     m["ida_xref"].get_first_dref_to = lambda ea: 1 if ea in world.drefs else 2**64 - 1
     far = lambda f: sorted({t for (a, t, _) in world.crefs if a == f})

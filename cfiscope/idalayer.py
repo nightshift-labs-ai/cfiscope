@@ -256,10 +256,12 @@ def target_check():
     return ok
 
 
-def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT):
+def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT, create_functions=True):
     """Comment every check; add user xrefs where the candidate list is short, never to a candidate target_check() rejects
-    (counted in xrefs_skipped_not_code)."""
-    res = {"comments": 0, "xrefs": 0, "kept_user_comments": 0, "runtime_comments": 0, "xrefs_skipped_not_code": 0}
+    (counted in xrefs_skipped_not_code). A call xref (fl_CN) makes IDA create a function at its target (xref.hpp), so
+    with create_functions=False a candidate IDA has no function for gets no xref (counted in xrefs_skipped_no_function)."""
+    res = {"comments": 0, "xrefs": 0, "kept_user_comments": 0, "runtime_comments": 0, "xrefs_skipped_not_code": 0,
+           "xrefs_skipped_no_function": 0}
     ok = target_check()
     for ea, x in runtime_calls(sites).items():
         old = ida_bytes.get_cmt(ea, False)
@@ -281,6 +283,8 @@ def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT):
             for t in s.targets:
                 if not ok(t):
                     res["xrefs_skipped_not_code"] += 1
+                elif not create_functions and ida_funcs.get_func(t) is None:
+                    res["xrefs_skipped_no_function"] += 1
                 elif ida_xref.add_cref(s.call_ea, t, ida_xref.fl_CN | ida_xref.XREF_USER):
                     res["xrefs"] += 1
     return res

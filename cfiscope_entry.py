@@ -163,19 +163,22 @@ def flush_pseudocode():
 class ScanAction(ida_kernwin.action_handler_t):
     @guarded
     def activate(self, ctx):
-        problem = None
-        ida_kernwin.show_wait_box("CFIScope: scanning code segments")
+        STATE["sites"] = STATE["pseudo"] = None
+        sites = scan_or_warn()
+        if sites is None:
+            return 0
+        # Asked before any xref is added: a call xref makes IDA create a function at its target (xref.hpp, fl_CN),
+        # so after "No" a candidate IDA has no function for gets no xref.
+        create = bool(sites) and ida_kernwin.ask_yn(
+            ida_kernwin.ASKBTN_NO, "Create functions at candidates IDA has not recognised?") == ida_kernwin.ASKBTN_YES
+        made = None
+        ida_kernwin.show_wait_box("CFIScope: annotating call sites")
         try:
-            STATE["sites"] = STATE["pseudo"] = None
-            sites = ensure_scan()
-            res = idalayer.annotate(sites)
-        except RuntimeError as e:
-            problem = str(e)
+            res = idalayer.annotate(sites, create_functions=create)
+            if create:
+                made = idalayer.define_functions(sites)
         finally:
             ida_kernwin.hide_wait_box()
-        if problem:
-            ida_kernwin.warning(problem)
-            return 0
         report(json.dumps(STATE["stats"]))
         report(json.dumps(res))
         if not sites:
@@ -188,10 +191,9 @@ class ScanAction(ida_kernwin.action_handler_t):
         if hook_pseudocode():
             flush_pseudocode()
             report("pseudocode comments on: functions decompiled from now on show the candidates at their call sites")
-        if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO,
-                              "Create functions at candidates IDA has not recognised?") == ida_kernwin.ASKBTN_YES:
+        if made is not None:
             report("functions created: %(functions_created)d; candidates skipped (data, or not in a code segment): "
-                   "%(skipped_not_code)d" % idalayer.define_functions(sites))
+                   "%(skipped_not_code)d" % made)
         return 1
 
     def update(self, ctx):
