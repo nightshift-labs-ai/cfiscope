@@ -304,6 +304,41 @@ class NoXrefsIntoData(unittest.TestCase):
         w.segs = [Seg(kb, kb + 0x2100, 0, 0)]; w.crefs.clear(); w.funcs.clear()
         self.assertEqual(il.annotate(sites)["xrefs"], 2)
 
+    def test_existing_function_not_counted_as_skipped(self):
+        # Both candidates already lie in functions IDA has, the data one in a literal pool inside a function at
+        # KB + 0x1000: no function is created, and neither counts as skipped.
+        w, il, kb, _ = self.make()
+        sites, _ = il.scan()
+        w.flags = {kb + 0x1004: 0x400}
+        w.funcs = {kb + 0x24}
+        sys.modules["ida_funcs"].get_func = lambda ea: ea in w.funcs or kb + 0x1000 <= ea < kb + 0x1100 or None
+        self.assertEqual(il.define_functions(sites), {"functions_created": 0, "skipped_not_code": 0})
+        self.assertEqual(w.funcs, {kb + 0x24})
+
+    def test_bytes_at(self):
+        il_bytes_at = self.make()[1]._bytes_at
+        ranges = [(0x1000, bytes(range(16)))]
+        self.assertEqual(il_bytes_at(ranges, 0x1000), bytes(range(16)))
+        self.assertEqual(il_bytes_at(ranges, 0x1004, 4), bytes(range(4, 8)))
+        self.assertEqual(il_bytes_at(ranges, 0x100c), bytes(range(12, 16)))
+        for ea in (0xfff, 0x100d, 0x1010):                    # before the range, or fewer than 4 bytes left
+            self.assertIsNone(il_bytes_at(ranges, ea), hex(ea))
+
+    def test_input_file_without_bytes_at_its_bounds(self):
+        # The input ELF's _sinittext lies past its code, so neither the file nor the database has bytes there: the
+        # layout cannot be checked and the file's names are not used (the database has none here).
+        import tempfile
+        from test_cli import kernel_elf
+        w, il, kb, _ = self.make()
+        with tempfile.TemporaryDirectory() as tmp:
+            w.input_path = os.path.join(tmp, "k.elf")
+            kernel_elf(w.input_path, extra={"_sinittext": kb + 0x3000, "_einittext": kb + 0x3100})
+            sites, stats = il.scan()
+            self.assertEqual(sites[0].targets, [kb + 0x24, kb + 0x1004])
+            self.assertNotIn("outside_text", stats)
+            kernel_elf(w.input_path)                          # the same file with _sinittext in its code: used
+            self.assertEqual(il.scan()[0][0].targets, [kb + 0x24])
+
     def test_text_bounds_from_names(self):
         w, il, kb, bounds = self.make()
         w.nlist = sorted((ea, n) for n, ea in bounds.items())

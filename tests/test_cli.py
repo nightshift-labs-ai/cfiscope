@@ -142,6 +142,25 @@ class TextBounds(unittest.TestCase):
                 self.assertNotIn("outside_text", doc["stats"])
                 self.assertNotIn("outside kernel code", run(*argv)[1])
 
+    def test_no_left_out_line_without_sites(self):
+        # The bounds known but no kCFI check (its load made a nop): the summary has no line on candidates left out.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "k.elf")
+            kernel_elf(path)
+            with open(path, "rb") as fh:
+                d = bytearray(fh.read())
+            i = d.index(struct.pack("<I", 0xb85fc110))          # ldur w16, [x8, #-4]
+            d[i:i + 4] = struct.pack("<I", 0xd503201f)          # nop
+            with open(path, "wb") as fh:
+                fh.write(d)
+            rc, out, _ = run(path, "--json")
+            st = json.loads(out)["stats"]
+            self.assertEqual((rc, st["sites"], st["outside_text"]), (0, 0, 0))
+            rc, out, _ = run(path)
+            self.assertEqual(rc, 0)
+            self.assertIn("call sites 0", out)
+            self.assertNotIn("outside kernel code", out)
+
 
 class EvalGki(unittest.TestCase):
     """tools/eval_gki.py names the bounds it filters with: only the code areas that reach between _etext and
