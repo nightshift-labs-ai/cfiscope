@@ -196,7 +196,7 @@ Measured on `gki-certified-boot-android13-5.15-2024-01_r1` ([zip](https://dl.goo
 | Linked check and call in the same function | 16,003 of 16,003 |
 | Type names equal to `c++filt` | 2,777 of 2,777 |
 
-The last four rows check consistency (the base and count read from the code, the type id from the slow path and the kernel's own symbols agree); they do not prove that a call can reach every candidate. A candidate list is a type filter, as with kCFI.
+The two "24,976 of 24,976" rows only show that the jump table itself was decoded right: every entry of this table targets a kallsyms function start, so they would pass for any slice of the table and say nothing about the base and count read at each check. The last three rows check consistency (the base read from the code, the type id from the slow path and the kernel's own symbols agree); they do not prove that a call can reach every candidate. A candidate list is a type filter, as with kCFI.
 
 Limits, read before relying on it:
 
