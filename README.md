@@ -106,7 +106,7 @@ python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
 
 Run it from this folder. Input is a 64-bit ELF (a `vmlinux`, a kernel with symbols restored by vmlinux-to-elf, or a `.o`/`.ko`) or, with `--raw`, a bare kernel image. Symbols are only used to print names. `--json` gives machine-readable output. On the GKI aarch64 `Image` from the walkthrough above, `--raw` prints the same totals as the table below in under a second.
 
-Headless inside IDA, with idalib (IDA 9.0 or newer; set up the `idapro` module as Hex-Rays describes):
+Headless inside IDA, with idalib (cfiscope 0.1.17 or later; IDA 9.0 or newer; set up the `idapro` module as Hex-Rays describes):
 
 ```
 python3 tools/cfiscope_headless.py vmlinux [--define-functions] [--remove] [--no-analysis]
@@ -161,6 +161,8 @@ Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `
 Not verified: behaviour inside real IDA.
 
 ## Linux 5.x jump-table CFI (Android 12/13 GKI 5.10 and 5.15)
+
+Needs cfiscope 0.1.17 or later (see [Install](#install) if `hcli` gives an older version).
 
 Before kCFI, Clang's CFI for the kernel (`CONFIG_CFI_CLANG` on Linux 5.x, used by Android 12 and 13 GKI) worked differently: every function whose address is taken gets an 8-byte entry `bti c; b <function>` in one jump table, the functions of one type sit next to each other in it, and a checked call tests that the pointer lies in its type's run of entries before calling it:
 
