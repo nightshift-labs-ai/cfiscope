@@ -101,11 +101,20 @@ print("br (tail calls) resolved: %d; sites outside kernel text (init and exit te
 # Precision 1: each candidate is a function start, and the entry's name matches its target's.
 func_starts = {a for a, n, t in syms if t == 2 and not n.startswith("__typeid_") and not n.endswith(".cfi_jt")}
 cands = {t for s in sites for t in s.targets}
+
+
+def own_range_in_table(x):
+    """Does the range this check itself reads (first entry, count) lie in the jump table? (Its Site's candidates may
+    also come from other checks of the same call.)"""
+    k0 = jt.entry_index(x.jt_base)
+    return k0 is not None and x.jt_count >= 1 and k0 + x.jt_count <= len(jt.targets)
+
+
 entries = set()
 for s in sites:
     for x in [s] + s.extra_checks:
-        k0 = jt.entry_index(x.jt_base) if x.targets else None
-        if k0 is not None:
+        if x.targets and own_range_in_table(x):
+            k0 = jt.entry_index(x.jt_base)
             entries.update(jt.start + 8 * k for k in range(k0, k0 + x.jt_count))
 consistent = 0
 for e in entries:
@@ -154,11 +163,19 @@ kinds = {(lo, hi, t): k for t, v in runs.items() for lo, hi, k in v}
 range_pairs = [(p, q) for p, q in pairs if kinds[p] == "range"]
 print("count check: pairs whose first run is a range check's (count read from the code): %d, overlapping %d"
       % (len(range_pairs), sum(1 for p, q in range_pairs if q[0] < p[1])))
+# A check whose range was read at the check but gives no candidates, because its run leaves the table or its first
+# entry is not an entry, would drop out of the runs above unseen: it counts as a failure of this row.
+read = [x for s in sites for x in [s] + s.extra_checks if x.kind in ("range", "single") and x.jt_range_from == "code"]
+off_table = [x for x in read if not x.targets or not own_range_in_table(x)]
 print("count check: type ids with a run read at their checks %d (range %d, single %d; ids whose checks read more than"
-      " one run: %d); neighbouring runs of different type ids that overlap: %d of %d pairs"
+      " one run: %d); neighbouring runs of different type ids that overlap: %d of %d pairs; checks whose range read at"
+      " the check gives no candidates (leaves the table, or base not an entry): %d of %d"
       % (len(runs), sum(1 for v in runs.values() if any(k == "range" for _, _, k in v)),
          sum(1 for v in runs.values() if all(k == "single" for _, _, k in v)),
-         sum(1 for v in runs.values() if len({(lo, hi) for lo, hi, _ in v}) > 1), len(overlaps), len(pairs)))
+         sum(1 for v in runs.values() if len({(lo, hi) for lo, hi, _ in v}) > 1), len(overlaps), len(pairs),
+         len(off_table), len(read)))
+for x in off_table[:10]:
+    print("  no candidates: check %#x (%s), base %#x, count %d" % (x.check_ea, x.kind, x.jt_base, x.jt_count))
 for p, q in overlaps[:10]:
     print("  overlap: %#x..%#x (id %#018x) and %#x..%#x (id %#018x)" % (p[0], p[1], p[2], q[0], q[1], q[2]))
 starts = sorted(a for a in set(by_id.values()) if jt.start <= a < jt.end)
