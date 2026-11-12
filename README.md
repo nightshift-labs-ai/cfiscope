@@ -20,6 +20,21 @@ Supported targets: aarch64 and x86-64 kernels built by Clang with kCFI (`CONFIG_
 
 Kernel attack surface runs through function pointers: `file_operations`, `net_device_ops`, tracepoints, callbacks. In a stripped binary every one of those calls is a dead end for static analysis, and tracing them by hand or with a debugger is slow, and impossible on a kernel you only have as a file. kCFI happens to record the answer, because the compiler must know which types may be called, and CFIScope turns that record into cross-references you can follow.
 
+## Status: read this first
+
+**CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is below: the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
+
+CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
+
+## Install
+
+```
+hcli plugin install cfiscope
+```
+
+Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later. The plugin index can lag a day or more behind the [GitHub releases](https://github.com/nightshift-labs-ai/cfiscope/releases) (on Nov 12 it still offered 0.1.15, which has no Linux 5.x support and no headless runner); if `hcli plugin status` shows an older version, install a release zip directly: `hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/tags/v0.1.18.zip`.
+
+
 ## Try it
 
 Install the current release (the plugin index can lag a day behind; see [Install](#install)):
@@ -113,21 +128,6 @@ Callers of this function (Ctrl-Alt-C) on tcp_sendmsg: 3 row(s)
 
 Pseudocode line of the call (with Hex-Rays):  // CFIScope: 14 candidates: tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
 ```
-
-## Status: read this first
-
-**CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is below: the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
-
-CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
-
-## Install
-
-```
-hcli plugin install cfiscope
-```
-
-Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later. The plugin index can lag a day or more behind the [GitHub releases](https://github.com/nightshift-labs-ai/cfiscope/releases) (on Nov 12 it still offered 0.1.15, which has no Linux 5.x support and no headless runner); if `hcli plugin status` shows an older version, install a release zip directly: `hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/tags/v0.1.18.zip`.
-
 
 ## Without IDA (scripts, other tools, CI)
 
