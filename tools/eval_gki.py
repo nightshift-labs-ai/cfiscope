@@ -7,14 +7,15 @@ Image: the kernel from boot-6.1.img in
 https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip
 vmlinux.elf (optional): the same kernel with kallsyms restored by
 https://github.com/marin-m/vmlinux-to-elf. It scores the result (does each candidate start at a kallsyms
-function?) and, as on the command line with that ELF and in IDA with its names, its _stext/_etext and init text
-symbols bound kernel code: candidates outside it are left out (a line also gives the Image alone, as with --raw).
+function?) and, as on the command line with that ELF and in IDA with its names, its _etext and _sinittext symbols
+bound .rodata: candidates there, outside the code areas named there, are left out (core.kernel_text(); a line also
+gives the Image alone, as with --raw).
 --base: where the kernel image starts (default 0xffffffc008000000, the 6.1 GKI; 6.6 and later GKI
 kernels start at 0xffffffc080000000). With a wrong base the precision line drops to about 0%.
 """
 import os, struct, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from cfiscope.core import kernel_text, resolve, TEXT_BOUND_NAMES
+from cfiscope.core import kernel_text, resolve, CODE_AREAS, TEXT_BOUND_NAMES
 
 BASE = 0xffffffc008000000
 
@@ -49,7 +50,10 @@ funcs, text = None, None
 if len(sys.argv) > 2:
     funcs, bounds = functions(sys.argv[2])
     text = kernel_text(bounds)
-    print("kernel code from the ELF's symbols:", ", ".join("%#x-%#x" % r for r in text) if text else "not named")
+    areas = ", ".join("%#x-%#x" % (bounds[a], bounds[b]) for a, b in CODE_AREAS if a in bounds and b in bounds)
+    print("candidates left out between _etext and _sinittext (%#x-%#x) except in the code areas named there (%s)"
+          % (bounds["_etext"], bounds["_sinittext"], areas or "none") if text else
+          "kernel code not named in the ELF's symbols: nothing left out")
 t0 = time.time()
 sites, stats = resolve([(BASE, image)], "aarch64", text)
 print("seconds %.1f" % (time.time() - t0)); print(stats)

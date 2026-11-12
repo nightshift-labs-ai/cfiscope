@@ -172,22 +172,28 @@ def _median_resolved(counts):
     return r[len(r) // 2] if r else 0
 
 
-# Kernel code by its symbols: .text, init text and, where the kernel names them, the other code areas (exit text, and
-# the idmap, entry trampoline, hibernate and kexec code that arm64 keeps outside .text, in .rodata.text since 6.6).
-TEXT_RANGES = (("_stext", "_etext"), ("_sinittext", "_einittext"), ("__exittext_begin", "__exittext_end"),
-               ("__idmap_text_start", "__idmap_text_end"), ("__entry_tramp_text_start", "__entry_tramp_text_end"),
-               ("__hibernate_exit_text_start", "__hibernate_exit_text_end"),
-               ("__relocate_new_kernel_start", "__relocate_new_kernel_end"))
-TEXT_BOUND_NAMES = frozenset(n for pair in TEXT_RANGES for n in pair)
+# Kernel code by its symbols.  .text ends at _etext and init text starts at _sinittext; between them lie .rodata (and,
+# on x86-64, .data), where a type hash can occur as a plain value.  Only that gap is filtered, minus the code areas the
+# kernel names inside it: arm64 keeps its entry trampoline, hibernate and kexec code there, and since 6.6 its idmap code
+# too (all in .rodata.text).  Nothing below _etext or from _sinittext on is left out: init text, the exit text after it
+# (which x86-64 does not name) and the data after that.
 TEXT_REQUIRED = ("_stext", "_etext", "_sinittext", "_einittext")
+CODE_AREAS = (("__idmap_text_start", "__idmap_text_end"), ("__entry_tramp_text_start", "__entry_tramp_text_end"),
+              ("__hibernate_exit_text_start", "__hibernate_exit_text_end"),
+              ("__relocate_new_kernel_start", "__relocate_new_kernel_end"))
+TEXT_BOUND_NAMES = frozenset(TEXT_REQUIRED + tuple(n for pair in CODE_AREAS for n in pair))
 
 
 def kernel_text(named):
-    """[(start, end)] of kernel code from its symbols (named: {name: address}), or None when _stext, _etext,
-    _sinittext or _einittext is missing (no symbols, or not a kernel): then resolve() filters nothing."""
-    if not all(n in named for n in TEXT_REQUIRED) or named["_stext"] >= named["_etext"]:
+    """[(start, end)] where resolve() keeps kCFI candidates, from the kernel's symbols (named: {name: address}): all
+    addresses but those from _etext to _sinittext that are not in a named code area.  None (resolve() then filters
+    nothing) when _stext, _etext, _sinittext or _einittext is missing or out of order (no symbols, or not a kernel)."""
+    if not all(n in named for n in TEXT_REQUIRED):
         return None
-    return [(named[a], named[b]) for a, b in TEXT_RANGES if a in named and b in named and named[a] < named[b]]
+    if not named["_stext"] < named["_etext"] <= named["_sinittext"] < named["_einittext"]:
+        return None
+    return [(0, named["_etext"]), (named["_sinittext"], 1 << 64)] + [
+        (named[a], named[b]) for a, b in CODE_AREAS if a in named and named[a] < named[b]]
 
 
 def _in_ranges(text):
@@ -211,8 +217,9 @@ def resolve(ranges, arch, text=None):
 
     kCFI first; an aarch64 image with no kCFI check but with a CFI jump table is read as the
     older jump-table CFI instead (its stats carry "scheme": "jump-table CFI").
-    text: [(start, end)] of kernel code (kernel_text()), or None.  When given, a kCFI candidate outside it (a type hash
-    that happens to occur in .rodata, say) is left out; jump-table CFI candidates are branch targets and are not filtered.
+    text: [(start, end)] where kCFI candidates may lie (kernel_text()), or None.  When given, a kCFI candidate outside
+    it (a type hash that happens to occur in .rodata, say) is left out; jump-table CFI candidates are branch targets
+    and are not filtered.
     """
     sites, stats = _resolve_kcfi(ranges, arch, text)
     if not sites and arch == "aarch64":

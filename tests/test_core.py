@@ -127,6 +127,16 @@ def kernel_with_rodata_hash():
     return bytes(code), bounds
 
 
+def with_functions(code, *offsets):
+    """code with one more function of the call's type (its hash word, then `ret`) starting at each offset, the code
+    grown with zeros when an offset lies past its end."""
+    code = bytearray(code)
+    for off in offsets:
+        code.extend(bytes(max(0, off + 4 - len(code))))
+        struct.pack_into("<2I", code, off - 4, KHASH, 0xd65f03c0)
+    return bytes(code)
+
+
 class TextBounds(unittest.TestCase):
     def test_candidates_outside_kernel_text_left_out(self):
         code, bounds = kernel_with_rodata_hash()
@@ -134,7 +144,7 @@ class TextBounds(unittest.TestCase):
         self.assertEqual(sites[0].targets, [KB + 0x24, KB + 0x1004])   # no bounds: the data hit is a candidate
         self.assertNotIn("outside_text", stats)
         text = core.kernel_text(bounds)
-        self.assertEqual(text, [(KB, KB + 0x40), (KB + 0x2000, KB + 0x2100)])
+        self.assertEqual(text, [(0, KB + 0x40), (KB + 0x2000, 1 << 64)])
         sites, stats = core.resolve([(KB, code)], "aarch64", text)
         self.assertEqual(sites[0].targets, [KB + 0x24])
         self.assertEqual((stats["outside_text"], stats["resolved"], stats["single_target"]), (1, 1, 1))
@@ -160,6 +170,17 @@ class TextBounds(unittest.TestCase):
             self.assertIsNone(core.kernel_text(named))
             self.assertEqual(core.resolve([(KB, code)], "aarch64", core.kernel_text(named)), plain)
         self.assertIsNone(core.kernel_text(dict(bounds, _etext=KB)))   # _etext not after _stext
+        self.assertIsNone(core.kernel_text(dict(bounds, _sinittext=KB + 0x20)))   # init text before _etext
+        self.assertIsNone(core.kernel_text(dict(bounds, _einittext=KB + 0x2000)))   # empty init text
+
+    def test_only_the_gap_after_text_is_filtered(self):
+        # x86-64 names no exit text (no __exittext_begin/_end): a function after _einittext, in .exit.text, is kept,
+        # as is one before _stext (arm64 head text); only the hit between _etext and _sinittext is left out.
+        code, bounds = kernel_with_rodata_hash()
+        code = with_functions(code, 0x2104)
+        for named in (bounds, dict(bounds, _stext=KB + 0x28)):
+            sites, stats = core.resolve([(KB, code)], "aarch64", core.kernel_text(named))
+            self.assertEqual((sites[0].targets, stats["outside_text"]), ([KB + 0x24, KB + 0x2104], 1), named)
 
 
 class KcfiCallers(unittest.TestCase):

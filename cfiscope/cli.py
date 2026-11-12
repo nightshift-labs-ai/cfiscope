@@ -331,8 +331,8 @@ def main(argv=None):
         print("median candidates per site with candidates %d (over all sites %d), max %d"
               % (st["median_candidates_resolved"], st["median_candidates"], st["max_candidates"]))
         if "outside_text" in st and st["sites"]:
-            print("candidates outside kernel code left out: %d (kernel code from the _stext, _etext, _sinittext and "
-                  "_einittext symbols)" % st["outside_text"])
+            print("candidates outside kernel code left out: %d (between the _etext and _sinittext symbols, outside "
+                  "the code areas named there)" % st["outside_text"])
         if not st["sites"] and any(m in data for m in OLD_CFI_MARKERS):
             print("no kCFI checks found: this kernel uses the older jump-table Clang CFI of Linux 5.x "
                   "(it contains .cfi_jt / __cfi_check), but CFIScope found no aarch64 jump table of 8-byte "
