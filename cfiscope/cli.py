@@ -41,9 +41,13 @@ def _sections(d):
     return [struct.unpack_from("<IIQQQQIIQQ", d, shoff + 64 * i) for i in range(shnum)]
 
 
-def _function_symbols(d, secs, place, every=None):
+_BOUND_NAMES = {n.encode() for n in core.TEXT_BOUND_NAMES}
+
+
+def _function_symbols(d, secs, place, every=None, bounds=None):
     """Return {address: name} for STT_FUNC symbols; place(shndx, value) -> address or None.
-    every, if a list, also receives each (address, name), several names per address included."""
+    every, if a list, also receives each (address, name), several names per address included.
+    bounds, if a dict, receives {name: address} of the kernel text bounds (core.TEXT_BOUND_NAMES) of any symbol type."""
     names = {}
     for s in secs:
         if s[1] != SHT_SYMTAB or s[6] >= len(secs):
@@ -54,7 +58,7 @@ def _function_symbols(d, secs, place, every=None):
             if off + 24 > len(d):
                 break
             nm, info, _other, shndx, value, _size = struct.unpack_from("<IBBHQQ", d, off)
-            if info & 15 != STT_FUNC or not nm:
+            if not nm or (info & 15 != STT_FUNC and bounds is None):
                 continue
             ea = place(shndx, value)
             if ea is None:
@@ -63,15 +67,21 @@ def _function_symbols(d, secs, place, every=None):
             end = d.find(b"\0", start)
             if end < 0:
                 continue
+            if info & 15 != STT_FUNC:
+                if d[start:end] in _BOUND_NAMES:
+                    bounds.setdefault(d[start:end].decode(), ea)
+                continue
             name = d[start:end].decode("utf-8", "replace")
             names.setdefault(ea, name)
+            if bounds is not None and name in core.TEXT_BOUND_NAMES:
+                bounds.setdefault(name, ea)
             if every is not None:
                 every.append((ea, name))
     return names
 
 
-def load_elf(d, every=None):
-    """Return (arch, ranges, symbols) from a 64-bit little-endian ELF (every: see _function_symbols)."""
+def load_elf(d, every=None, bounds=None):
+    """Return (arch, ranges, symbols) from a 64-bit little-endian ELF (every, bounds: see _function_symbols)."""
     if len(d) < 64 or d[:4] != b"\x7fELF":
         raise InputError("not an ELF file (use --raw for a raw kernel image)")
     if d[4] != 2 or d[5] != 1:
@@ -116,7 +126,7 @@ def load_elf(d, every=None):
             return value or None
     if not ranges:
         raise InputError("no executable code found in the ELF")
-    return arch, ranges, _function_symbols(d, secs, place, every)
+    return arch, ranges, _function_symbols(d, secs, place, every, bounds)
 
 
 class Names:
@@ -264,12 +274,12 @@ def main(argv=None):
         if a.raw:
             if a.arch is None or a.base is None:
                 raise InputError("--raw needs --arch and --base")
-            arch, ranges, symbols, every = a.arch, [(a.base, data)], {}, []
+            arch, ranges, symbols, every, bounds = a.arch, [(a.base, data)], {}, [], {}
         else:
-            every = []
-            arch, ranges, symbols = load_elf(data, every)
+            every, bounds = [], {}
+            arch, ranges, symbols = load_elf(data, every, bounds)
         names = Names(symbols)
-        sites, stats = resolve(ranges, arch)
+        sites, stats = resolve(ranges, arch, core.kernel_text(bounds))
         stats = dict(stats, arch=arch, named_functions=len(symbols))
         if stats.get("scheme") == "jump-table CFI":
             stats["named_checks"] = name_jt_types(sites, every)
@@ -320,6 +330,9 @@ def main(argv=None):
         print("with candidates %d, none %d, exactly one %d" % (st["resolved"], st["unresolved"], st["single_target"]))
         print("median candidates per site with candidates %d (over all sites %d), max %d"
               % (st["median_candidates_resolved"], st["median_candidates"], st["max_candidates"]))
+        if "outside_text" in st and st["sites"]:
+            print("candidates outside kernel code left out: %d (kernel code from the _stext, _etext, _sinittext and "
+                  "_einittext symbols)" % st["outside_text"])
         if not st["sites"] and any(m in data for m in OLD_CFI_MARKERS):
             print("no kCFI checks found: this kernel uses the older jump-table Clang CFI of Linux 5.x "
                   "(it contains .cfi_jt / __cfi_check), but CFIScope found no aarch64 jump table of 8-byte "

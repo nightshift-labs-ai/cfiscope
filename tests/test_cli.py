@@ -95,6 +95,52 @@ class Cli(unittest.TestCase):
         self.assertIn("unknown function", err)
 
 
+def kernel_elf(path, bound_type=0x12, bounds=True):
+    """tests/test_core.kernel_with_rodata_hash() as an ELF (gen_fixtures' writer), with its text bound symbols typed
+    bound_type: 0x12 (global FUNC) as vmlinux-to-elf writes them, 0x10 (global NOTYPE) as in a vmlinux."""
+    sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+    from test_core import kernel_with_rodata_hash, KB
+    import gen_fixtures
+    code, named = kernel_with_rodata_hash()
+    symbols = [("caller", KB), ("impl", KB + 0x24)] + (sorted(named.items()) if bounds else [])
+    d = bytearray(gen_fixtures.elf64_aarch64(code, KB, symbols))
+    sym = next(s for s in cli._sections(bytes(d)) if s[1] == 2)
+    for i in range(3, len(symbols) + 1):          # entries 3.. are the bound symbols (0 is the null symbol)
+        d[sym[4] + 24 * i + 4] = bound_type
+    with open(path, "wb") as fh:
+        fh.write(d)
+    return KB
+
+
+class TextBounds(unittest.TestCase):
+    def test_elf_bounds_leave_out_rodata_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for bound_type in (0x12, 0x10):
+                path = os.path.join(tmp, "k%x.elf" % bound_type)
+                kb = kernel_elf(path, bound_type)
+                rc, out, _ = run(path, "--sites", "--json")
+                self.assertEqual(rc, 0)
+                doc = json.loads(out)
+                self.assertEqual([t["name"] for t in doc["sites"][0]["targets"]], ["impl"])
+                self.assertEqual(doc["stats"]["outside_text"], 1)
+                rc, out, _ = run(path)
+                self.assertIn("candidates outside kernel code left out: 1", out)
+            # Without the bound symbols, or as a raw image, nothing is left out (and no new line or key appears).
+            path = os.path.join(tmp, "nobounds.elf")
+            kernel_elf(path, bounds=False)
+            raw = os.path.join(tmp, "Image")
+            with open(path, "rb") as fh:
+                code = cli.load_elf(fh.read())[1][0][1]
+            with open(raw, "wb") as fh:
+                fh.write(code)
+            for argv in ([path], [raw, "--raw", "--arch", "aarch64", "--base", hex(kb)]):
+                rc, out, _ = run(*(argv + ["--sites", "--json"]))
+                doc = json.loads(out)
+                self.assertEqual([t["ea"] for t in doc["sites"][0]["targets"]], [hex(kb + 0x24), hex(kb + 0x1004)])
+                self.assertNotIn("outside_text", doc["stats"])
+                self.assertNotIn("outside kernel code", run(*argv)[1])
+
+
 class Version(unittest.TestCase):
     def test_package_matches_manifest(self):
         from cfiscope import __version__

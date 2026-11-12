@@ -100,6 +100,68 @@ class Decoders(unittest.TestCase):
             core.resolve([(0, b"")], "mips")
 
 
+KB = 0xffffffc008000000     # where the tiny kernel below is loaded
+KHASH = 0x2a5f1c3d
+
+
+def kernel_with_rodata_hash():
+    """A tiny aarch64 kernel: in text, one kCFI call and the one function of its type; after _etext, in 'rodata',
+    the same hash value followed by a non-zero word (as in a string), which looks like a preamble and its function.
+    Returns (code at KB, {text bound symbol: address}). The real target is KB + 0x24, the data one KB + 0x1004."""
+    lo, hi = KHASH & 0xffff, KHASH >> 16
+    text = [0xb85fc110,                   # ldur w16, [x8, #-4]
+            0x72800000 | lo << 5 | 17,    # movk w17, #lo
+            0x72a00000 | hi << 5 | 17,    # movk w17, #hi, lsl #16
+            0x6b11021f,                   # cmp w16, w17
+            0x54000040,                   # b.eq +8
+            0xd4304500,                   # brk #0x8228
+            0xd63f0100,                   # blr x8
+            0xd65f03c0,                   # ret
+            KHASH,                        # kCFI preamble
+            0xd65f03c0]                   # impl: ret
+    code = bytearray(0x2100)
+    struct.pack_into("<%dI" % len(text), code, 0, *text)
+    struct.pack_into("<2I", code, 0x1000, KHASH, 0x4e494c4e)     # the hash value inside data ("...NLIN")
+    struct.pack_into("<I", code, 0x2000, 0xd65f03c0)             # init text
+    bounds = {"_stext": KB, "_etext": KB + 0x40, "_sinittext": KB + 0x2000, "_einittext": KB + 0x2100}
+    return bytes(code), bounds
+
+
+class TextBounds(unittest.TestCase):
+    def test_candidates_outside_kernel_text_left_out(self):
+        code, bounds = kernel_with_rodata_hash()
+        sites, stats = core.resolve([(KB, code)], "aarch64")
+        self.assertEqual(sites[0].targets, [KB + 0x24, KB + 0x1004])   # no bounds: the data hit is a candidate
+        self.assertNotIn("outside_text", stats)
+        text = core.kernel_text(bounds)
+        self.assertEqual(text, [(KB, KB + 0x40), (KB + 0x2000, KB + 0x2100)])
+        sites, stats = core.resolve([(KB, code)], "aarch64", text)
+        self.assertEqual(sites[0].targets, [KB + 0x24])
+        self.assertEqual((stats["outside_text"], stats["resolved"], stats["single_target"]), (1, 1, 1))
+
+    def test_init_and_other_named_code_kept(self):
+        code, bounds = kernel_with_rodata_hash()
+        # the data hit inside init text, or inside an arm64 code area outside .text (idmap code since 6.6): kept
+        for extra in ({"_sinittext": KB + 0x1000}, {"__idmap_text_start": KB + 0x1000, "__idmap_text_end": KB + 0x1100}):
+            sites, _ = core.resolve([(KB, code)], "aarch64", core.kernel_text(dict(bounds, **extra)))
+            self.assertEqual(sites[0].targets, [KB + 0x24, KB + 0x1004], extra)
+
+    def test_code_area_inside_text(self):
+        # GKI 6.1 names its idmap code inside _stext.._etext: a function after that area, still in .text, is kept.
+        code, bounds = kernel_with_rodata_hash()
+        text = core.kernel_text(dict(bounds, __idmap_text_start=KB + 0x10, __idmap_text_end=KB + 0x20))
+        self.assertEqual(core.resolve([(KB, code)], "aarch64", text)[0][0].targets, [KB + 0x24])
+
+    def test_without_all_four_bounds_nothing_changes(self):
+        code, bounds = kernel_with_rodata_hash()
+        plain = core.resolve([(KB, code)], "aarch64")
+        for missing in ("_stext", "_etext", "_sinittext", "_einittext"):   # without init bounds, init text would be lost
+            named = {k: v for k, v in bounds.items() if k != missing}
+            self.assertIsNone(core.kernel_text(named))
+            self.assertEqual(core.resolve([(KB, code)], "aarch64", core.kernel_text(named)), plain)
+        self.assertIsNone(core.kernel_text(dict(bounds, _etext=KB)))   # _etext not after _stext
+
+
 class KcfiCallers(unittest.TestCase):
     def test_kcfi_check_without_call_is_still_a_call_site(self):
         from cfiscope import core

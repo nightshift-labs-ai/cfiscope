@@ -6,6 +6,7 @@ indirect call.  Both ends survive in a stripped binary, so matching them gives
 the set of functions a given indirect call may reach.
 """
 import array
+import bisect
 import hashlib
 import re
 import struct
@@ -170,13 +171,50 @@ def _median_resolved(counts):
     r = [c for c in counts if c]
     return r[len(r) // 2] if r else 0
 
-def resolve(ranges, arch):
+
+# Kernel code by its symbols: .text, init text and, where the kernel names them, the other code areas (exit text, and
+# the idmap, entry trampoline, hibernate and kexec code that arm64 keeps outside .text, in .rodata.text since 6.6).
+TEXT_RANGES = (("_stext", "_etext"), ("_sinittext", "_einittext"), ("__exittext_begin", "__exittext_end"),
+               ("__idmap_text_start", "__idmap_text_end"), ("__entry_tramp_text_start", "__entry_tramp_text_end"),
+               ("__hibernate_exit_text_start", "__hibernate_exit_text_end"),
+               ("__relocate_new_kernel_start", "__relocate_new_kernel_end"))
+TEXT_BOUND_NAMES = frozenset(n for pair in TEXT_RANGES for n in pair)
+TEXT_REQUIRED = ("_stext", "_etext", "_sinittext", "_einittext")
+
+
+def kernel_text(named):
+    """[(start, end)] of kernel code from its symbols (named: {name: address}), or None when _stext, _etext,
+    _sinittext or _einittext is missing (no symbols, or not a kernel): then resolve() filters nothing."""
+    if not all(n in named for n in TEXT_REQUIRED) or named["_stext"] >= named["_etext"]:
+        return None
+    return [(named[a], named[b]) for a, b in TEXT_RANGES if a in named and b in named and named[a] < named[b]]
+
+
+def _in_ranges(text):
+    """A test `start <= ea < end` for any (start, end) in text (they may overlap or touch)."""
+    merged = []
+    for lo, hi in sorted(text):
+        if merged and lo <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], hi)
+        else:
+            merged.append([lo, hi])
+    los = [lo for lo, _ in merged]
+
+    def inside(ea):
+        i = bisect.bisect_right(los, ea) - 1
+        return i >= 0 and ea < merged[i][1]
+    return inside
+
+
+def resolve(ranges, arch, text=None):
     """ranges: list of (base, bytes).  Returns (sites, stats).
 
     kCFI first; an aarch64 image with no kCFI check but with a CFI jump table is read as the
     older jump-table CFI instead (its stats carry "scheme": "jump-table CFI").
+    text: [(start, end)] of kernel code (kernel_text()), or None.  When given, a kCFI candidate outside it (a type hash
+    that happens to occur in .rodata, say) is left out; jump-table CFI candidates are branch targets and are not filtered.
     """
-    sites, stats = _resolve_kcfi(ranges, arch)
+    sites, stats = _resolve_kcfi(ranges, arch, text)
     if not sites and arch == "aarch64":
         old = resolve_jump_table_cfi(ranges)
         if old is not None:
@@ -184,18 +222,23 @@ def resolve(ranges, arch):
     return sites, stats
 
 
-def _resolve_kcfi(ranges, arch):
+def _resolve_kcfi(ranges, arch, text=None):
     sites = []
     for base, mem in ranges:
         sites.extend(scan_sites(mem, base, arch))
     wanted = {s.hash for s in sites}
     disps = sorted({s.disp for s in sites})
     by_hash = defaultdict(set)
+    outside = set()
+    inside = _in_ranges(text) if text is not None else None
     for base, mem in ranges:
         for h, ea in find_preambles(mem, base, arch, wanted):
             for d in disps:
                 t = ea - d
                 if base <= t < base + len(mem) and looks_like_entry(mem, t - base, arch):
+                    if inside is not None and not inside(t):
+                        outside.add(t)
+                        continue
                     by_hash[h].add(t)
     for s in sites:
         s.targets = sorted(by_hash.get(s.hash, ()))
@@ -212,6 +255,8 @@ def _resolve_kcfi(ranges, arch):
         "max_candidates": counts[-1] if n else 0,
         "disps": disps,
     }
+    if text is not None:
+        stats["outside_text"] = len(outside)   # distinct candidates left out: not in kernel code
     return sites, stats
 
 
