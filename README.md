@@ -149,7 +149,7 @@ Headless inside IDA, with idalib (cfiscope 0.1.17 or later; IDA 9.0 or newer; se
 python3 tools/cfiscope_headless.py vmlinux [--define-functions] [--remove] [--no-analysis]
 ```
 
-It opens the file as a database, adds the same comments and cross-references as **CFIScope: Scan kCFI calls**, prints the same statistics and saves the database. Without `--define-functions` it is like answering No: a candidate IDA has no function for gets no cross-reference. It calls the plugin's own `cfiscope.idalayer`; like the rest of the IDA layer it has only been run against fake modules (`tests/test_headless_stub.py`), not a real idalib.
+It opens the file as a database, adds the same comments and cross-references as **CFIScope: Scan kCFI calls**, prints the same statistics and saves the database. Without `--define-functions` it is like answering No: a candidate IDA has no function for gets no cross-reference. With `--no-analysis` on a fresh kernel file IDA has made no functions yet, so add `--define-functions` to get cross-references. It calls the plugin's own `cfiscope.idalayer`; like the rest of the IDA layer it has only been run against fake modules (`tests/test_headless_stub.py`), not a real idalib.
 
 ## Verification
 
