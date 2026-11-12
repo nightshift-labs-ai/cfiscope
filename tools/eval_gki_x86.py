@@ -6,10 +6,12 @@
 From https://android.googlesource.com/kernel/prebuilts/6.1/x86-64 (kernel-6.1 and System.map).
 kernel-6.1 is a bzImage: tools/extract_bzimage.py kernel-6.1 vmlinux decompresses it. Each function that kCFI
 protects has a __cfi_<name> symbol in System.map, so the map says exactly which addresses are real targets.
+The vmlinux has no symbols, so it is scanned without kernel-code bounds; a last line scans it again with the bounds
+that System.map names (core.kernel_text(), as the command line does for a vmlinux that keeps its symbols).
 """
 import os, struct, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from cfiscope.core import resolve
+from cfiscope.core import kernel_text, resolve, TEXT_BOUND_NAMES
 
 PREAMBLES = (16, 5)
 
@@ -34,9 +36,11 @@ def main():
     # Name collisions between static functions make names ambiguous, so go from each __cfi_ symbol to
     # its function by distance: usually 16 bytes (padded preamble), sometimes 5 (no padding).
     cfi = []
-    text, weak = {}, {}
+    text, weak, bounds = {}, {}, {}
     for line in open(sys.argv[2]):
         addr, kind, name = line.split()[:3]
+        if name in TEXT_BOUND_NAMES:
+            bounds.setdefault(name, int(addr, 16))
         if name.startswith("__cfi_"):
             cfi.append((int(addr, 16), name[6:]))
         elif kind in "tT":
@@ -53,8 +57,9 @@ def main():
         else:
             unplaced += 1
     print("__cfi_ symbols", len(cfi), "placed at their function", len(truth), "not placed", unplaced)
+    ranges = code(sys.argv[1])
     t0 = time.time()
-    sites, stats = resolve(code(sys.argv[1]), "x86_64")
+    sites, stats = resolve(ranges, "x86_64")
     print("seconds %.1f" % (time.time() - t0)); print(stats)
     counts = sorted(len(s.targets) for s in sites)
     print("resolved %.1f%%" % (100 * stats["resolved"] / stats["sites"]))
@@ -72,6 +77,16 @@ def main():
     print("median candidates per site with candidates", stats["median_candidates_resolved"],
           "(over all sites %d)" % stats["median_candidates"])
     print("sites with a recognised call:", sum(1 for s in sites if s.call_ea), "of", len(sites))
+    bounded = kernel_text(bounds)
+    if bounded is None:
+        print("System.map does not name the kernel-code bounds: no second scan")
+        return
+    b_sites, b_stats = resolve(ranges, "x86_64", bounded)
+    b_targets = {t for s in b_sites for t in s.targets}
+    print("with the kernel-code bounds from System.map (_etext %#x, _sinittext %#x): left out %d, distinct targets %d, "
+          "largest list %d, lists changed %d" % (bounds["_etext"], bounds["_sinittext"], b_stats["outside_text"],
+                                                 len(b_targets), b_stats["max_candidates"],
+                                                 sum(1 for a, b in zip(sites, b_sites) if a.targets != b.targets)))
 
 
 main()
