@@ -150,6 +150,10 @@ noid = sum(1 for s in sites for x in [s] + s.extra_checks if x.targets and x.typ
 print("count check leaves out checks with no type id from their slow path that are not the runtime's own: %d" % noid)
 pairs = [(p, q) for p, q in zip(spans, spans[1:]) if p[2] != q[2]]
 overlaps = [(p, q) for p, q in pairs if q[0] < p[1]]
+kinds = {(lo, hi, t): k for t, v in runs.items() for lo, hi, k in v}
+range_pairs = [(p, q) for p, q in pairs if kinds[p] == "range"]
+print("count check: pairs whose first run is a range check's (count read from the code): %d, overlapping %d"
+      % (len(range_pairs), sum(1 for p, q in range_pairs if q[0] < p[1])))
 print("count check: type ids with a run read at their checks %d (range %d, single %d; ids whose checks read more than"
       " one run: %d); neighbouring runs of different type ids that overlap: %d of %d pairs"
       % (len(runs), sum(1 for v in runs.values() if any(k == "range" for _, _, k in v)),

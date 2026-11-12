@@ -264,7 +264,7 @@ Measured on `gki-certified-boot-android13-5.15-2024-01_r1` ([zip](https://dl.goo
 | Distinct candidates that start exactly at a kallsyms function | 24,976 of 24,976 |
 | Jump-table entries used whose name matches the target (`foo.cfi_jt` branches to `foo`) | 24,976 of 24,976 |
 | Checks whose range was read at the check and whose first entry is the `__typeid` symbol of the id their own slow path passes | range 10,890 of 10,890; single 2,041 of 2,041 (1,036 range and 105 single checks take their range from another check of the same type id and are not counted here) |
-| Entry counts read from the code (`cmp xT, #N`): neighbouring type runs of different type ids that overlap; runs that extend past the next type's `__typeid` symbol | 0 of 2,488 pairs; 0 of 2,489 runs (and every check of a type id reads the same run) |
+| Entry counts read from the code (`cmp xT, #N`): neighbouring type runs of different type ids that overlap; runs that extend past the next type's `__typeid` symbol | 0 of 2,488 pairs (1,718 of them start with a range run, whose count is read from the code); 0 of 2,489 runs (and every check of a type id reads the same run) |
 | Linked check and call in the same function | 16,003 of 16,003 |
 | Type names equal to `c++filt` | 2,777 of 2,777 |
 
