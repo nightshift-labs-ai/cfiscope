@@ -77,6 +77,43 @@ $ python3 -m cfiscope gki.elf --callers tcp_sendmsg --max-list 3
 
 (Long lines wrapped by hand; spacing condensed.)
 
+## What the plugin writes into IDA (fake IDA, not a screenshot)
+
+`tools/showcase_ida_stub.py` loads the same kernel's code segments and symbol names into the fake IDA modules of the stub tests, runs the plugin's own IDA layer (Scan, the two lists, the pseudocode comment) and prints what it wrote. These are the exact strings the plugin hands to IDA; real IDA has not run them and draws its own listing around them. The fake database has no data cross-references, so no candidate is marked "address taken" here; in IDA, candidates whose address is stored in data are marked and listed first, so the first names in a comment can differ.
+
+```
+$ python3 -I tools/showcase_ida_stub.py gki.elf sock_sendmsg+0xb4 tcp_sendmsg
+BEFORE (no CFIScope): 0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8
+  comment: none; code xrefs from this call: none (indirect)
+
+AFTER Scan kCFI calls (Ctrl-Alt-K): 13897 sites, 13897 comments, 44724 cross-references in the whole database
+0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI 0x1EBDA935: 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
+  code xrefs from this call (14): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
+
+Candidates for this call (Ctrl-Alt-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (hash 0x1EBDA935)'
+  0xffffffc00897842c  tun_sendmsg
+  0xffffffc008cd2ac4  sock_no_sendmsg
+  0xffffffc008d8cd98  netlink_sendmsg
+  0xffffffc008e43370  inet_sendmsg
+  0xffffffc008ea71dc  unix_stream_sendmsg
+  0xffffffc008ea9910  unix_dgram_sendmsg
+  0xffffffc008eaa360  unix_seqpacket_sendmsg
+  0xffffffc008ead7c8  inet6_sendmsg
+  0xffffffc008f24f88  packet_sendmsg
+  0xffffffc008f2a988  packet_sendmsg_spkt
+  0xffffffc008f2dc00  pfkey_sendmsg
+  0xffffffc008f6b58c  vsock_dgram_sendmsg
+  0xffffffc008f6cc48  vsock_connectible_sendmsg
+  0xffffffc008f72e10  xsk_sendmsg
+
+Callers of this function (Ctrl-Alt-C) on tcp_sendmsg: 3 row(s)
+  0xffffffc008cc5778  kernel_sendmsg_locked+0x64  11 candidate(s)
+  0xffffffc008e433c8  inet_sendmsg+0x58  11 candidate(s)
+  0xffffffc008ead820  inet6_sendmsg+0x58  11 candidate(s)
+
+Pseudocode line of the call (with Hex-Rays):  // CFIScope: 14 candidates: tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
+```
+
 ## Status: read this first
 
 **CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is below: the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
