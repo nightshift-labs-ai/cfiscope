@@ -195,8 +195,11 @@ class ScanAction(ida_kernwin.action_handler_t):
             return 0
         # Asked before any xref is added: a call xref makes IDA create a function at its target (xref.hpp, fl_CN),
         # so after "No" a candidate IDA has no function for gets no xref.
-        create = bool(sites) and ida_kernwin.ask_yn(
-            ida_kernwin.ASKBTN_NO, "Create functions at candidates IDA has not recognised?") == ida_kernwin.ASKBTN_YES
+        answer = ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO, "Create functions at candidates IDA has not recognised?") \
+            if sites else ida_kernwin.ASKBTN_NO
+        if answer == ida_kernwin.ASKBTN_CANCEL:
+            return 0
+        create = answer == ida_kernwin.ASKBTN_YES
         made = None
         ida_kernwin.show_wait_box("HIDECANCEL\nCFIScope: annotating call sites")
         try:

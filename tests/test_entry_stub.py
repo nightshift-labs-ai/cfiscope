@@ -22,7 +22,7 @@ def load_entry(name="x86_64-kernel", proc="metapc", ext=".o"):
     kw.attach_action_to_menu = lambda path, n, f: log["menu"].append((path, n)) or True
     kw.get_widget_type = lambda w: w
     kw.attach_action_to_popup = lambda w, p, n, path: log["popup"].append((w, n, path)) or True
-    kw.ask_yn, kw.ASKBTN_NO, kw.ASKBTN_YES = (lambda default, text: 0), 0, 1
+    kw.ask_yn, kw.ASKBTN_NO, kw.ASKBTN_YES, kw.ASKBTN_CANCEL = (lambda default, text: 0), 0, 1, -1
     lines = types.ModuleType("ida_lines")
     lines.SCOLOR_AUTOCMT = "\x04"
     lines.COLSTR = lambda text, tag: "\x01" + tag + text + "\x02" + tag
@@ -111,6 +111,15 @@ class Entry(unittest.TestCase):
         self.assertEqual(log["asked"], [("Create functions at candidates IDA has not recognised", 0, 0)])
         self.assertTrue(w.crefs)
         self.assertTrue({t for _, t, _ in w.crefs} <= w.funcs | w.planned_funcs)
+
+    def test_cancel_create_functions_stops_scan(self):
+        # Cancel/Esc on "Create functions?" stops before anything is written (it is asked before annotating).
+        w, E, log = load_entry()
+        self.answers(log, create=-1)
+        self.assertEqual(E.ScanAction().activate(None), 0)
+        self.assertEqual(log["asked"], [("Create functions at candidates IDA has not recognised", 0, 0)])
+        self.assertEqual(w.cmts, {})
+        self.assertEqual(w.crefs, set())
 
     def test_wait_boxes(self):
         # Every wait box is closed; the scan's boxes hide Cancel (nothing polls user_cancelled()); add_func runs
