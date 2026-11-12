@@ -104,7 +104,7 @@ python3 -m cfiscope vmlinux --targets 0xffffffc008cc55ac
 python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
 ```
 
-Run it from this folder. Input is a 64-bit ELF (a `vmlinux`, a kernel with symbols restored by vmlinux-to-elf, or a `.o`/`.ko`) or, with `--raw`, a bare kernel image. Symbols are only used to print names. `--json` gives machine-readable output. On the GKI aarch64 `Image` from the walkthrough above, `--raw` prints the same totals as the table below in under a second.
+Run it from this folder. Input is a 64-bit ELF (a `vmlinux`, a kernel with symbols restored by vmlinux-to-elf, or a `.o`/`.ko`) or, with `--raw`, a bare kernel image. Symbols are only used to print names. `--json` gives machine-readable output. On the GKI aarch64 `Image` from the walkthrough above, `--raw` prints the same totals as the table below in about a second (0.91 to 1.00 s in three runs on the machine named under the table below).
 
 Headless inside IDA, with idalib (cfiscope 0.1.17 or later; IDA 9.0 or newer; set up the `idapro` module as Hex-Rays describes):
 
@@ -120,12 +120,14 @@ Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google downlo
 
 | Measure | Result |
 |---|---|
-| Indirect call sites found | 13,897, using 4,184 distinct type hashes, in 0.5 s |
+| Indirect call sites found | 13,897, using 4,184 distinct type hashes, in about 1 s (see below) |
 | Sites with at least one candidate | 11,961 (86.1%) |
 | Sites with exactly one candidate | 1,694 |
 | Median candidates per site with at least one candidate (over all sites, unresolved included: 4) | 6 |
 | Sites with 1 to 8 candidates / 1 to 16 | 7,092 / 8,999 |
 | Candidate start precision: distinct candidates that begin exactly at a kallsyms function symbol (symbols restored by [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf), used only to score). This checks that candidates are real function starts, not that a call reaches them | 30,357 of 30,567 (99.31%) |
+
+Scan time: the script prints it; three runs gave 0.9, 0.9 and 1.1 s (1.1 to 1.4 s for the whole command) on an Intel i9-13900H laptop under WSL2, in single-threaded Python. Expect a different figure on another machine.
 
 The 1,936 sites with no candidate carry a hash that no function in this image has; a likely reason is callees that live in loadable modules, not checked one by one.
 
@@ -176,12 +178,13 @@ blr  x23
 
 So the candidates of a call are written in the code: CFIScope reads the base and the count, then each entry's branch target. This is the compiler's own list of the functions of that type in the image that the check lets through, with no hash collisions. When there are no kCFI checks in an aarch64 image, the scan looks for this form instead; the actions, comments (`jtCFI <type>: N candidate(s): ...`), cross-references, lists and pseudocode comments are the same as for kCFI. Supported shapes: range checks (`b.hs`/`b.hi` with the call on the fall-through, `b.lo`/`b.ls` with the call at the branch target, count as an immediate or in a register, up to four unrelated instructions between the subtract and the rotate), single-member types (`cmp; b.ne`), checks whose subtract and rotate were hoisted out of a loop, and calls checked only through `__cfi_slowpath`/`__cfi_slowpath_diag`. When a check's slow path is inlined (`bl find_check_fn`, then a `blr` to the `__cfi_check` of the kernel or module that holds the pointer with the type id in `x0`), that `blr` is the CFI runtime's own call, not a program call: CFIScope labels it (`jtCFI runtime: calls __cfi_check ...`) instead of listing candidates. On the GKI 5.15 kernel below it finds 890 of them from the code alone, all among the 1,015 counted with symbols; the GKI 5.10 kernel has none (its slow paths call `__cfi_slowpath`). Each site also gets the type's 64-bit id (passed to the slow path; it is the first 8 bytes of MD5 of the mangled type name), and, when the kernel's symbols include the `__typeid_<type>_global_addr` names that kallsyms keeps, the type itself, for example `int (file*, int)`. In IDA these names are taken from the database and, because IDA keeps one name per address and each of them shares its address with a `foo.cfi_jt` entry, also from the input ELF's symbol table if that file is still where it was loaded from.
 
-Command line, on the Android 13 GKI kernel below with symbols restored by vmlinux-to-elf (real output, spacing condensed, long line cut):
+Command line, on the Android 13 GKI kernel below with symbols restored by vmlinux-to-elf (real output):
 
 ```
 $ python3 -m cfiscope gki515.elf --sites --max-list 4 | grep vfs_read+
-0xffffffc00853ffbc  vfs_read+0xe8   call range int (file*, int)  2 candidate(s): vfs_fsync, selinux_file_permission
-0xffffffc0085400c0  vfs_read+0x1ec  call range long (file*, char*, unsigned long, long long*)  166 candidate(s): kvm_vm_stats_read, ...
+0xffffffc00853ffbc  vfs_read+0xe8                            call range int (file*, int)  2 candidate(s): vfs_fsync, selinux_file_permission
+0xffffffc0085400c0  vfs_read+0x1ec                           call range long (file*, char*, unsigned long, long long*)  166 candidate(s): kvm_vm_stats_read, kvm_vcpu_stats_read, cpu_latency_qos_read, snapshot_read ...
+0xffffffc00854021c  vfs_read+0x348                           call range long (kiocb*, iov_iter*)  64 candidate(s): devkmsg_write, generic_file_write_iter, __generic_file_write_iter, generic_file_direct_write ...
 ```
 
 Which indirect calls can reach `tcp_sendmsg` on that kernel (real output):
