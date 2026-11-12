@@ -43,7 +43,8 @@ def scan_or_warn():
         return STATE["sites"]
     problem = None
     sites = None
-    ida_kernwin.show_wait_box("CFIScope: scanning code segments")
+    # HIDECANCEL: the scan never polls user_cancelled(), so a Cancel button would do nothing (kernwin.hpp).
+    ida_kernwin.show_wait_box("HIDECANCEL\nCFIScope: scanning code segments")
     try:
         sites = ensure_scan()
     except RuntimeError as e:
@@ -83,10 +84,14 @@ ISSUES_URL = "https://github.com/nightshift-labs-ai/cfiscope/issues"
 
 
 def guarded(activate):
-    """Any unexpected error becomes one warning plus the traceback in the Output window."""
+    """Any unexpected error becomes one warning plus the traceback in the Output window; an interrupt (Cancel in
+    IDAPython's own wait box, shown when no plugin wait box is up) becomes one line there."""
     def wrapper(self, ctx):
         try:
             return activate(self, ctx)
+        except KeyboardInterrupt:  # IDAPython's own "Running Python script" box was cancelled
+            ida_kernwin.msg("[CFIScope] interrupted: run Scan again to finish, or Remove annotations\n")
+            return 0
         except Exception:  # noqa: BLE001  (last line of defence inside IDA)
             ida_kernwin.msg("[CFIScope] unexpected error:\n%s\n" % traceback.format_exc())
             ida_kernwin.warning("CFIScope: unexpected error, details are in the Output window.\nPlease report it: %s" % ISSUES_URL)
@@ -193,7 +198,7 @@ class ScanAction(ida_kernwin.action_handler_t):
         create = bool(sites) and ida_kernwin.ask_yn(
             ida_kernwin.ASKBTN_NO, "Create functions at candidates IDA has not recognised?") == ida_kernwin.ASKBTN_YES
         made = None
-        ida_kernwin.show_wait_box("CFIScope: annotating call sites")
+        ida_kernwin.show_wait_box("HIDECANCEL\nCFIScope: annotating call sites")
         try:
             res = idalayer.annotate(sites, create_functions=create)
             if create:

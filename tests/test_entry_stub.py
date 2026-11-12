@@ -112,6 +112,42 @@ class Entry(unittest.TestCase):
         self.assertTrue(w.crefs)
         self.assertTrue({t for _, t, _ in w.crefs} <= w.funcs | w.planned_funcs)
 
+    def test_wait_boxes(self):
+        # Every wait box is closed; the scan's boxes hide Cancel (nothing polls user_cancelled()); add_func runs
+        # inside one, so IDAPython does not show its own interrupt dialog.
+        w, E, log = load_entry()
+        kw = sys.modules["ida_kernwin"]
+        boxes = []
+        kw.show_wait_box = lambda t: boxes.append(t)
+        kw.hide_wait_box = lambda: boxes.append(None)
+        inside = []
+        def add_func(ea):
+            inside.append(len([b for b in boxes if b]) - boxes.count(None))
+            w.funcs.add(ea)
+            return True
+        sys.modules["ida_funcs"].add_func = add_func
+        w.funcs = set()
+        sys.modules["ida_funcs"].get_func = lambda ea: ea in w.funcs or None
+        self.answers(log, create=1)
+        self.assertEqual(E.ScanAction().activate(None), 1)
+        texts = [b for b in boxes if b]
+        self.assertEqual(len(texts), 2)
+        self.assertTrue(all(t.startswith("HIDECANCEL\n") for t in texts), texts)
+        self.assertEqual(boxes.count(None), len(texts))
+        self.assertTrue(inside and set(inside) == {1}, inside)
+
+    def test_interrupt_is_reported(self):
+        # Cancel in IDAPython's "Running Python script" box raises KeyboardInterrupt, which except Exception misses.
+        w, E, log = load_entry()
+        def add_func(ea):
+            raise KeyboardInterrupt("User interrupted")
+        sys.modules["ida_funcs"].add_func = add_func
+        self.answers(log, create=1)
+        self.assertEqual(E.ScanAction().activate(None), 0)
+        self.assertEqual([m for m in log["msgs"] if "interrupted" in m],
+                         ["[CFIScope] interrupted: run Scan again to finish, or Remove annotations\n"])
+        self.assertFalse([m for m in log["msgs"] if m.startswith("WARN")])
+
     def test_waits_for_auto_analysis(self):
         # ask_yn: -1 Cancel (nothing happens), 1 Yes (auto_wait, then scan), 0 No (scan now).
         for wait, expect_scan, expect_waited in ((-1, False, False), (1, True, True), (0, True, False)):
