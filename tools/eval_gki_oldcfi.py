@@ -134,7 +134,8 @@ for kind in ("range", "single"):
 # Precision 3 (can fail): the entry count read from the code. A type's run of entries is the first entry and count that
 # its checks read: range checks whose base was read at the check (count from cmp xT, #N or the register holding N), and
 # single-member checks (their one entry). Left out: ranges copied from another check of the same id (equal by
-# construction) and checks without a type id (the runtime's own). Runs sorted by first entry; two neighbouring runs of
+# construction) and checks whose slow path passes no type id (the runtime's own, and a few linked ones: counted
+# below). Runs sorted by first entry; two neighbouring runs of
 # different type ids overlap when the second starts before the first ends. A count read too large (or a base too low)
 # makes runs overlap, or run past the next type's __typeid symbol; a count read too small shows in neither.
 runs = {}
@@ -144,6 +145,9 @@ for s in sites:
                 and x.kind in ("range", "single"):
             runs.setdefault(x.type_id, set()).add((x.jt_base, x.jt_base + jt.entry_size * x.jt_count, x.kind))
 spans = sorted((lo, hi, t) for t, v in runs.items() for lo, hi, _ in v)
+noid = sum(1 for s in sites for x in [s] + s.extra_checks if x.targets and x.type_id is None and not x.runtime_check
+           and x.jt_range_from == "code" and x.kind in ("range", "single"))
+print("count check leaves out checks with no type id from their slow path that are not the runtime's own: %d" % noid)
 pairs = [(p, q) for p, q in zip(spans, spans[1:]) if p[2] != q[2]]
 overlaps = [(p, q) for p, q in pairs if q[0] < p[1]]
 print("count check: type ids with a run read at their checks %d (range %d, single %d; ids whose checks read more than"
