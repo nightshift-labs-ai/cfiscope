@@ -240,8 +240,10 @@ def pseudocode_text(site, limit=5):
             return "CFIScope: no candidate in this image%s (slow-path check only)" % of
         if not targets:
             return "CFIScope: candidates unknown%s" % of
+    elif getattr(site, "type_name", None):       # kCFI hash named from BTF
+        of = " of " + site.type_name
     if not targets:
-        return "CFIScope: 0 candidates in this image"
+        return "CFIScope: 0 candidates in this image%s" % of
     names = ", ".join(target_name(t) for t in targets[:limit])
     if len(targets) > limit:
         names += " and %d more" % (len(targets) - limit)
