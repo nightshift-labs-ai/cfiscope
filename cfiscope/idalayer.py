@@ -70,6 +70,20 @@ def input_elf():
     return None
 
 
+def input_type_names():
+    """kcfi_types.TypeNames from the BTF in the input file (ELF .BTF section, or a BTF blob in a raw kernel image),
+    if the file is still where it was loaded from and holds BTF; else None."""
+    try:
+        from . import kcfi_types
+        path = ida_nalt.get_input_file_path()
+        if path and os.path.isfile(path):
+            with open(path, "rb") as fh:
+                return kcfi_types.load_type_names(fh.read())
+    except Exception:  # noqa: BLE001  type names are a bonus, as symbol names are
+        pass
+    return None
+
+
 def typeid_names(elf=False):
     """(address, name) of the __typeid_<type>_global_addr names (kallsyms keeps them).
 
@@ -135,6 +149,12 @@ def scan():
     if stats.get("scheme") == "jump-table CFI":
         stats = dict(stats, named_checks=core.name_jt_types(sites, typeid_names(elf)))
         JT["table"] = core.find_jump_table(ranges)    # so that a foo.cfi_jt entry can stand for foo (callers_rows)
+    elif sites:
+        names = input_type_names()
+        if names is not None:      # kCFI hashes named by C function type from the input file's BTF
+            from . import kcfi_types
+            named, total = kcfi_types.name_sites(sites, names)
+            stats = dict(stats, kcfi_hashes_named=named, btf_prototypes=names.protos)
     jt = JT["table"]
     JT["runtime_fn"] = {}
     CALLS.clear()
@@ -200,13 +220,14 @@ def describe(site):
     targets = ranked(site)
     if getattr(site, "kind", "kcfi") != "kcfi":
         return _jt_describe(site, targets)
+    typed = " %s" % site.type_name if getattr(site, "type_name", None) else ""
     if not targets:
-        return "%s 0x%08X: no implementation in this image" % (COMMENT_TAG, site.hash)
+        return "%s 0x%08X%s: no implementation in this image" % (COMMENT_TAG, site.hash, typed)
     names = ", ".join(target_name(t) for t in targets[:6])
     more = len(targets) - 6
     if more > 0:
         names += ", +%d more" % more
-    return "%s 0x%08X: %d candidate(s): %s" % (COMMENT_TAG, site.hash, len(targets), names)
+    return "%s 0x%08X%s: %d candidate(s): %s" % (COMMENT_TAG, site.hash, typed, len(targets), names)
 
 
 def pseudocode_text(site, limit=5):
@@ -416,7 +437,8 @@ def site_at(sites, ea):
 def targets_title(site):
     at = site.call_ea or site.check_ea
     if site.kind == "kcfi":
-        return "kCFI candidates for the call at 0x%X (hash 0x%08X)" % (at, site.hash)
+        typed = ", " + site.type_name if getattr(site, "type_name", None) else ""
+        return "kCFI candidates for the call at 0x%X (hash 0x%08X%s)" % (at, site.hash, typed)
     return "jump-table CFI candidates for the call at 0x%X (%s)" % (at, core.type_label(site) or "type unknown")
 
 

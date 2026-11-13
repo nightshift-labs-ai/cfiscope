@@ -334,6 +334,24 @@ class IdaLayer(unittest.TestCase):
         next(s for s in sites if s.check_ea == runtime).runtime_check = False
         self.assertEqual([r[0] for r in il.callers_rows(sites, f_a)][-2:], [unlinked, runtime])
 
+class BTFTypeNames(unittest.TestCase):
+    """kCFI hashes named by C function type from the BTF in the input file (fake IDA modules)."""
+
+    def test_named_from_input_file_btf(self):
+        w, il = IdaLayer.make(None, "kcfi_types_a64", "ARM")
+        sites, stats = il.scan()
+        by_hash = {s.hash: s for s in sites}
+        self.assertNotIn("kcfi_hashes_named", stats)          # no input file: unchanged
+        self.assertNotIn("(file*", il.describe(by_hash[0x4f4ccb9d]))
+        w.input_path = os.path.join(HERE, "fixtures", "kcfi_types_btf.o")   # a file holding BTF
+        sites, stats = il.scan()
+        by_hash = {s.hash: s for s in sites}
+        self.assertEqual(stats["kcfi_hashes_named"], 3)
+        self.assertIn("0x4F4CCB9D int (file*, int): 1 candidate(s)", il.describe(by_hash[0x4f4ccb9d]))
+        self.assertIn("(hash 0x4F4CCB9D, int (file*, int))", il.targets_title(by_hash[0x4f4ccb9d]))
+        self.assertIn("0x4A7B6FDC: no implementation", il.describe(by_hash[0x4a7b6fdc]))   # not in this BTF
+
+
 class NoXrefsIntoData(unittest.TestCase):
     """tests/test_core.kernel_with_rodata_hash() in one RWX segment, as IDA loads a vmlinux-to-elf ELF: the hash value
     in 'rodata' yields a candidate at KB + 0x1004 next to the real one at KB + 0x24."""
