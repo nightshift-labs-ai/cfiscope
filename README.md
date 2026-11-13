@@ -120,7 +120,7 @@ Quick try, no download (about a minute). The repository ships small objects buil
 
 A real kernel:
 
-1. Download the public aarch64 Android kernel used for the output above and the [numbers](docs/VERIFICATION.md): [gki-certified-boot-android14-6.1-2024-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip), extract the kernel with `python3 tools/extract_bootimg.py boot-6.1.img Image` (no dependencies), and restore its symbols with [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf): `vmlinux-to-elf Image gki.elf`.
+1. Download the public aarch64 Android kernel used for the output above and the [numbers](docs/VERIFICATION.md): [gki-certified-boot-android14-6.1-2024-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip), unzip it (it holds `boot-6.1.img`), extract the kernel with `python3 tools/extract_bootimg.py boot-6.1.img Image` (no dependencies), and restore its symbols with [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf): `vmlinux-to-elf Image gki.elf`.
 2. Open the resulting ELF in IDA and let auto-analysis finish.
 3. Choose **CFIScope: Scan kCFI calls**.
 4. On any `blr` preceded by a kCFI check, choose **CFIScope: Candidates for this call** to list the functions it can reach. On a function, choose **CFIScope: Callers of this function** to list the indirect calls that can reach it.
