@@ -302,11 +302,14 @@ class ArraysBTF(unittest.TestCase):
         d, S, text = sections(os.path.join(FIX, "kcfi_arrays_a64.o"))
         hashes = {name: struct.unpack_from("<I", text[sh], val - 4)[0]
                   for name, (sh, val) in symbols(d, S).items() if sh in text and val >= 4}
-        self.assertEqual(sorted(hashes), ["probe_sized", "probe_unknown", "probe_zero"])
+        self.assertEqual(sorted(hashes), ["probe_sized", "probe_unknown", "probe_zero", "q_blocks", "q_const_arr"])
         tn = K.load_type_names(read("kcfi_arrays_btf.o"))
         want = {"probe_unknown": ("_ZTSFvPvPjPA_jE", "void (void *, unsigned int *, unsigned int (*)[])"),
                 "probe_zero": ("_ZTSFvPvPjPA0_jE", "void (void *, unsigned int *, unsigned int (*)[0])"),
-                "probe_sized": ("_ZTSFvPvPjPA7_jE", "void (void *, unsigned int *, unsigned int (*)[7])")}
+                "probe_sized": ("_ZTSFvPvPjPA7_jE", "void (void *, unsigned int *, unsigned int (*)[7])"),
+                # review s176 m1: the qualifier goes on the elements (Clang PA4_Ki), also in the C label
+                "q_const_arr": ("_ZTSFvPA4_KiE", "void (const int (*)[4])"),
+                "q_blocks": ("_ZTSFiPA16_KhPA16_hE", "int (const unsigned char (*)[16], unsigned char (*)[16])")}
         for name, (mangled, label) in sorted(want.items()):
             with self.subTest(name):
                 got = tn.lookup(hashes[name])

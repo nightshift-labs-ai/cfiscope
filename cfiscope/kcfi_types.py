@@ -321,6 +321,8 @@ class BTF:
                 q, inner = q + inner[1], inner[2]
             if inner[0] == "f":              # qualifiers on a function type are ignored in C
                 return inner
+            if inner[0] == "a":              # C: a qualified array type is an array of qualified elements (s176 m1)
+                return _qual_elems(q, inner)
             return ("q", "".join(c for c in "rVK" if c in q), inner)
         if kind == K_TYPE_TAG:
             return self.canon(st, depth + 1, typedef_name)
@@ -355,6 +357,17 @@ class BTF:
                 params.append(_param(self.canon(ptid, depth + 1)))
             return ("f", ret, params, varargs)
         raise Unmangleable("kind %d" % kind)
+
+
+def _qual_elems(q, a):
+    """The array type a with the qualifiers q moved onto its (innermost) element type, as C and Clang read
+    'const T' for an array type T: 'const arr4_t *' is 'const int (*)[4]', mangled PA4_Ki (review s176 m1)."""
+    e = a[2]
+    if e[0] == "a":
+        return ("a", a[1], _qual_elems(q, e))
+    if e[0] == "q":
+        q, e = q + e[1], e[2]
+    return ("a", a[1], ("q", "".join(c for c in "rVK" if c in q), e))
 
 
 def _offsets(blob, p, end):
