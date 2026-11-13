@@ -508,6 +508,299 @@ class Pseudocode(unittest.TestCase):
         self.assertEqual(hooks.func_printed(None), 0)
 
 
+NODE = "$ cfiscope"
+
+
+class Reopen(unittest.TestCase):
+    """Scan leaves a marker in a netnode; after the database is reopened, the first pseudocode print or lookup rebuilds
+    the scan from the code (read-only) so the pseudocode comments come back without pressing Scan."""
+
+    def setUp(self):
+        self.addCleanup(sys.modules.pop, "ida_hexrays", None)
+        self.w, self.E, self.log = load_entry()
+        sys.modules["ida_name"].get_ea_name = lambda ea: "f_%x" % ea
+
+    def scan(self, create=0):
+        fake_hexrays(self.log)
+        p = self.E.PLUGIN_ENTRY()
+        p.init()
+        Entry.answers(self, self.log, create=create)
+        self.assertEqual(self.E.ScanAction().activate(None), 1)
+        return p
+
+    def reopen(self, p, fresh_module=False):
+        """Close the database (term) and open it again: the database keeps comments, xrefs and netnodes; the plugin
+        module either survives (same STATE) or is imported again. Afterwards nothing may ask, write or create."""
+        p.term()
+        if fresh_module:
+            sys.modules.pop("cfiscope_entry", None)
+            self.E = importlib.import_module("cfiscope_entry")
+        self.scans = []
+        il = sys.modules["cfiscope.idalayer"]
+        real = il.scan
+        il.scan = lambda: self.scans.append(1) or real()
+        self.addCleanup(setattr, il, "scan", real)
+        self.loads = []                             # the marker is looked at once per database, not on every print
+        real_load = il.load_marker
+        il.load_marker = lambda: self.loads.append(1) or real_load()
+        self.addCleanup(setattr, il, "load_marker", real_load)
+        def forbidden(*a, **k):
+            raise AssertionError("the restore must not ask or write: %r" % (a,))
+        kw, X, F, B = (sys.modules[n] for n in ("ida_kernwin", "ida_xref", "ida_funcs", "ida_bytes"))
+        for mod, name in ((kw, "ask_yn"), (kw, "show_wait_box"), (kw, "warning"), (X, "add_cref"), (X, "del_cref"),
+                          (X, "add_dref"), (X, "del_dref"), (F, "add_func"), (B, "set_cmt")):
+            setattr(mod, name, forbidden)
+        self.before = (dict(self.w.cmts), set(self.w.crefs), set(self.w.data_xrefs), set(self.w.funcs),
+                       set(self.w.planned_funcs), {n: dict(v) for n, v in self.w.netnodes.items()})
+        self.log["msgs"].clear()
+        p = self.E.PLUGIN_ENTRY()
+        p.init()
+        return p
+
+    def unchanged(self):
+        # netnodes too: reading the marker must not create its netnode (a database write)
+        self.assertEqual((self.w.cmts, self.w.crefs, self.w.data_xrefs, self.w.funcs, self.w.planned_funcs,
+                          self.w.netnodes), self.before)
+
+    def printed(self, sites=None):
+        """A decompiled function holding the call of the first scanned site; its printed lines."""
+        if sites is None:
+            sites = self.first_sites
+        cf = FakeCfunc(["void f(void)", "{", "  g();", "}"], {sites[0].call_ea: ["s"]}, {"s": (2, 2)})
+        flushed = self.log["hx_flushed"]
+        self.assertEqual(self.E.STATE["hx"].func_printed(cf), 0)
+        self.assertEqual(self.log["hx_flushed"], flushed)   # never clear_cached_cfuncs inside a decompiler callback
+        return cf.text()[2]
+
+    def scanned(self, create=0):
+        p = self.scan(create)
+        self.first_sites = self.E.STATE["sites"]
+        return p
+
+    def test_scan_stores_marker(self):
+        il = sys.modules["cfiscope.idalayer"]
+        for create in (0, 1):
+            with self.subTest(create=create):
+                self.scanned(create)
+                marker = json.loads(self.w.netnodes[NODE][(72, "scan")])
+                self.assertEqual(marker, {"v": 1, "layout": il.layout_id(), "create_functions": bool(create)})
+                self.assertEqual(il.load_marker(), marker)
+
+    def test_reopen_restores_pseudocode_comments(self):
+        for fresh in (False, True):
+            with self.subTest(fresh_module=fresh):
+                self.setUp()
+                p = self.reopen(self.scanned(), fresh_module=fresh)
+                self.assertIsNone(self.E.STATE["sites"])
+                self.assertIn("// CFIScope: ", self.printed())
+                self.assertEqual(self.scans, [1])
+                self.assertIn("// CFIScope: ", self.printed())      # restored once, not on every print
+                self.assertEqual(self.scans, [1])
+                self.assertEqual(sum("restored the scan saved in this database" in m for m in self.log["msgs"]), 1)
+                self.unchanged()
+                p.term()
+
+    def test_no_marker_no_scan(self):
+        # A database Scan never annotated: printing pseudocode scans nothing and adds nothing.
+        fake_hexrays(self.log)
+        p = self.E.PLUGIN_ENTRY()
+        p.init()
+        site = sys.modules["cfiscope.idalayer"].scan()[0][0]
+        p = self.reopen(p)
+        self.assertEqual(self.printed([site]), "  g();")
+        self.assertEqual(self.printed([site]), "  g();")
+        self.assertEqual((self.scans, self.E.STATE["sites"]), ([], None))
+        self.assertEqual(self.loads, [1])
+        self.unchanged()
+
+    def test_skipped_while_analysis_runs(self):
+        p = self.reopen(self.scanned())
+        self.w.auto_ok = False
+        self.assertEqual(self.printed(), "  g();")
+        self.assertEqual(self.scans, [])
+        self.w.auto_ok = True                       # analysis finished: the next print restores
+        self.assertIn("// CFIScope: ", self.printed())
+        self.assertEqual(self.scans, [1])
+        self.unchanged()
+
+    def test_analysis_turned_off_restores(self):
+        p = self.reopen(self.scanned(), fresh_module=True)
+        self.w.auto_ok, self.w.auto_enabled = False, False
+        self.assertIn("// CFIScope: ", self.printed())
+        self.unchanged()
+
+    def test_lookup_restores(self):
+        for action, at in (("TargetsAction", lambda s: s.call_ea), ("CallersAction", lambda s: s.targets[0])):
+            with self.subTest(action=action):
+                self.setUp()
+                kw = sys.modules["ida_kernwin"]
+                shown = []
+                kw.Choose.Show = lambda chooser: shown.append(chooser.rows) or True
+                self.addCleanup(delattr, kw.Choose, "Show")
+                p = self.reopen(self.scanned(), fresh_module=True)
+                kw.get_screen_ea = lambda: at(self.first_sites[0])
+                box, scanned_in_box = [False], []           # a lookup the user asked for may show its wait box
+                kw.show_wait_box = lambda t: box.__setitem__(0, True)
+                kw.hide_wait_box = lambda: box.__setitem__(0, False)
+                il = sys.modules["cfiscope.idalayer"]
+                counted = il.scan
+                il.scan = lambda: scanned_in_box.append(box[0]) or counted()
+                flushed = self.log["hx_flushed"]
+                self.assertEqual(getattr(self.E, action)().activate(None), 1)
+                self.assertEqual(len(shown), 1)
+                self.assertEqual(self.scans, [1])
+                self.assertEqual(scanned_in_box, [True])    # the restore reuses the lookup's scan, run behind its box
+                self.assertEqual(self.log["hx_flushed"], flushed + 1)  # decompiled before the lookup: printed again
+                self.assertIn("// CFIScope: ", self.printed())
+                self.assertEqual(self.scans, [1])
+                self.unchanged()
+
+    def test_lookup_hooks_a_decompiler_loaded_later(self):
+        # Hex-Rays not there yet when the plugin started with the database: a lookup's restore installs the hook, as
+        # Scan does, so the pseudocode comments still come back.
+        p = self.scanned()
+        sys.modules["ida_hexrays"] = None
+        p = self.reopen(p, fresh_module=True)
+        self.assertIsNone(self.E.STATE["hx"])
+        fake_hexrays(self.log)
+        kw = sys.modules["ida_kernwin"]
+        kw.Choose.Show = lambda chooser: True
+        self.addCleanup(delattr, kw.Choose, "Show")
+        kw.get_screen_ea = lambda: self.first_sites[0].call_ea
+        kw.show_wait_box = lambda t: None
+        self.assertEqual(self.E.TargetsAction().activate(None), 1)
+        self.assertEqual(self.log["hx_hooked"], 1)
+        self.assertIn("// CFIScope: ", self.printed())
+        self.assertEqual(self.scans, [1])
+        self.unchanged()
+
+    def test_decompiler_loaded_after_init_is_hooked(self):
+        # Hex-Rays loads after this plugin (plugin load order): its plugin_loaded event, or ready_to_run, installs the
+        # decompiler hook once, so the first decompile after reopening still restores. Without a decompiler: nothing.
+        p = self.scanned()
+        sys.modules["ida_hexrays"] = None
+        p = self.reopen(p, fresh_module=True)
+        self.assertIsNone(self.E.STATE["hx"])
+        p.hooks.plugin_loaded(None)
+        p.hooks.ready_to_run()
+        self.assertIsNone(self.E.STATE["hx"])
+        fake_hexrays(self.log, available=False)
+        p.hooks.plugin_loaded(None)
+        self.assertIsNone(self.E.STATE["hx"])
+        fake_hexrays(self.log)
+        p.hooks.plugin_loaded(None)
+        p.hooks.ready_to_run()
+        p.hooks.plugin_loaded(None)
+        self.assertEqual(self.log["hx_hooked"], 1)          # hooked once
+        self.assertIn("// CFIScope: ", self.printed())
+        self.assertEqual(self.scans, [1])
+        self.unchanged()
+        p.term()
+        self.assertEqual(self.log["hx_hooked"], 0)
+
+    def test_lookup_restore_without_decompiler(self):
+        # No decompiler for this database: the lookup still restores the scan, but does not claim comments are on.
+        p = self.scanned()
+        sys.modules["ida_hexrays"] = None
+        p = self.reopen(p, fresh_module=True)
+        kw = sys.modules["ida_kernwin"]
+        kw.Choose.Show = lambda chooser: True
+        self.addCleanup(delattr, kw.Choose, "Show")
+        kw.get_screen_ea = lambda: self.first_sites[0].call_ea
+        kw.show_wait_box = lambda t: None
+        self.assertEqual(self.E.TargetsAction().activate(None), 1)
+        self.assertIsNone(self.E.STATE["hx"])
+        restored = [m for m in self.log["msgs"] if "restored the scan saved in this database" in m]
+        self.assertEqual(len(restored), 1)
+        self.assertNotIn("pseudocode comments", restored[0])
+        self.assertIn("(%d checks, read-only)" % len(self.first_sites), restored[0])
+        self.unchanged()
+
+    def test_rebased_since_scan_not_restored(self):
+        p = self.scanned()
+        seg = self.w.segs[0]
+        self.w.mem[seg.start_ea + 0x1000] = self.w.mem.pop(seg.start_ea)
+        seg.start_ea += 0x1000; seg.end_ea += 0x1000
+        p = self.reopen(p)
+        moved = [types.SimpleNamespace(call_ea=self.first_sites[0].call_ea + 0x1000)]
+        self.assertEqual(self.printed(moved), "  g();")
+        self.assertEqual(self.printed(moved), "  g();")
+        self.assertEqual(self.scans, [])
+        self.assertEqual(self.loads, [1])
+        self.assertEqual(sum("segments changed since" in m for m in self.log["msgs"]), 1)   # said once, not per print
+        self.unchanged()
+
+    def test_unreadable_marker_is_ignored(self):
+        p = self.reopen(self.scanned())
+        self.w.netnodes[NODE][(72, "scan")] = self.before[-1][NODE][(72, "scan")] = "{not json"
+        self.assertEqual(self.printed(), "  g();")
+        self.assertEqual(self.scans, [])
+        self.assertEqual(self.log["msgs"], ["[CFIScope] %s loaded\n" % self.E.__version__])
+        self.unchanged()
+
+    def test_failing_restore_is_soft(self):
+        # An error, or Cancel in IDAPython's own "Running Python script" box (KeyboardInterrupt), during the restore:
+        # one message in the Output window (an interrupt: one line), the decompiler prints as usual, no second try.
+        for error in (RuntimeError("CFIScope supports 64-bit x86 and AArch64 databases only."),
+                      KeyboardInterrupt("User interrupted")):
+            with self.subTest(error=type(error).__name__):
+                self.setUp()
+                p = self.reopen(self.scanned())
+                def boom():
+                    raise error
+                sys.modules["cfiscope.idalayer"].scan = boom
+                self.assertEqual(self.printed(), "  g();")
+                self.assertEqual(self.printed(), "  g();")
+                said = [m for m in self.log["msgs"] if "could not restore" in m]
+                self.assertEqual(len(said), 1)
+                if isinstance(error, KeyboardInterrupt):    # one plain line, as guarded() prints for an interrupt
+                    self.assertEqual(said[0].count("\n"), 1)
+                    self.assertNotIn("Traceback", said[0])
+                else:                                       # one message, with the traceback to report
+                    self.assertIn("Traceback", said[0])
+                self.assertFalse(any("pseudocode comment failed" in m for m in self.log["msgs"]))
+                self.unchanged()
+
+    def test_remove_clears_marker(self):
+        p = self.scanned()
+        self.assertIn(NODE, self.w.netnodes)
+        self.assertEqual(self.E.RemoveAction().activate(None), 1)
+        self.assertNotIn(NODE, self.w.netnodes)
+        p = self.reopen(p)
+        self.assertEqual(self.printed(), "  g();")
+        self.assertEqual(self.scans, [])
+
+    def test_scan_without_sites_clears_marker(self):
+        p = self.scanned()
+        self.assertIn(NODE, self.w.netnodes)
+        sys.modules["cfiscope.idalayer"].scan = lambda: ([], {"sites": 0})
+        self.addCleanup(setattr, sys.modules["cfiscope.idalayer"], "scan", sys.modules["cfiscope.idalayer"].scan)
+        self.E.STATE["sites"] = None
+        self.assertEqual(self.E.ScanAction().activate(None), 1)
+        self.assertNotIn(NODE, self.w.netnodes)
+
+    def test_rescan_defaults_to_the_last_answer(self):
+        self.scanned(create=1)
+        asked = []
+        sys.modules["ida_kernwin"].ask_yn = lambda default, text: asked.append(default) or 1
+        self.assertEqual(self.E.ScanAction().activate(None), 1)
+        self.assertEqual(asked, [1])            # ASKBTN_YES: the stored answer
+        sys.modules["ida_kernwin"].ask_yn = lambda default, text: asked.append(default) or 0
+        self.assertEqual(self.E.ScanAction().activate(None), 1)
+        self.assertEqual(asked, [1, 1])
+        self.assertEqual(self.E.ScanAction().activate(None), 1)
+        self.assertEqual(asked, [1, 1, 0])      # after No, No is the default
+
+    def test_term_forgets_the_database(self):
+        # The plugin module may outlive the database (term, then init for the next one): nothing of the old scan stays.
+        p = self.scanned()
+        il = sys.modules["cfiscope.idalayer"]
+        self.assertTrue(il.CALLS)
+        p.term()
+        self.assertEqual([self.E.STATE[k] for k in ("sites", "stats", "layout", "pseudo", "hx")], [None] * 5)
+        self.assertEqual((il.CALLS, il.JT["table"], il.JT["entry_of"]), (set(), None, {}))
+
+
 class JumpTableCfi(unittest.TestCase):
     """The plugin actions on the hand-assembled Linux 5.x jump-table CFI fixture."""
 

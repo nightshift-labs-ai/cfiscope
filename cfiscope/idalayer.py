@@ -1,4 +1,6 @@
 """IDA side of CFIScope: read code segments, write comments and cross-references."""
+import hashlib
+import json
 import os
 
 import ida_bytes
@@ -8,6 +10,7 @@ import ida_idaapi
 import ida_kernwin
 import ida_nalt
 import ida_name
+import ida_netnode
 import ida_segment
 import ida_xref
 
@@ -49,6 +52,45 @@ def layout():
     """Segment bounds; if they change (for example after Edit > Segments > Rebase program), cached sites are stale."""
     segments = [ida_segment.getnseg(i) for i in range(ida_segment.get_segm_qty())]
     return tuple((seg.start_ea, seg.end_ea) for seg in segments if seg is not None)
+
+
+def layout_id(bounds=None):
+    """Short digest of layout() (or of the given bounds), kept in the scan marker."""
+    bounds = layout() if bounds is None else bounds
+    return hashlib.sha256(repr(tuple(tuple(b) for b in bounds)).encode()).hexdigest()[:16]
+
+
+# Scan's marker in the database: a netnode named with the "$ " prefix netnode.hpp advises, one hash value holding JSON
+# (well under MAXSPECSIZE). Comments and xrefs are saved with the database; the scan itself is only in memory.
+MARKER_NODE = "$ cfiscope"
+MARKER_KEY = "scan"
+
+
+def save_marker(create_functions):
+    """Record that Scan annotated this database: the layout digest and the answer to "Create functions"."""
+    marker = {"v": 1, "layout": layout_id(), "create_functions": bool(create_functions)}
+    return bool(ida_netnode.netnode(MARKER_NODE, 0, True).hashset_buf(MARKER_KEY, json.dumps(marker)))
+
+
+def load_marker():
+    """The marker save_marker() stored, or None when there is none or it cannot be read."""
+    node = ida_netnode.netnode(MARKER_NODE)
+    if node.index() == ida_netnode.BADNODE:
+        return None
+    try:
+        marker = json.loads(node.hashstr_buf(MARKER_KEY))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(marker, dict) or marker.get("v") != 1 or not isinstance(marker.get("layout"), str):
+        return None
+    return marker
+
+
+def clear_marker():
+    """Delete the marker (Remove annotations, or a Scan that found nothing)."""
+    node = ida_netnode.netnode(MARKER_NODE)
+    if node.index() != ida_netnode.BADNODE:
+        node.kill()
 
 
 def input_elf():
@@ -135,6 +177,12 @@ JT = {"table": None, "entry_of": {}, "runtime_fn": {}}
 # Call addresses of the scanned sites. A data xref from one of them is CFIScope's own (annotate, after No), not a
 # stored pointer: an indirect call takes no function's address.
 CALLS = set()
+
+
+def forget():
+    """Drop what the last scan left in this module (the plugin's term: the module may outlive its database)."""
+    JT.update(table=None, entry_of={}, runtime_fn={})
+    CALLS.clear()
 
 
 def scan():

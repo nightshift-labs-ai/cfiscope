@@ -19,9 +19,10 @@ class World:
         self.data_xrefs = set()      # (from, to, type) added with add_dref; drefs above holds other "address taken" targets
         self.auto_ok = True          # ida_auto.auto_is_ok(): auto-analysis has finished
         self.auto_enabled = True     # ida_ida.inf_is_auto_enabled(): auto-analysis is turned on
+        self.netnodes = {}           # netnode name -> {(tag, key): value} of its hash values (ida_netnode)
 
 def install(world):
-    m = {n: types.ModuleType(n) for n in "ida_auto ida_bytes ida_funcs ida_ida ida_idaapi ida_kernwin ida_nalt ida_name ida_segment ida_xref".split()}
+    m = {n: types.ModuleType(n) for n in "ida_auto ida_bytes ida_funcs ida_ida ida_idaapi ida_kernwin ida_nalt ida_name ida_netnode ida_segment ida_xref".split()}
     m["ida_auto"].auto_is_ok = lambda: world.auto_ok
     m["ida_auto"].auto_wait = lambda: setattr(world, "auto_ok", True) or True
     m["ida_nalt"].get_input_file_path = lambda: world.input_path
@@ -83,6 +84,35 @@ def install(world):
         CHCOL_HEX, CH_RESTORE, NOTHING_CHANGED = 1, 2, 0
         def __init__(self, title, cols, flags=0): pass
     m["ida_kernwin"].Choose = Choose
+    m["ida_netnode"].BADNODE, m["ida_netnode"].MAXSPECSIZE, m["ida_netnode"].htag = 2**64 - 1, 1024, 72
+
+    class netnode:
+        """Named netnodes and their hash values, as ida_netnode.pyi and the SDK's swig/netnode.i give them:
+        netnode(name, namlen=0, do_create=False) (BADNODE when the name does not exist and do_create is false),
+        hashset_buf(idx, str, tag=htag) -> bool (a str only; MAXSPECSIZE bytes at most), hashstr_buf(idx, tag=htag)
+        -> str or None, index(), kill()."""
+        def __init__(self, *args):
+            name = args[0] if args and isinstance(args[0], str) else None
+            if name is not None and name not in world.netnodes and len(args) > 2 and args[2]:
+                world.netnodes[name] = {}
+            self.name = name if name in world.netnodes else None
+
+        def index(self):
+            return 2**64 - 1 if self.name is None else 0xFF000000 + sorted(world.netnodes).index(self.name)
+
+        def hashset_buf(self, idx, py_str, tag=72):
+            if self.name is None or not isinstance(py_str, str) or len(py_str.encode()) > 1024:
+                return False
+            world.netnodes[self.name][(tag, idx)] = py_str
+            return True
+
+        def hashstr_buf(self, idx, tag=72):
+            return None if self.name is None else world.netnodes[self.name].get((tag, idx))
+
+        def kill(self):
+            world.netnodes.pop(self.name, None)
+            self.name = None
+    m["ida_netnode"].netnode = netnode
     m["ida_kernwin"].jumpto = lambda ea: True
     sys.modules.update(m)
     sys.modules.pop("cfiscope.idalayer", None)

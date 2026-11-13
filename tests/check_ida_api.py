@@ -37,7 +37,9 @@ MEMBERS = [("ida_hexrays", "Hexrays_Hooks", m) for m in ("func_printed", "hook",
      ("ida_kernwin", "action_ctx_base_t", "widget"), ("ida_hexrays", "vdui_t", "cfunc"), ("ida_hexrays", "vdui_t", "cpos"),
      ("ida_hexrays", "ctext_position_t", "lnnum"), ("ida_hexrays", "cfunc_t", "entry_ea")] + \
     [("ida_hexrays", "cfuncptr_t", m) for m in ("entry_ea", "get_eamap", "find_item_coords")] + \
-    [("ida_kernwin", "Choose", m) for m in ("Show", "OnGetSize", "OnGetLine")]
+    [("ida_kernwin", "Choose", m) for m in ("Show", "OnGetSize", "OnGetLine")] + \
+    [("ida_netnode", "netnode", m) for m in ("hashset_buf", "hashstr_buf", "index", "kill")] + \
+    [("ida_kernwin", "UI_Hooks", m) for m in ("plugin_loaded", "ready_to_run")]   # a decompiler loaded later
 for mod, cls, name in MEMBERS:
     checked += 1
     body = re.search(r"^class %s\b.*?(?=^class |\Z)" % cls, open(os.path.join(sys.argv[1], mod + ".pyi")).read(), re.M | re.S)

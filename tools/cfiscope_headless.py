@@ -7,7 +7,8 @@ Opens the file as an IDA database and does what CFIScope: Scan kCFI calls does (
 and user xrefs to short candidate lists. --define-functions also creates functions at candidates IDA has not
 recognised; --remove takes CFIScope's comments and xrefs out again. Prints the same statistics and saves the
 database. It calls the plugin's own cfiscope.idalayer functions. Hex-Rays pseudocode comments are a display
-hook of the interactive plugin, so they do not apply here. Not yet run with a real idalib: we have no IDA licence.
+hook of the interactive plugin, so they do not apply here; the scan marker is stored (--remove deletes it), so the
+plugin shows them when the database is opened in IDA. Not yet run with a real idalib: we have no IDA licence.
 Without IDA at all, `python3 -m cfiscope <file>` gives the same candidate lists.
 
 idalib setup (from Hex-Rays): install the idapro wheel shipped in <IDA>/idalib/python and run its
@@ -51,8 +52,10 @@ def main(argv=None):
         print("[CFIScope] %s" % json.dumps(stats))
         if args.remove:
             print("[CFIScope] xrefs removed: %d" % idalayer.remove_annotations(sites))
+            idalayer.clear_marker()
             return 0
         if not sites:
+            idalayer.clear_marker()
             print("[CFIScope] no kCFI checks found, and no aarch64 jump-table CFI either: this binary may not be built with "
                   "-fsanitize=kcfi (Linux 6.1+ CONFIG_CFI_CLANG) or with the jump-table CFI of Linux 5.x (aarch64 only)")
             return 0
@@ -62,6 +65,7 @@ def main(argv=None):
         if args.define_functions:
             print("[CFIScope] functions created: %(functions_created)d; candidates skipped (data, or not in a code "
                   "segment): %(skipped_not_code)d" % idalayer.define_functions(sites))
+        idalayer.save_marker(args.define_functions)   # the plugin restores its scan from it when IDA opens the database
         return 0
     finally:
         idapro.close_database(True)

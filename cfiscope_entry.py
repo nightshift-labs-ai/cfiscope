@@ -4,7 +4,8 @@ Edit > Plugins > CFIScope actions:
   * Scan kCFI calls: comment every check, add xrefs for short candidate lists.
   * Candidates for this call / Callers of this function: jump lists.
   * Remove annotations.
-With the Hex-Rays decompiler, scanned call sites also get a comment in pseudocode (display only).
+With the Hex-Rays decompiler, scanned call sites also get a comment in pseudocode (display only). Scan leaves a
+marker in the database, so after it is reopened the first pseudocode print or lookup rebuilds the scan (read-only).
 """
 import traceback
 import json
@@ -23,8 +24,15 @@ if HERE not in sys.path:
 
 from cfiscope import __version__, idalayer  # noqa: E402
 
-# pseudo: call address -> site, set by Scan and cleared by Remove annotations; hx: the decompiler hook.
-STATE = {"sites": None, "stats": None, "layout": None, "pseudo": None, "hx": None, "hx_error": False}
+# pseudo: call address -> site, set by Scan and cleared by Remove annotations; hx: the decompiler hook;
+# restored: the database's scan marker was looked at (restore_scan), or Remove annotations made it moot.
+STATE = {"sites": None, "stats": None, "layout": None, "pseudo": None, "hx": None, "hx_error": False, "restored": False}
+
+
+def reset_state():
+    """Forget the last database's scan (plugin init and term): this module may outlive the database it scanned."""
+    STATE.update(sites=None, stats=None, layout=None, pseudo=None, hx_error=False, restored=False)
+    idalayer.forget()
 
 
 def ensure_scan():
@@ -58,10 +66,77 @@ def scan_or_warn():
     return sites
 
 
+def analysis_running():
+    """Is IDA's auto-analysis still working? With analysis turned off its queues never empty: not running."""
+    return not ida_auto.auto_is_ok() and ida_ida.inf_is_auto_enabled()
+
+
+def restore_scan(flush=True):
+    """After a database Scan annotated is opened again: rebuild the scan from the code, so the pseudocode comments and
+    the lookups work without pressing Scan. Read-only: it asks nothing and writes nothing to the database (no
+    comments, xrefs or functions). Looked at once per database; while auto-analysis runs it waits for a later call.
+    Never raises. flush: hook the decompiler if it was not there at init (as Scan does) and drop its cached
+    decompilations; not from inside a decompiler callback. True if restored."""
+    if STATE["restored"] or STATE["pseudo"] is not None:
+        return False
+    try:
+        if analysis_running():
+            return False
+        STATE["restored"] = True
+        marker = idalayer.load_marker()
+        if marker is None:
+            return False
+        if marker["layout"] != idalayer.layout_id():
+            report("segments changed since the scan saved in this database (rebase?): run Scan kCFI calls again to "
+                   "show pseudocode comments")
+            return False
+        sites = ensure_scan()
+        if not sites:
+            return False
+        STATE["pseudo"] = {s.call_ea or s.check_ea: s for s in sites}
+        hooked = hook_pseudocode() if flush else True    # inside func_printed the hook is there
+        report("restored the scan saved in this database (%d checks, read-only)%s"
+               % (len(sites), ": pseudocode comments are on" if hooked else ""))
+    except (Exception, KeyboardInterrupt) as e:  # noqa: BLE001  a convenience: never break the decompiler or a lookup
+        STATE["restored"] = True
+        try:
+            if isinstance(e, KeyboardInterrupt):    # Cancel in IDAPython's own box: one line, as guarded() prints
+                report("could not restore the scan saved in this database (interrupted); run Scan kCFI calls again")
+            else:
+                report("could not restore the scan saved in this database; run Scan kCFI calls again:\n%s"
+                       % traceback.format_exc())
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+    if flush and hooked:
+        flush_pseudocode()
+    return True
+
+
+def last_answer():
+    """Default for "Create functions?": the answer the database's marker records, else No."""
+    try:
+        marker = idalayer.load_marker()
+    except Exception:  # noqa: BLE001
+        marker = None
+    return ida_kernwin.ASKBTN_YES if marker and marker.get("create_functions") is True else ida_kernwin.ASKBTN_NO
+
+
+def save_marker(create):
+    """Store (or, with create None, delete) the scan marker; a failure costs only the restore after reopening."""
+    try:
+        if create is None:
+            idalayer.clear_marker()
+        elif not idalayer.save_marker(create):
+            report("could not store the scan marker: after reopening the database, run Scan again for pseudocode comments")
+    except Exception:  # noqa: BLE001
+        report("could not update the scan marker:\n%s" % traceback.format_exc())
+
+
 def analysis_finished():
     """True when IDA's auto-analysis is done, or the user chose to scan anyway; False to stop (Cancel).
     A scan during analysis sees unexplored bytes as code and misses the data xrefs that rank candidates."""
-    if ida_auto.auto_is_ok() or not ida_ida.inf_is_auto_enabled():   # analysis turned off: its queues never empty
+    if not analysis_running():
         return True
     answer = ida_kernwin.ask_yn(ida_kernwin.ASKBTN_YES, "IDA is still analysing this database.\n"
                                 "Wait for auto-analysis to finish before scanning? (No: scan now)")
@@ -183,6 +258,7 @@ def hook_pseudocode():
         class PseudocodeHooks(ida_hexrays.Hexrays_Hooks):
             def func_printed(self, cfunc):
                 try:
+                    restore_scan(flush=False)      # first print after the database is reopened
                     add_pseudocode_comments(cfunc)
                 except Exception:  # noqa: BLE001  a hook must never break the decompiler
                     try:
@@ -233,7 +309,7 @@ class ScanAction(ida_kernwin.action_handler_t):
         # Asked before any xref is added: a call xref makes IDA create a function at its target (xref.hpp, fl_CN),
         # so after "No" only a candidate at the start of a function IDA has gets one; a candidate inside a function
         # gets a data xref (dr_O) instead, and one with no function none.
-        answer = ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO, "Create functions at candidates IDA has not recognised?") \
+        answer = ida_kernwin.ask_yn(last_answer(), "Create functions at candidates IDA has not recognised?") \
             if sites else ida_kernwin.ASKBTN_NO
         if answer == ida_kernwin.ASKBTN_CANCEL:
             return 0
@@ -253,8 +329,10 @@ class ScanAction(ida_kernwin.action_handler_t):
                                 "built with -fsanitize=kcfi (Linux 6.1+ CONFIG_CFI_CLANG) or with the older "
                                 "jump-table CFI of Linux 5.x as in Android GKI 5.15 (aarch64 only); GCC kernels "
                                 "are not supported.")
+            save_marker(None)
             return 1
         STATE["pseudo"] = {s.call_ea or s.check_ea: s for s in sites}
+        save_marker(create)
         if hook_pseudocode():
             flush_pseudocode()
             report("pseudocode comments on: functions decompiled from now on show the candidates at their call sites")
@@ -273,6 +351,7 @@ class TargetsAction(ida_kernwin.action_handler_t):
         sites = scan_or_warn()
         if sites is None:
             return 0
+        restore_scan()          # first lookup after the database is reopened: reuses this scan
         vu = pseudocode_view(ctx)
         if vu is None:
             site = idalayer.site_at(sites, ida_kernwin.get_screen_ea())
@@ -307,6 +386,7 @@ class CallersAction(ida_kernwin.action_handler_t):
         sites = scan_or_warn()
         if sites is None:
             return 0
+        restore_scan()          # first lookup after the database is reopened: reuses this scan
         vu = pseudocode_view(ctx)
         ea = vu.cfunc.entry_ea if vu is not None else ida_kernwin.get_screen_ea()   # pseudocode: the decompiled function
         rows = idalayer.callers_rows(sites, ea)
@@ -328,6 +408,8 @@ class RemoveAction(ida_kernwin.action_handler_t):
             return 0
         report("xrefs removed: %d" % idalayer.remove_annotations(sites))
         STATE["pseudo"] = None
+        STATE["restored"] = True
+        save_marker(None)
         flush_pseudocode()
         return 1
 
@@ -346,7 +428,21 @@ ACTIONS = [
 
 
 class PopupHooks(ida_kernwin.UI_Hooks):
-    """Adds the three lookups to the right-click menu of disassembly and pseudocode views."""
+    """Adds the three lookups to the right-click menu of disassembly and pseudocode views, and hooks the decompiler
+    if it loads after this plugin (so the first decompile after reopening restores the scan)."""
+
+    def plugin_loaded(self, plugin_info):
+        self.hook_decompiler()
+
+    def ready_to_run(self):
+        self.hook_decompiler()
+
+    @staticmethod
+    def hook_decompiler():
+        try:
+            hook_pseudocode()       # once: does nothing when hooked, or when there is no decompiler
+        except Exception:  # noqa: BLE001  a UI event must never break because of this plugin
+            pass
 
     def finish_populating_widget_popup(self, widget, popup_handle, ctx=None):
         try:
@@ -365,6 +461,7 @@ class CFIScopePlugin(ida_idaapi.plugin_t):
     wanted_hotkey = ""
 
     def init(self):
+        reset_state()
         for name, label, handler, key in ACTIONS:
             ida_kernwin.register_action(ida_kernwin.action_desc_t(name, label, handler(), key))
             ida_kernwin.attach_action_to_menu("Edit/Plugins/", name, ida_kernwin.SETMENU_APP)
@@ -384,6 +481,7 @@ class CFIScopePlugin(ida_idaapi.plugin_t):
         unhook_pseudocode()
         for name, _, _, _ in ACTIONS:
             ida_kernwin.unregister_action(name)
+        reset_state()
 
 
 def PLUGIN_ENTRY():
