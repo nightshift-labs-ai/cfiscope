@@ -14,7 +14,7 @@ Which functions can the indirect call in `sock_sendmsg` reach?
 
 ```
 $ python3 -m cfiscope gki.elf --sites --max-list 20 | grep sock_sendmsg+
-0xffffffc008cc55ac  sock_sendmsg+0xb4  call hash 0x1ebda935  14 candidate(s): tun_sendmsg, sock_no_sendmsg,
+0xffffffc008cc55ac  sock_sendmsg+0xb4  call hash 0x1ebda935 (int (socket*, msghdr*, unsigned long))  14 candidate(s): tun_sendmsg, sock_no_sendmsg,
     netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg,
     packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
 ```
@@ -24,14 +24,14 @@ Which indirect calls can reach `tcp_sendmsg`?
 ```
 $ python3 -m cfiscope gki.elf --callers tcp_sendmsg --max-list 3
 3 call site(s) can reach tcp_sendmsg
-0xffffffc008cc5778  kernel_sendmsg_locked+0x64  call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
-0xffffffc008e433c8  inet_sendmsg+0x58           call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
-0xffffffc008ead820  inet6_sendmsg+0x58          call hash 0x87bcba6f  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008cc5778  kernel_sendmsg_locked+0x64  call hash 0x87bcba6f (int (sock*, msghdr*, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008e433c8  inet_sendmsg+0x58           call hash 0x87bcba6f (int (sock*, msghdr*, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008ead820  inet6_sendmsg+0x58          call hash 0x87bcba6f (int (sock*, msghdr*, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
 ```
 
 (Long lines wrapped by hand; spacing condensed.)
 
-This output predates the unreleased naming of hashes by C type. With it, the kernel's own BTF names both hashes, and these lines show the type after the hash: `hash 0x1ebda935 (int (socket*, msghdr*, unsigned long))` and `hash 0x87bcba6f (int (sock*, msghdr*, unsigned long))` (same call addresses and candidate counts; checked with `python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000 --sites` on the raw `Image`, without symbols).
+The type after each hash comes from the kernel's own BTF (unreleased, see [Features](#features)); this is the output of the current code on `gki.elf`, re-run 2026-11-13.
 
 ## What the plugin writes into IDA (fake IDA, not a screenshot)
 
