@@ -69,6 +69,7 @@ Newer aarch64 GKI kernels, measured the same way: [gki-certified-boot-android15-
 | Sites with 1 to 8 candidates / 1 to 16 | 7,435 / 9,681 | 8,404 / 10,684 |
 | Largest candidate list | 1,536 | 1,580 |
 | Candidate start precision (distinct candidates at a kallsyms function symbol) | 33,743 of 33,960 (99.36%) | 35,248 of 35,480 (99.35%) |
+| kCFI hashes named by C type from the kernel's own BTF (unreleased; `python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc080000000`) | 4,466 of 4,466 (100%), all 14,694 sites | 4,621 of 4,626 (99.8%), 15,964 of 16,164 sites, all as integer-normalized hashes (Rust is enabled); the 5 left, 200 sites, are all inside Rust functions (`core::fmt`), whose types BTF does not describe |
 
 Left out as outside kernel code: 7 candidates on 6.6 and 1 on 6.12, all in `.rodata`. The one on 6.12 is not in a string: the word `cfi_bpf_hash` holds the type hash `0xf6292f28` on purpose, so the word after it, `cfi_bpf_subprog_hash`, looked like a function of that type (both in the `ro_after_init` data, which lies inside `__start_rodata`..`__end_rodata`). It was in the lists of the 187 calls of that type, each 7 long; without the bounds (`Image` alone) the 6.12 median is 7 and its precision row 35,248 of 35,481. Of the candidates not at a kallsyms function (217 on 6.6, 232 on 6.12), 181 and 189 are `-ENOSYS` stubs as on 6.1. On 6.6 and 6.12 the idmap code (`__idmap_text_start`..`__idmap_text_end`) lies between `_etext` and `_sinittext` and holds 2 candidates, which is why the code areas named there are kept.
 
