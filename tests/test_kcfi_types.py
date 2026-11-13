@@ -293,6 +293,25 @@ class QuirksBTF(unittest.TestCase):
         self.assertEqual(tn.lookup(hashes["n_noproto_int"])[0][2], [])    # K&R guess: no example names
 
 
+class ArraysBTF(unittest.TestCase):
+    """tests/fixtures/kcfi_arrays.c (aarch64 kCFI + bpf BTF): BTF writes 0 elements for both 'u32 (*)[]' and
+    'u32 (*)[0]'; Clang mangles them A_ and A0_ (review s176 F1/M1: the 2 unnamed GKI 6.1 vendor-hook hashes)."""
+
+    def test_every_function_hash_is_named(self):
+        d, S, text = sections(os.path.join(FIX, "kcfi_arrays_a64.o"))
+        hashes = {name: struct.unpack_from("<I", text[sh], val - 4)[0]
+                  for name, (sh, val) in symbols(d, S).items() if sh in text and val >= 4}
+        self.assertEqual(sorted(hashes), ["probe_sized", "probe_unknown", "probe_zero"])
+        tn = K.load_type_names(read("kcfi_arrays_btf.o"))
+        want = {"probe_unknown": ("_ZTSFvPvPjPA_jE", "void (void *, unsigned int *, unsigned int (*)[])"),
+                "probe_zero": ("_ZTSFvPvPjPA0_jE", "void (void *, unsigned int *, unsigned int (*)[0])"),
+                "probe_sized": ("_ZTSFvPvPjPA7_jE", "void (void *, unsigned int *, unsigned int (*)[7])")}
+        for name, (mangled, label) in sorted(want.items()):
+            with self.subTest(name):
+                got = tn.lookup(hashes[name])
+                self.assertEqual([(m, r) for m, r, _e in got], [(mangled, label)], "%s 0x%08x" % (name, hashes[name]))
+
+
 class Normalized(unittest.TestCase):
     """-fsanitize-cfi-icall-experimental-normalize-integers (kernels with Rust): u3i32-style integers, '.normalized'."""
 

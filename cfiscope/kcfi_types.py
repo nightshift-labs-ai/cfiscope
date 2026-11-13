@@ -335,7 +335,9 @@ class BTF:
                 return ("n", typedef_name, "")
             raise Unmangleable("anonymous struct, union or enum")
         if kind == K_ARRAY:
-            return ("a", extra[2], self.canon(extra[0], depth + 1))
+            # review s176 F1/M1: BTF writes 0 elements for both "T []" and GNU "T [0]"; read it as "[]" (Clang: A_),
+            # the commoner one in prototypes. TypeNames also enters the "[0]" form (A0_), see zero_bound().
+            return ("a", extra[2] or None, self.canon(extra[0], depth + 1))
         if kind == K_FUNC:
             return self.canon(st, depth + 1)
         if kind == K_FUNC_PROTO:
@@ -437,6 +439,24 @@ def find_btf(data):
     return data[best[0]:best[0] + best[1]] if best else None
 
 
+def zero_bound(t):
+    """t with every unknown-bound array ("a", None, ...) read as a GNU zero-length one ("a", 0, ...): BTF writes both
+    the same way (review s176 F1/M1)."""
+    if not isinstance(t, tuple) or not t:
+        return t
+    k = t[0]
+    if k == "a":
+        return ("a", 0 if t[1] is None else t[1], zero_bound(t[2]))
+    if k == "p":
+        return ("p", zero_bound(t[1]))
+    if k == "q":
+        return ("q", t[1], zero_bound(t[2]))
+    if k == "f":
+        params = t[2] if t[2] is None else type(t[2])(zero_bound(p) for p in t[2])
+        return ("f", zero_bound(t[1]), params, t[3])
+    return t
+
+
 class TypeNames:
     """hash -> [(mangled, readable type, [example names])] from every FUNC_PROTO of a BTF blob.
 
@@ -478,6 +498,10 @@ class TypeNames:
                 # (FUNC_PROTO, vlen 0) but different kCFI hashes (_ZTSFlE, _ZTSFlvE).  The K&R type is
                 # entered too, without example names, since BTF cannot say which functions are K&R.
                 variants.append((("f", t[1], None, False), False))
+            for v, with_names in list(variants):
+                z = zero_bound(v)
+                if z != v:                     # "T (*)[]" in BTF may also have been a GNU "T (*)[0]" (A0_)
+                    variants.append((z, with_names))
             for v, with_names in variants:
                 plain = mangle(v)
                 if plain not in self.readable:
