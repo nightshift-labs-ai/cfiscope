@@ -420,10 +420,11 @@ class Pseudocode(unittest.TestCase):
         self.assertEqual([picker.OnGetLine(n) for n in range(picker.OnGetSize())],
                          [["0x%x" % s.call_ea, il.describe(s)] for s in (b, c)])
         self.assertEqual((title, modal), (il.targets_title(c), False))
-        # Esc in the picker (NO_SELECTION): no list.
+        # Esc in the picker (NO_SELECTION): no list and no warning (not even the "unexpected error" one).
         self.log["pick"], n = -1, len(shown)
         self.assertEqual(self.lookup(self.E.TargetsAction, 3, cf), 0)
         self.assertEqual(len(shown), n + 1)
+        self.assertFalse(any(m.startswith("WARN") for m in self.log["msgs"]))
         # A line with no scanned call: a warning, no list from a neighbouring check.
         n = len(shown)
         self.assertEqual(self.lookup(self.E.TargetsAction, 4, cf, screen_ea=a.call_ea), 0)
