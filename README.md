@@ -130,8 +130,8 @@ A real kernel:
 ## Features
 
 - **Scan kCFI calls** (`Alt-Shift-K`): comments every kCFI call site with the type hash and candidate count. Adds cross-references when the list is short (at most 16) and offers to create functions at candidates IDA has not recognised. It asks first; Cancel writes nothing.
-- **Candidates for this call** (`Alt-Shift-T`): a jump list of every function the call under the cursor can reach.
-- **Callers of this function** (`Alt-Shift-X`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give.
+- **Candidates for this call** (`Alt-Shift-T`): a jump list of every function the call under the cursor can reach. In pseudocode it takes the call on the cursor's line and asks which one if the line has several.
+- **Callers of this function** (`Alt-Shift-X`): every indirect call site that can reach this function (in pseudocode, the decompiled function), an answer the normal xrefs window cannot give.
 - **Remove annotations**: removes the comments and cross-references the scan added. Functions created when you answered Yes stay.
 - **Pseudocode comments** (with the Hex-Rays decompiler): the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2` (the type when the file has BTF).
 - **kCFI hashes named by C function type** (unreleased): when the kernel carries BTF (`CONFIG_DEBUG_INFO_BTF`), or with `--btf PATH`, each hash is shown as its type, e.g. `hash 0x4f4ccb9d (int (struct file *, int))` (CFIScope mangles every BTF prototype the way Clang does and hashes it: `cfiscope/kcfi_types.py`). Named: all 4,184 hashes on GKI 6.1, all 4,466 on GKI 6.6, 4,621 of 4,626 on the Rust-enabled GKI 6.12 (the 5 left are inside Rust code); details in [VERIFICATION](docs/VERIFICATION.md). The IDA layer does the same from the input file's BTF, checked only against fake IDA modules.

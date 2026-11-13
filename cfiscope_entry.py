@@ -100,25 +100,61 @@ def guarded(activate):
     return wrapper
 
 
-def pseudocode_lines(cfunc):
-    """{line index: [comment, ...]} for the call sites Scan annotated in this function. Never scans."""
-    by_ea = STATE["pseudo"]
-    if not by_ea or STATE["layout"] != idalayer.layout():
-        return {}
+def sites_by_line(cfunc, by_ea):
+    """{pseudocode line index: [site, ...]}: the lines that print the statements of each site's call (by_ea: call
+    address, or the check's when no call was linked, -> site)."""
     eamap = cfunc.get_eamap()
     lines = {}
     for ea in eamap:
         site = by_ea.get(ea)
         if site is None:
             continue
-        text = idalayer.pseudocode_text(site)
         for insn in eamap[ea]:
             coords = cfunc.find_item_coords(insn)  # (x, y), the order of the stub's two-argument form
             if isinstance(coords, (tuple, list)) and len(coords) == 2 and isinstance(coords[1], int):
-                texts = lines.setdefault(coords[1], [])
-                if text not in texts:
-                    texts.append(text)
+                found = lines.setdefault(coords[1], [])
+                if all(s is not site for s in found):
+                    found.append(site)
     return lines
+
+
+def pseudocode_lines(cfunc):
+    """{line index: [comment, ...]} for the call sites Scan annotated in this function. Never scans."""
+    by_ea = STATE["pseudo"]
+    if not by_ea or STATE["layout"] != idalayer.layout():
+        return {}
+    lines = {}
+    for y, found in sites_by_line(cfunc, by_ea).items():
+        texts = lines[y] = []
+        for site in found:
+            text = idalayer.pseudocode_text(site)
+            if text not in texts:
+                texts.append(text)
+    return lines
+
+
+def pseudocode_view(ctx):
+    """The decompiler's view (vdui_t) when the action runs in a pseudocode window, else None: then the lookups use
+    get_screen_ea() as in disassembly (also without the decompiler)."""
+    widget = getattr(ctx, "widget", None)
+    if widget is None or ida_kernwin.get_widget_type(widget) != ida_kernwin.BWN_PSEUDOCODE:
+        return None
+    try:
+        import ida_hexrays
+    except ImportError:
+        return None
+    if not ida_hexrays.init_hexrays_plugin():
+        return None
+    vu = ida_hexrays.get_widget_vdui(widget)
+    return vu if vu is not None and vu.cfunc is not None else None
+
+
+def sites_on_line(vu, sites):
+    """The scanned sites whose call the decompiler printed on the cursor's line, by address: the line that carries
+    their pseudocode comment."""
+    by_ea = {s.call_ea or s.check_ea: s for s in sites}
+    found = sites_by_line(vu.cfunc, by_ea).get(vu.cpos.lnnum, [])
+    return sorted(found, key=lambda s: s.call_ea or s.check_ea)
 
 
 def add_pseudocode_comments(cfunc):
@@ -237,10 +273,22 @@ class TargetsAction(ida_kernwin.action_handler_t):
         sites = scan_or_warn()
         if sites is None:
             return 0
-        site = idalayer.site_at(sites, ida_kernwin.get_screen_ea())
-        if site is None:
-            ida_kernwin.warning("No %s check at or near the cursor." % idalayer.scheme_name(sites))
-            return 0
+        vu = pseudocode_view(ctx)
+        if vu is None:
+            site = idalayer.site_at(sites, ida_kernwin.get_screen_ea())
+            if site is None:
+                ida_kernwin.warning("No %s check at or near the cursor." % idalayer.scheme_name(sites))
+                return 0
+        else:
+            # Pseudocode: the call(s) on the cursor's line, never a neighbouring check's.
+            found = sites_on_line(vu, sites)
+            if not found:
+                ida_kernwin.warning("No %s call on this pseudocode line. Put the cursor on a line with a CFIScope "
+                                    "comment." % idalayer.scheme_name(sites))
+                return 0
+            site = found[0] if len(found) == 1 else idalayer.pick_site(found)
+            if site is None:
+                return 0
         idalayer.Chooser(idalayer.targets_title(site), idalayer.targets_rows(site)).Show()
         return 1
 
@@ -254,7 +302,8 @@ class CallersAction(ida_kernwin.action_handler_t):
         sites = scan_or_warn()
         if sites is None:
             return 0
-        ea = ida_kernwin.get_screen_ea()
+        vu = pseudocode_view(ctx)
+        ea = vu.cfunc.entry_ea if vu is not None else ida_kernwin.get_screen_ea()   # pseudocode: the decompiled function
         rows = idalayer.callers_rows(sites, ea)
         if not rows:
             ida_kernwin.warning("No %s call site can reach this function." % idalayer.scheme_name(sites))

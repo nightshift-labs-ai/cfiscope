@@ -418,6 +418,26 @@ class Chooser(ida_kernwin.Choose):
         return (ida_kernwin.Choose.NOTHING_CHANGED, )
 
 
+class SitePicker(ida_kernwin.Choose):
+    """Modal list of the calls on one pseudocode line; Show(True) returns the picked row, or a negative value."""
+    def __init__(self, title, sites):
+        super().__init__(title, [["Address", 18 | ida_kernwin.Choose.CHCOL_HEX], ["Call", 80]])
+        self.sites = sites
+
+    def OnGetSize(self):
+        return len(self.sites)
+
+    def OnGetLine(self, n):
+        site = self.sites[n]
+        return ["0x%x" % (site.call_ea or site.check_ea), describe(site)]
+
+
+def pick_site(sites):
+    """Ask which of several calls on a pseudocode line; None on Esc."""
+    n = SitePicker("CFIScope: %d calls on this pseudocode line" % len(sites), sites).Show(True)
+    return sites[n] if isinstance(n, int) and 0 <= n < len(sites) else None
+
+
 def site_at(sites, ea):
     """The site whose call or check is at ea; else the narrowest check-to-call span holding ea; else the nearest
     check in the same function. (A jump-table CFI call can sit before its check, or far from it.)"""

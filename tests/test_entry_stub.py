@@ -21,7 +21,7 @@ def load_entry(name="x86_64-kernel", proc="metapc", ext=".o"):
     # Choose(title, cols, flags=0); Show(modal=False): a modal chooser returns the picked row or NO_SELECTION (-1).
     kw.Choose.__init__ = lambda chooser, title, cols, flags=0: setattr(chooser, "title", title)
     def show(chooser, modal=False):
-        log["shown"].append((chooser.title, modal))
+        log["shown"].append((chooser.title, modal, chooser))
         return log["pick"] if modal else 0
     kw.Choose.Show = show
     kw.get_screen_ea = lambda: 2**64 - 1
@@ -394,6 +394,70 @@ class Pseudocode(unittest.TestCase):
                 self.assertGreater(len(self.w.cmts), 0)              # disassembly comments as before
                 self.assertFalse(any("WARN" in m for m in self.log["msgs"]))
                 p.term()
+
+    def lookup(self, action, lnnum, cf, screen_ea=None, widget=46):
+        """Run a lookup action from a view (46 pseudocode, 27 disassembly) whose cursor is on pseudocode line lnnum."""
+        if screen_ea is not None:
+            sys.modules["ida_kernwin"].get_screen_ea = lambda: screen_ea
+        self.log["vdui"] = types.SimpleNamespace(cfunc=cf, cpos=types.SimpleNamespace(lnnum=lnnum))
+        return action().activate(types.SimpleNamespace(widget=widget))
+
+    def test_targets_from_the_pseudocode_line(self):
+        # The call(s) printed on the cursor's line decide, not get_screen_ea() and its nearest-check guess.
+        _, sites = self.scanned_plugin()
+        il, shown = self.E.idalayer, self.log["shown"]
+        a, b, c = sorted(sites, key=lambda s: s.call_ea)[:3]
+        lines = ["int f(void)", "{", "  x = fp(1);", "  y = gp(2) + hp(3);", "  return 0;", "}"]
+        cf = FakeCfunc(lines, {a.call_ea: ["a"], c.call_ea: ["c"], b.call_ea: ["b"], 0x1234: ["o"]},
+                       {"a": (6, 2), "b": (6, 3), "c": (15, 3), "o": (2, 4)}, entry_ea=0x5000)
+        self.assertEqual(self.lookup(self.E.TargetsAction, 2, cf, screen_ea=b.call_ea), 1)
+        self.assertEqual(shown[-1][:2], (il.targets_title(a), False))
+        # Two calls on line 3: a modal picker lists them by address; the picked one's list opens.
+        self.log["pick"] = 1
+        self.assertEqual(self.lookup(self.E.TargetsAction, 3, cf, screen_ea=a.call_ea), 1)
+        (ptitle, pmodal, picker), (title, modal, _) = shown[-2], shown[-1]
+        self.assertEqual((ptitle, pmodal), ("CFIScope: 2 calls on this pseudocode line", True))
+        self.assertEqual([picker.OnGetLine(n) for n in range(picker.OnGetSize())],
+                         [["0x%x" % s.call_ea, il.describe(s)] for s in (b, c)])
+        self.assertEqual((title, modal), (il.targets_title(c), False))
+        # Esc in the picker (NO_SELECTION): no list.
+        self.log["pick"], n = -1, len(shown)
+        self.assertEqual(self.lookup(self.E.TargetsAction, 3, cf), 0)
+        self.assertEqual(len(shown), n + 1)
+        # A line with no scanned call: a warning, no list from a neighbouring check.
+        n = len(shown)
+        self.assertEqual(self.lookup(self.E.TargetsAction, 4, cf, screen_ea=a.call_ea), 0)
+        self.assertEqual(len(shown), n)
+        self.assertIn("WARN No kCFI call on this pseudocode line. Put the cursor on a line with a CFIScope comment.",
+                      self.log["msgs"])
+
+    def test_callers_from_pseudocode_use_the_decompiled_function(self):
+        _, sites = self.scanned_plugin()
+        il, shown = self.E.idalayer, self.log["shown"]
+        target = sorted(sites[0].targets)[0]
+        cf = FakeCfunc(["void impl(void)", "{", "  g();", "}"], {}, {}, entry_ea=target)
+        self.assertEqual(self.lookup(self.E.CallersAction, 2, cf, screen_ea=target + 8), 1)
+        rows = il.callers_rows(sites, target)
+        self.assertTrue(rows)
+        self.assertEqual(shown[-1][:2], (il.callers_title(sites, target, rows), False))
+
+    def test_lookups_fall_back_to_the_disassembly_path(self):
+        # A disassembly view, a pseudocode view without a vdui_t, or no decompiler: get_screen_ea() as before.
+        _, sites = self.scanned_plugin()
+        il, shown = self.E.idalayer, self.log["shown"]
+        a, b = sorted(sites, key=lambda s: s.call_ea)[:2]
+        cf = FakeCfunc(["void f(void)", "{", "  fp(1);", "}"], {b.call_ea: ["b"]}, {"b": (2, 2)}, entry_ea=0x5000)
+        self.assertEqual(self.lookup(self.E.TargetsAction, 2, cf, screen_ea=a.call_ea, widget=27), 1)
+        self.assertEqual(shown[-1][0], il.targets_title(a))
+        self.log["vdui"] = None
+        self.assertEqual(self.E.TargetsAction().activate(types.SimpleNamespace(widget=46)), 1)
+        self.assertEqual(shown[-1][0], il.targets_title(a))
+        for gone in (lambda: fake_hexrays(self.log, available=False), lambda: sys.modules.__setitem__("ida_hexrays", None)):
+            gone()
+            self.log["vdui"] = types.SimpleNamespace(cfunc=cf, cpos=types.SimpleNamespace(lnnum=2))
+            self.assertEqual(self.E.TargetsAction().activate(types.SimpleNamespace(widget=46)), 1)
+            self.assertEqual(shown[-1][0], il.targets_title(a))
+        self.assertFalse(any(m.startswith("WARN") for m in self.log["msgs"]))
 
     def test_exception_in_hook_is_swallowed(self):
         self.scanned_plugin()
