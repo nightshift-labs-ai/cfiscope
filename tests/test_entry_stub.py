@@ -426,11 +426,35 @@ class Pseudocode(unittest.TestCase):
         self.assertEqual(len(shown), n + 1)
         self.assertFalse(any(m.startswith("WARN") for m in self.log["msgs"]))
         # A line with no scanned call: a warning, no list from a neighbouring check.
+        near = a.check_ea + 1
+        self.assertIs(il.site_at(sites, near), a)                        # what the old guess would have used
         n = len(shown)
-        self.assertEqual(self.lookup(self.E.TargetsAction, 4, cf, screen_ea=a.call_ea), 0)
+        self.assertEqual(self.lookup(self.E.TargetsAction, 4, cf, screen_ea=near), 0)
         self.assertEqual(len(shown), n)
         self.assertIn("WARN No kCFI call on this pseudocode line. Put the cursor on the line of the indirect call "
                       "(after Scan it has a CFIScope comment).", self.log["msgs"])
+
+    def test_targets_by_exact_address_when_the_line_has_no_call(self):
+        # A call Hex-Rays splits over several lines, the cursor on its argument line: no scanned call on that line,
+        # so a call or check exactly at get_screen_ea() is used; a neighbouring one never is.
+        _, sites = self.scanned_plugin()
+        il, shown = self.E.idalayer, self.log["shown"]
+        a, b = sorted(sites, key=lambda s: s.call_ea)[:2]
+        lines = ["int f(void)", "{", "  x = fp(", "         1);", "  return 0;", "}"]
+        cf = FakeCfunc(lines, {a.call_ea: ["a"], 0x1234: ["o"]}, {"a": (6, 2), "o": (9, 3)}, entry_ea=0x5000)
+        self.assertEqual(self.lookup(self.E.TargetsAction, 3, cf, screen_ea=a.call_ea), 1)
+        self.assertEqual(shown[-1][:2], (il.targets_title(a), False))
+        self.assertEqual(self.lookup(self.E.TargetsAction, 4, cf, screen_ea=b.check_ea), 1)
+        self.assertEqual(shown[-1][:2], (il.targets_title(b), False))
+        self.assertFalse(any(m.startswith("WARN") for m in self.log["msgs"]))
+        self.assertEqual([t for t, modal, _ in shown if modal], [])      # one site each: no picker
+        near = a.check_ea + 1
+        self.assertIs(il.site_at(sites, near), a)
+        self.assertNotIn(near, {e for s in sites for e in (s.call_ea, s.check_ea)})
+        n = len(shown)
+        self.assertEqual(self.lookup(self.E.TargetsAction, 3, cf, screen_ea=near), 0)
+        self.assertEqual(len(shown), n)
+        self.assertEqual(sum(m.startswith("WARN No kCFI call on this pseudocode line") for m in self.log["msgs"]), 1)
 
     def test_callers_from_pseudocode_use_the_decompiled_function(self):
         _, sites = self.scanned_plugin()

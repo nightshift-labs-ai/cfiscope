@@ -283,6 +283,11 @@ class TargetsAction(ida_kernwin.action_handler_t):
             # Pseudocode: the call(s) on the cursor's line, never a neighbouring check's.
             found = sites_on_line(vu, sites)
             if not found:
+                # E.g. a call Hex-Rays splits over several lines, the cursor on an argument's line: a call or check
+                # exactly at the cursor's address, still no guess.
+                ea = ida_kernwin.get_screen_ea()
+                found = [s for s in sites if ea in (s.call_ea, s.check_ea)]
+            if not found:
                 ida_kernwin.warning("No %s call on this pseudocode line. Put the cursor on the line of the indirect "
                                     "call (after Scan it has a CFIScope comment)." % idalayer.scheme_name(sites))
                 return 0
