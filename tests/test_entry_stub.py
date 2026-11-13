@@ -434,6 +434,17 @@ class Pseudocode(unittest.TestCase):
         self.assertIn("WARN No kCFI call on this pseudocode line. Put the cursor on the line of the indirect call "
                       "(after Scan it has a CFIScope comment).", self.log["msgs"])
 
+    def test_one_call_on_two_statements_of_a_line_needs_no_picker(self):
+        # The decompiler can map one call address to two statements printed on the same line: still one call.
+        _, sites = self.scanned_plugin()
+        il, shown = self.E.idalayer, self.log["shown"]
+        a = sorted(sites, key=lambda s: s.call_ea)[0]
+        cf = FakeCfunc(["int f(void)", "{", "  return fp(1) + 1;", "}"], {a.call_ea: ["call", "ret"]},
+                       {"call": (9, 2), "ret": (2, 2)}, entry_ea=0x5000)
+        self.log["pick"] = 0
+        self.assertEqual(self.lookup(self.E.TargetsAction, 2, cf), 1)
+        self.assertEqual([(title, modal) for title, modal, _ in shown], [(il.targets_title(a), False)])
+
     def test_targets_by_exact_address_when_the_line_has_no_call(self):
         # A call Hex-Rays splits over several lines, the cursor on its argument line: no scanned call on that line,
         # so a call or check exactly at get_screen_ea() is used; a neighbouring one never is.
