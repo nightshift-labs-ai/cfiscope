@@ -1,0 +1,63 @@
+# How CFIScope works
+
+The short version is in the [README](../README.md). This page has the full description of each action, what a candidate is, the supported targets, the fixture objects, the command line and the headless runner. Measurements are in [VERIFICATION.md](VERIFICATION.md); the Linux 5.x jump-table CFI is in [JTCFI.md](JTCFI.md).
+
+## Why it matters
+
+Kernel attack surface runs through function pointers: `file_operations`, `net_device_ops`, tracepoints, callbacks. In a stripped binary every one of those calls is a dead end for static analysis, and tracing them by hand or with a debugger is slow, and impossible on a kernel you only have as a file. kCFI happens to record the answer, because the compiler must know which types may be called, and CFIScope turns that record into cross-references you can follow.
+
+## The actions in full
+
+- **Scan kCFI calls** (`Ctrl-Alt-K`): finds every check, comments the call site with the type hash and candidate count, adds cross-references when the candidate list is short (at most 16), and offers to create functions at candidates IDA has not recognised. It asks before adding any cross-reference, because a call cross-reference makes IDA create a function at its target. If you answer No, only a candidate at the start of a function IDA has gets a call cross-reference; a candidate inside one (on x86 IDA may start the function at the `__cfi_` preamble, 16 bytes earlier) gets a data cross-reference instead, so you can still go between the call and the candidate (the IDA SDK says a call cross-reference creates a function; of data cross-references it says so only for those from data, under the analysis option `AF_PROCPTR`, and this one comes from an instruction; that it creates no function is assumed, not checked in IDA), and a candidate IDA has no function for gets none. The Output window counts these two as `data_xrefs_inside_function` and `xrefs_skipped_no_function`; Cancel stops the scan before anything is written. If IDA's auto-analysis is still running, it first offers to wait for it. Your own comments are kept. No cross-reference or function is made at a candidate that IDA holds as data (or inside another item) or that lies outside the code segments, and when the database or the input ELF names the kernel's text bounds (in practice the input ELF must still be at its path: IDA keeps one name per address, so a database alone usually lacks some of these names, and then nothing is left out), candidates in `.rodata` and data (between `_etext` and `_sinittext`, outside the code areas named there) are left out as on the [command line](#without-ida-scripts-other-tools-ci); the Output window counts both (tested on fake IDA modules only).
+- **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach. If the cursor is not on a kCFI check or its call, the nearest check in the same function is used; the list's title names the call address it chose.
+- **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give. Only calls are counted: with the Linux 5.x jump-table CFI, a check whose call was not linked comes after the calls as a type check only, and the CFI runtime's own checks (in `__cfi_check`, which guard no call) are left out.
+- **Remove annotations**: removes the comments and cross-references the scan added, and turns the pseudocode comments off. Functions created when you answered Yes stay, including any IDA makes itself from a call cross-reference. The Output window's `functions created` counts only those CFIScope made: after Yes, a candidate inside another function gets a call cross-reference and no `add_func`, so a function IDA may make there is not counted.
+- **Pseudocode comments** (with the Hex-Rays decompiler): after a scan, the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2` (at most 5 names, then "and N more"). The line is found through the decompiler's address map when a function is printed; the comment is display text only, nothing is saved in the database. Not yet run in IDA and not tested with the real decompiler, only against a fake `ida_hexrays` module.
+
+All four actions are under Edit > Plugins. Scan and the two lookups are also on the right-click menu of disassembly and pseudocode views (CFIScope submenu). Many Linux desktops take `Ctrl-Alt-T` for a terminal and Keypatch uses `Ctrl-Alt-K`: use the menus, or rebind the keys in Options > Shortcuts.
+
+## What a candidate is
+
+Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that a given call ever reaches it. Most lists are short (median 6 candidates per call that has any, on each of the four GKI kernels below), but a few common types have hundreds or more (the largest lists have 1,458 to 1,812). Treat a long list as a type filter and a short one as a strong lead.
+
+## Supported targets
+
+Supported targets: aarch64 and x86-64 kernels built by Clang with kCFI (`CONFIG_CFI_CLANG` on Linux 6.1 or later), for example Android GKI android14-6.1 and later. Since v0.1.17 also aarch64 kernels built with the older jump-table CFI of Linux 5.x, measured on an Android 12 GKI 5.10 and an Android 13 GKI 5.15 kernel (see [Linux 5.x jump-table CFI](JTCFI.md) for what it reads and what it does not). Not supported: GCC-built kernels (most desktop distribution kernels have no kCFI checks to read) and x86-64 kernels with the jump-table CFI; on those the scan finds 0 sites and says so. The scanner was scored on a real Android GKI kernel for each architecture (numbers in [VERIFICATION.md](VERIFICATION.md)); the IDA layer has not been run in IDA yet (see [Status](../README.md#status)).
+
+## The fixture objects
+
+Quick try, no download (about a minute): the repository ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`: the generator wrote each function-pointer type and its implementations into `t.c`, and Clang built the objects.
+
+The same scan from the command line, real output:
+
+```
+$ python3 -m cfiscope tests/fixtures/x86_64-kernel.o --sites --max-list 4
+0x108033  do_call_0+0x13  jump hash 0x7230bf2a  4 candidate(s): impl_0_0, impl_0_1, impl_0_2, impl_0_3
+0x116033  do_call_1+0x13  jump hash 0x36b1c5a6  6 candidate(s): impl_1_0, impl_1_1, impl_1_2, impl_1_3 ...
+0x11e03a  do_call_2+0x1a  jump hash 0x1300e12b  3 candidate(s): impl_2_0, impl_2_1, impl_2_2
+...
+```
+
+(Spacing condensed. Addresses are where the command-line tool lays out the object's sections; IDA will place them elsewhere.)
+
+## Without IDA (scripts, other tools, CI)
+
+The scanner is plain Python 3 with no dependencies, so the same answers are available from the command line, for example to feed another disassembler or a pipeline:
+
+```
+python3 -m cfiscope vmlinux                         # summary
+python3 -m cfiscope vmlinux --sites                 # every call site and its candidates
+python3 -m cfiscope vmlinux --callers tcp_sendmsg   # indirect calls that can reach a function
+python3 -m cfiscope vmlinux --targets 0xffffffc008cc55ac
+python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
+```
+
+Run it from this folder. Input is a 64-bit ELF (a `vmlinux`, a kernel with symbols restored by vmlinux-to-elf, or a `.o`/`.ko`) or, with `--raw`, a bare kernel image. Symbols are used to print names and, when the ELF names `_stext`, `_etext`, `_sinittext` and `_einittext` (a `vmlinux` with its symbols, or the output of vmlinux-to-elf), to leave out kCFI candidates outside kernel code: on aarch64 the type hash in front of a function is a bare 32-bit word, and the same value can occur in `.rodata`. Only candidates between `_etext` and `_sinittext` are left out (`.rodata` lies there, and on x86-64 also `.data`), except in the code areas that arm64 names there: its idmap code since 6.6, the entry trampoline, hibernate and kexec code. Everything before `_etext` and from `_sinittext` on, init and exit text included, is kept, and if one of those code areas is named at one end only, nothing is left out. Without those four symbols (`--raw`, a stripped `vmlinux`, a `.o`) nothing is left out and the output is as before. `--json` gives machine-readable output. On the GKI aarch64 `Image` from the walkthrough above, `--raw` prints the totals of the table below except for the 6 candidates in `.rodata` (11,961 sites with candidates and 1,694 with exactly one, against 11,960 and 1,695), in about a second of CPU time (0.8 to 2.1 s wall-clock on the machine named under the table below, depending on its load).
+
+Headless inside IDA, with idalib (cfiscope 0.1.17 or later; IDA 9.0 or newer; set up the `idapro` module as Hex-Rays describes):
+
+```
+python3 tools/cfiscope_headless.py vmlinux [--define-functions] [--remove] [--no-analysis]
+```
+
+It opens the file as a database, adds the same comments and cross-references as **CFIScope: Scan kCFI calls**, prints the same statistics and saves the database. Without `--define-functions` it is like answering No: a candidate inside a function IDA has gets a data cross-reference instead of a call cross-reference, and one IDA has no function for gets none. With `--no-analysis` IDA's auto-analysis, which creates the functions, does not run, so a fresh kernel file may have no functions yet: add `--define-functions` to get cross-references. It calls the plugin's own `cfiscope.idalayer`; like the rest of the IDA layer it has only been run against fake modules (`tests/test_headless_stub.py`), not a real idalib.

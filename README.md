@@ -4,68 +4,7 @@ Resolve **indirect calls** in Linux and Android kernels built with kCFI, directl
 
 Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 32-bit function-type hash in front of every function and checks it at every indirect call. Both ends survive stripping. CFIScope matches them, so an unresolved `blr x8` or `call rax` becomes a list of the type-compatible functions it may reach, usually a short one.
 
-- **Scan kCFI calls** (`Ctrl-Alt-K`): finds every check, comments the call site with the type hash and candidate count, adds cross-references when the candidate list is short (at most 16), and offers to create functions at candidates IDA has not recognised. It asks before adding any cross-reference, because a call cross-reference makes IDA create a function at its target. If you answer No, only a candidate at the start of a function IDA has gets a call cross-reference; a candidate inside one (on x86 IDA may start the function at the `__cfi_` preamble, 16 bytes earlier) gets a data cross-reference instead, so you can still go between the call and the candidate (the IDA SDK says a call cross-reference creates a function; of data cross-references it says so only for those from data, under the analysis option `AF_PROCPTR`, and this one comes from an instruction; that it creates no function is assumed, not checked in IDA), and a candidate IDA has no function for gets none. The Output window counts these two as `data_xrefs_inside_function` and `xrefs_skipped_no_function`; Cancel stops the scan before anything is written. If IDA's auto-analysis is still running, it first offers to wait for it. Your own comments are kept. No cross-reference or function is made at a candidate that IDA holds as data (or inside another item) or that lies outside the code segments, and when the database or the input ELF names the kernel's text bounds (in practice the input ELF must still be at its path: IDA keeps one name per address, so a database alone usually lacks some of these names, and then nothing is left out), candidates in `.rodata` and data (between `_etext` and `_sinittext`, outside the code areas named there) are left out as on the [command line](#without-ida-scripts-other-tools-ci); the Output window counts both (tested on fake IDA modules only).
-- **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach. If the cursor is not on a kCFI check or its call, the nearest check in the same function is used; the list's title names the call address it chose.
-- **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give. Only calls are counted: with the Linux 5.x jump-table CFI, a check whose call was not linked comes after the calls as a type check only, and the CFI runtime's own checks (in `__cfi_check`, which guard no call) are left out.
-- **Remove annotations**: removes the comments and cross-references the scan added, and turns the pseudocode comments off. Functions created when you answered Yes stay, including any IDA makes itself from a call cross-reference. The Output window's `functions created` counts only those CFIScope made: after Yes, a candidate inside another function gets a call cross-reference and no `add_func`, so a function IDA may make there is not counted.
-- **Pseudocode comments** (with the Hex-Rays decompiler): after a scan, the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2` (at most 5 names, then "and N more"). The line is found through the decompiler's address map when a function is printed; the comment is display text only, nothing is saved in the database. Not yet run in IDA and not tested with the real decompiler, only against a fake `ida_hexrays` module.
-
-All four actions are under Edit > Plugins. Scan and the two lookups are also on the right-click menu of disassembly and pseudocode views (CFIScope submenu). Many Linux desktops take `Ctrl-Alt-T` for a terminal and Keypatch uses `Ctrl-Alt-K`: use the menus, or rebind the keys in Options > Shortcuts.
-
-Candidates are type-compatible functions: kCFI proves a function has the right type hash, not that a given call ever reaches it. Most lists are short (median 6 candidates per call that has any, on each of the four GKI kernels below), but a few common types have hundreds or more (the largest lists have 1,458 to 1,812). Treat a long list as a type filter and a short one as a strong lead.
-
-Supported targets: aarch64 and x86-64 kernels built by Clang with kCFI (`CONFIG_CFI_CLANG` on Linux 6.1 or later), for example Android GKI android14-6.1 and later. Since v0.1.17 also aarch64 kernels built with the older jump-table CFI of Linux 5.x, measured on an Android 12 GKI 5.10 and an Android 13 GKI 5.15 kernel (see [Linux 5.x jump-table CFI](#linux-5x-jump-table-cfi-android-1213-gki-510-and-515) for what it reads and what it does not). Not supported: GCC-built kernels (most desktop distribution kernels have no kCFI checks to read) and x86-64 kernels with the jump-table CFI; on those the scan finds 0 sites and says so. The scanner was scored on a real Android GKI kernel for each architecture (numbers below); the IDA layer has not been run in IDA yet (see Status).
-
-## Why it matters
-
-Kernel attack surface runs through function pointers: `file_operations`, `net_device_ops`, tracepoints, callbacks. In a stripped binary every one of those calls is a dead end for static analysis, and tracing them by hand or with a debugger is slow, and impossible on a kernel you only have as a file. kCFI happens to record the answer, because the compiler must know which types may be called, and CFIScope turns that record into cross-references you can follow.
-
-## Status: read this first
-
-**CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is below: the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
-
-CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
-
-## Install
-
-```
-hcli plugin install cfiscope
-```
-
-Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later. The plugin index can lag a day or more behind the [GitHub releases](https://github.com/nightshift-labs-ai/cfiscope/releases) (on Nov 12 it still offered 0.1.15, which has no Linux 5.x support and no headless runner); if `hcli plugin status` shows an older version, install a release zip directly: `hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/tags/v0.1.20.zip`.
-
-
-## Try it
-
-Install the current release (the plugin index can lag a day behind; see [Install](#install)):
-
-```
-hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/tags/v0.1.20.zip
-```
-
-Quick try, no download (about a minute): the repository ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`: the generator wrote each function-pointer type and its implementations into `t.c`, and Clang built the objects.
-
-1. Open `tests/fixtures/x86_64-kernel.o` (or `aarch64-kernel.o`) in IDA. After `hcli plugin install cfiscope` the fixtures are in `$IDAUSR/plugins/cfiscope/tests/fixtures/` (`~/.idapro/plugins/...` on Linux and macOS, `%APPDATA%\Hex-Rays\IDA Pro\plugins\...` on Windows).
-2. Press `Ctrl-Alt-K`. It should find 21 kCFI call sites, one per function-pointer type in `t.c`, each with candidates (the counts are printed in the Output window).
-3. In `do_call_2`, `Ctrl-Alt-T` should list `impl_2_0`, `impl_2_1`, `impl_2_2`; on `impl_2_1`, `Ctrl-Alt-C` should list that call in `do_call_2`.
-
-The same scan from the command line, real output:
-
-```
-$ python3 -m cfiscope tests/fixtures/x86_64-kernel.o --sites --max-list 4
-0x108033  do_call_0+0x13  jump hash 0x7230bf2a  4 candidate(s): impl_0_0, impl_0_1, impl_0_2, impl_0_3
-0x116033  do_call_1+0x13  jump hash 0x36b1c5a6  6 candidate(s): impl_1_0, impl_1_1, impl_1_2, impl_1_3 ...
-0x11e03a  do_call_2+0x1a  jump hash 0x1300e12b  3 candidate(s): impl_2_0, impl_2_1, impl_2_2
-...
-```
-
-(Spacing condensed. Addresses are where the command-line tool lays out the object's sections; IDA will place them elsewhere.)
-
-A real kernel:
-
-1. Download the public aarch64 Android kernel used for the numbers below: [gki-certified-boot-android14-6.1-2024-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip), extract the kernel with `python3 tools/extract_bootimg.py boot-6.1.img Image` (no dependencies), and restore its symbols with [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf): `vmlinux-to-elf Image gki.elf`.
-2. Open the resulting ELF in IDA and let auto-analysis finish.
-3. Press `Ctrl-Alt-K`. Then on any `blr` preceded by a kCFI check, press `Ctrl-Alt-T` to list the functions it can reach, or on a function, press `Ctrl-Alt-C` to list the indirect calls that can reach it.
+The scanner was scored on a real Android GKI kernel for each architecture ([numbers](docs/VERIFICATION.md)); the IDA layer has not been run in IDA yet (see [Status](#status)).
 
 ## What you will see (real output, not an IDA screenshot)
 
@@ -94,7 +33,7 @@ $ python3 -m cfiscope gki.elf --callers tcp_sendmsg --max-list 3
 
 ## What the plugin writes into IDA (fake IDA, not a screenshot)
 
-`tools/showcase_ida_stub.py` loads the same kernel's code segments and symbol names into the fake IDA modules of the stub tests, runs the plugin's own IDA layer (Scan, the two lists, the pseudocode comment) and prints what it wrote. These are the exact strings the plugin hands to IDA; real IDA has not run them and draws its own listing around them. The fake database puts every address inside the function of the symbol before it, so the count is 44718 after Yes to "Create functions"; after No (add `--no` to the command below) it is 44695 call and 23 data cross-references, the 23 to 8 candidates inside the function of the symbol before them, and none skipped. In IDA the split after No depends on the functions IDA found. The fake database has no data cross-references of its own (CFIScope's from call sites never count), so no candidate is marked "address taken" here; in IDA, candidates whose address is stored in data are marked and listed first, so the first names in a comment can differ.
+`tools/showcase_ida_stub.py` loads the same kernel's code segments and symbol names into the fake IDA modules of the stub tests, runs the plugin's own IDA layer (Scan, the two lists, the pseudocode comment) and prints what it wrote. These are the exact strings the plugin hands to IDA; real IDA has not run them and draws its own listing around them. How the counts come about: [docs/VERIFICATION.md](docs/VERIFICATION.md#what-the-plugin-writes-into-ida-fake-ida-not-a-screenshot).
 
 ```
 $ python3 -I tools/showcase_ida_stub.py gki.elf sock_sendmsg+0xb4 tcp_sendmsg
@@ -129,191 +68,6 @@ Callers of this function (Ctrl-Alt-C) on tcp_sendmsg: 3 row(s)
 Pseudocode line of the call (with Hex-Rays):  // CFIScope: 14 candidates: tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
 ```
 
-## Without IDA (scripts, other tools, CI)
-
-The scanner is plain Python 3 with no dependencies, so the same answers are available from the command line, for example to feed another disassembler or a pipeline:
-
-```
-python3 -m cfiscope vmlinux                         # summary
-python3 -m cfiscope vmlinux --sites                 # every call site and its candidates
-python3 -m cfiscope vmlinux --callers tcp_sendmsg   # indirect calls that can reach a function
-python3 -m cfiscope vmlinux --targets 0xffffffc008cc55ac
-python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
-```
-
-Run it from this folder. Input is a 64-bit ELF (a `vmlinux`, a kernel with symbols restored by vmlinux-to-elf, or a `.o`/`.ko`) or, with `--raw`, a bare kernel image. Symbols are used to print names and, when the ELF names `_stext`, `_etext`, `_sinittext` and `_einittext` (a `vmlinux` with its symbols, or the output of vmlinux-to-elf), to leave out kCFI candidates outside kernel code: on aarch64 the type hash in front of a function is a bare 32-bit word, and the same value can occur in `.rodata`. Only candidates between `_etext` and `_sinittext` are left out (`.rodata` lies there, and on x86-64 also `.data`), except in the code areas that arm64 names there: its idmap code since 6.6, the entry trampoline, hibernate and kexec code. Everything before `_etext` and from `_sinittext` on, init and exit text included, is kept, and if one of those code areas is named at one end only, nothing is left out. Without those four symbols (`--raw`, a stripped `vmlinux`, a `.o`) nothing is left out and the output is as before. `--json` gives machine-readable output. On the GKI aarch64 `Image` from the walkthrough above, `--raw` prints the totals of the table below except for the 6 candidates in `.rodata` (11,961 sites with candidates and 1,694 with exactly one, against 11,960 and 1,695), in about a second of CPU time (0.8 to 2.1 s wall-clock on the machine named under the table below, depending on its load).
-
-Headless inside IDA, with idalib (cfiscope 0.1.17 or later; IDA 9.0 or newer; set up the `idapro` module as Hex-Rays describes):
-
-```
-python3 tools/cfiscope_headless.py vmlinux [--define-functions] [--remove] [--no-analysis]
-```
-
-It opens the file as a database, adds the same comments and cross-references as **CFIScope: Scan kCFI calls**, prints the same statistics and saves the database. Without `--define-functions` it is like answering No: a candidate inside a function IDA has gets a data cross-reference instead of a call cross-reference, and one IDA has no function for gets none. With `--no-analysis` IDA's auto-analysis, which creates the functions, does not run, so a fresh kernel file may have no functions yet: add `--define-functions` to get cross-references. It calls the plugin's own `cfiscope.idalayer`; like the rest of the IDA layer it has only been run against fake modules (`tests/test_headless_stub.py`), not a real idalib.
-
-## Verification
-
-Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google download), aarch64, stripped. Reproduce with `python3 tools/eval_gki.py Image gki.elf` (`Image` and `gki.elf` as in the walkthrough). The script scans `Image` with the kernel-code bounds that `gki.elf` names (`_etext`, `_sinittext` and the code areas between them, as above), so it leaves out what the command line leaves out on `gki.elf` and the plugin with those names, and it also prints the numbers for `Image` alone.
-
-| Measure | Result |
-|---|---|
-| Indirect call sites found | 13,897, using 4,184 distinct type hashes, in 0.8 to 3.1 s (see below) |
-| Sites with at least one candidate | 11,960 (86.1%) |
-| Sites with exactly one candidate | 1,695 |
-| Median candidates per site with at least one candidate (over all sites, unresolved included: 4) | 6 |
-| Sites with 1 to 8 candidates / 1 to 16 | 7,091 / 8,998 |
-| Candidate start precision: distinct candidates that begin exactly at a kallsyms function symbol (symbols restored by [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf); besides scoring, they bound kernel code, which leaves out 6 candidates in `.rodata`). This checks that candidates are real function starts, not that a call reaches them | 30,357 of 30,561 (99.33%) |
-
-Scan time: the script prints it for the scan with the bounds: 0.8 to 3.1 s in 18 runs (median 1.6 s). The whole command also reads the symbols of `gki.elf` and scans `Image` a second time without the bounds: 2.2 to 6.0 s wall-clock in the same runs (median about 4 s), of which 2.1 to 2.6 s CPU time. Measured on an Intel i9-13900H laptop under WSL2 (4 cores) while other jobs were running (load average 3.9 to 6.5), in single-threaded Python; the wall-clock time followed the load. Expect a different figure on another machine.
-
-The 6 candidates left out are in `.rodata`: the hash value occurs in strings or other data (hash `0x4f5f504f` is the text `OP_O`; it gave a vendor-hook call 4 "candidates" in strings). Without the bounds (`Image` alone) they made 30,567 distinct candidates, 30,357 at a kallsyms function (99.31%), and Scan added 6 cross-references to them (in the fake IDA modules of the showcase above; 44,724 then, 44,718 now). The 204 candidates that do not start at a kallsyms function are all in kernel text (199) or init text (5), and each begins with code after its hash word: 166 are `mov x0, #-ENOSYS; ret` stubs of the syscall-handler type, 12 bytes apart in runs after named handlers such as `sys_ni_syscall` (they look like the weak `COND_SYSCALL` stubs of syscalls this kernel does not build); 24 return at once (`ret`, or one `mov` of a constant into `w0`/`x0` and `ret`); 11 start with a `paciasp` prologue; 3 are other short code. The kallsyms names that vmlinux-to-elf restored include none of them; we have not checked them against another symbol source.
-
-The 1,937 sites with no candidate carry a hash that no function in this image has; a likely reason is callees that live in loadable modules, not checked one by one.
-
-Newer aarch64 GKI kernels, measured the same way: [gki-certified-boot-android15-6.6-2025-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android15-6.6-2025-01_r1.zip) and [gki-certified-boot-android16-6.12-2025-06_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android16-6.12-2025-06_r1.zip), kernel extracted with `tools/extract_bootimg.py`, symbols restored by vmlinux-to-elf, then `python3 tools/eval_gki.py --base 0xffffffc080000000 Image gki.elf` (these kernels start at a different address than 6.1).
-
-| Measure | android15-6.6 | android16-6.12 |
-|---|---|---|
-| Indirect call sites found (distinct type hashes) | 14,694 (4,466) | 16,164 (4,626) |
-| Sites with at least one candidate | 12,917 (87.9%) | 14,232 (88.0%) |
-| Sites with exactly one candidate | 1,975 | 2,019 |
-| Median candidates per site with at least one (over all sites) | 6 (5) | 6 (5) |
-| Sites with 1 to 8 candidates / 1 to 16 | 7,435 / 9,681 | 8,404 / 10,684 |
-| Largest candidate list | 1,536 | 1,580 |
-| Candidate start precision (distinct candidates at a kallsyms function symbol) | 33,743 of 33,960 (99.36%) | 35,248 of 35,480 (99.35%) |
-
-Left out as outside kernel code: 7 candidates on 6.6 and 1 on 6.12, all in `.rodata`. The one on 6.12 is not in a string: the word `cfi_bpf_hash` holds the type hash `0xf6292f28` on purpose, so the word after it, `cfi_bpf_subprog_hash`, looked like a function of that type (both in the `ro_after_init` data, which lies inside `__start_rodata`..`__end_rodata`). It was in the lists of the 187 calls of that type, each 7 long; without the bounds (`Image` alone) the 6.12 median is 7 and its precision row 35,248 of 35,481. Of the candidates not at a kallsyms function (217 on 6.6, 232 on 6.12), 181 and 189 are `-ENOSYS` stubs as on 6.1. On 6.6 and 6.12 the idmap code (`__idmap_text_start`..`__idmap_text_end`) lies between `_etext` and `_sinittext` and holds 2 candidates, which is why the code areas named there are kept.
-
-Real x86-64 kernel: the public GKI prebuilt `kernel-6.1` from [kernel/prebuilts/6.1/x86-64](https://android.googlesource.com/kernel/prebuilts/6.1/x86-64) (6.1.84), scored against its own `System.map`, which names a `__cfi_` preamble for each protected function. Reproduce with `python3 tools/extract_bzimage.py kernel-6.1 vmlinux`, then `python3 tools/eval_gki_x86.py vmlinux System.map`.
-
-| Measure | Result |
-|---|---|
-| Indirect call sites found | 13,770, using 4,257 distinct type hashes |
-| Sites with at least one candidate | 11,833 (85.9%) |
-| Sites with exactly one candidate | 1,652 |
-| Median candidates per site with at least one candidate (over all sites, unresolved included: 4) | 6 |
-| Sites with 1 to 8 candidates / 1 to 16 | 7,093 / 8,601 |
-| Distinct candidates that are a `__cfi_`-protected function | 32,393 of 33,015 (98.12%) |
-
-The other 622 candidates: 244 sit at weak (`W`) symbols in the map, mostly syscall entry stubs such as `__ia32_sys_msgctl`, and 378 are at no symbol in the map; those 378 were not checked one by one. This `vmlinux` comes from a bzImage, whose build strips its symbols, so the table is measured without kernel-code bounds (re-run with this version: the same figures). The script's last line scans it again with the bounds its `System.map` names, as the command line would for a `vmlinux` that kept its symbols: 0 of the 33,015 candidates are left out, and no list changes. The map names no function between `_etext` and `_sinittext` (`.rodata` and `.data` lie there), and x86-64 exit text, whose bounds it does not name, comes after init text and is kept. Only 63.50% of the protected functions appear as candidates, which is expected for a kernel image alone: a function's hash only matches when some call site in the image uses that type.
-
-Known-answer objects: `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the table of signatures and implementations that `tools/gen_fixtures.py` wrote into the source; function offsets come from the compiled objects. `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the known candidate sets for the same objects, and that bad input gives a clear error.
-
-Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer and `tests/test_entry_stub.py` the plugin wiring (menus, right-click hooks, rescan after a rebase, pseudocode comments on a fake decompiler) against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 88 IDA API names used, including the decompiler methods the pseudocode hook calls and `func_t.tailqty`, exist in the official stubs; `python3 tests/check_ida_names.py <stub dir>...` checks that the 70 `ida_*` / `idc` names alone also exist in older stubs (0 missing in those of IDA 9.1, 9.2, 9.3 and 9.4: PyPI `idapro` 0.0.5, 0.0.7, 0.0.9, 0.0.11). None of these is a test in real IDA.
-
-Not verified: behaviour inside real IDA.
-
-## Linux 5.x jump-table CFI (Android 12/13 GKI 5.10 and 5.15)
-
-Needs cfiscope 0.1.18 or later (see [Install](#install) if `hcli` gives an older version).
-
-Before kCFI, Clang's CFI for the kernel (`CONFIG_CFI_CLANG` on Linux 5.x, used by Android 12 and 13 GKI) worked differently: every function whose address is taken gets an 8-byte entry `bti c; b <function>` in one jump table, the functions of one type sit next to each other in it, and a checked call tests that the pointer lies in its type's run of entries before calling it:
-
-```
-adrp x8, ... ; add x8, x8, #0x3a8     ; first entry of the type's run
-sub  x8, x23, x8 ; ror x8, x8, #3      ; index of the pointer's entry
-cmp  x8, #0xa6                         ; 166 entries
-b.hs slow_path                         ; otherwise __cfi_slowpath_diag(type id, pointer, ...)
-blr  x23
-```
-
-So the candidates of a call are written in the code: CFIScope reads the base and the count, then each entry's branch target. This is the compiler's own list of the functions of that type in the image that the check lets through, with no hash collisions. When there are no kCFI checks in an aarch64 image, the scan looks for this form instead; the actions, comments (`jtCFI <type>: N candidate(s): ...`), cross-references, lists and pseudocode comments are the same as for kCFI. Supported shapes: range checks (`b.hs`/`b.hi` with the call on the fall-through, `b.lo`/`b.ls` with the call at the branch target, count as an immediate or in a register, up to four unrelated instructions between the subtract and the rotate), single-member types (`cmp; b.ne`), checks whose subtract and rotate were hoisted out of a loop, and calls checked only through `__cfi_slowpath`/`__cfi_slowpath_diag`. When a check's slow path is inlined (`bl find_check_fn`, then a `blr` to the `__cfi_check` of the kernel or module that holds the pointer with the type id in `x0`), that `blr` is the CFI runtime's own call, not a program call: CFIScope labels it (`jtCFI runtime: calls __cfi_check ...`) instead of listing candidates. On the GKI 5.15 kernel below it finds 890 of them from the code alone, all among the 1,015 counted with symbols; the GKI 5.10 kernel has none (its slow paths call `__cfi_slowpath`). Each site also gets the type's 64-bit id (passed to the slow path; it is the first 8 bytes of MD5 of the mangled type name), and, when the kernel's symbols include the `__typeid_<type>_global_addr` names that kallsyms keeps, the type itself, for example `int (file*, int)`. In IDA these names are taken from the database and, because IDA keeps one name per address and each of them shares its address with a `foo.cfi_jt` entry, also from the input ELF's symbol table if that file is still where it was loaded from.
-
-Command line, on the Android 13 GKI kernel below with symbols restored by vmlinux-to-elf (real output):
-
-```
-$ python3 -m cfiscope gki515.elf --sites --max-list 4 | grep vfs_read+
-0xffffffc00853ffbc  vfs_read+0xe8                            call range int (file*, int)  2 candidate(s): vfs_fsync, selinux_file_permission
-0xffffffc0085400c0  vfs_read+0x1ec                           call range long (file*, char*, unsigned long, long long*)  166 candidate(s): kvm_vm_stats_read, kvm_vcpu_stats_read, cpu_latency_qos_read, snapshot_read ...
-0xffffffc00854021c  vfs_read+0x348                           call range long (kiocb*, iov_iter*)  64 candidate(s): devkmsg_write, generic_file_write_iter, __generic_file_write_iter, generic_file_direct_write ...
-```
-
-The summary for the whole kernel (real output):
-
-```
-$ python3 -m cfiscope gki515.elf
-arch aarch64, 95566 named functions
-Linux 5.x jump-table CFI: jump table 0xffffffc0096da488-0xffffffc00971c3f0, 33773 entries of 8 bytes
-checked sites 16350: range checks 12117, single-member checks 2146, slow path only 2087 (type ids 3433; checks named from __typeid symbols 14550)
-indirect calls (blr/br) 23224, with candidates 14053
-sites with candidates 14209, none 2141, exactly one 2145
-median candidates per site with candidates 6 (over all sites 5), max 1310
-```
-
-Its call totals differ from the table below on purpose: the summary counts every `blr` and `br` in the executable segments (21,739 `blr` and 1,485 `br`), the table counts only `blr` in kernel text (21,738), which leaves out one call with candidates in exit text (`dm_exit+0x4c`): 14,053 here, 14,052 there. On the 5.10 kernel the summary says 22,461 and 14,137 (20,940 `blr`, 1,521 `br`; again one call in exit text, `dm_exit+0x40`).
-
-Which indirect calls can reach `tcp_sendmsg` on that kernel (real output):
-
-```
-$ python3 -m cfiscope gki515.elf --callers tcp_sendmsg --max-list 3
-6 call site(s) can reach tcp_sendmsg
-0xffffffc00921bd4c  kernel_sendmsg_locked+0x5c               call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
-0xffffffc0092276c0  sock_no_sendpage_locked+0xc4             call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
-0xffffffc009234540  skb_send_sock_locked+0x180               call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
-0xffffffc009434050  inet_sendmsg+0x5c                        call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
-0xffffffc0094c3d7c  inet6_sendmsg+0x5c                       call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
-0xffffffc00969f60c  ieee802154_sock_sendmsg+0x38             call range int (sock*, msghdr*, unsigned long)  11 candidate(s): tcp_sendmsg_locked, tcp_sendmsg, raw_sendmsg ...
-```
-
-Only calls are counted. A check whose call was not linked would follow them, marked `type check only (call not linked)`, and the first line would add `(+N type check(s) whose call was not linked, listed last)`; the IDA list does the same, with that line in its title. The CFI runtime's own checks are left out: `__cfi_check` receives a type id and a pointer, tests the pointer against that type's range and returns or branches to `__cfi_check_fail`, so its checks guard no call. CFIScope recognises them from the code (a check with no linked call whose failure path passes no type id and that tests the pointer in `x1`, where `__cfi_check` receives it) and, where names or function bounds are known, by the function's name or by a function with no `blr`/`br`. `--sites` and Scan still show every check; `--json` marks these with `runtime_check`. In `--sites`, a site with no linked call is labelled `CFI runtime check (guards no call)` (the runtime's), `type check only (call not linked)` (another range or single-member check) or `check (call not linked)` (a slow-path-only site: no inline check was decoded for it).
-
-Measured on `gki-certified-boot-android13-5.15-2024-01_r1` ([zip](https://dl.google.com/android/gki/gki-certified-boot-android13-5.15-2024-01_r1.zip), kernel extracted with `python3 tools/extract_bootimg.py boot-5.15.img Image`, symbols restored by vmlinux-to-elf), with `python3 tools/eval_gki_oldcfi.py --cxxfilt Image gki515.elf`. The symbols are only used to score: which words are kernel text, where functions start, the names of the jump-table entries, and the `__typeid` symbols.
-
-| Measure | Result |
-|---|---|
-| Jump table found from the code alone | 33,773 entries; same bounds as `__cfi_jt_start` / `__cfi_jt_end` |
-| `blr` in kernel text (`_stext`..`_etext` without the jump table, plus init text) with candidates | 14,052 of 21,738 (64.6%) |
-| The same, leaving out the CFI runtime's own 1,015 calls into `__cfi_check` | 14,052 of 20,723 (67.8%) |
-| Candidates per resolved `blr` | median 6, mean 29.2, largest 1,310; exactly one: 2,144 |
-| Distinct candidates that start exactly at a kallsyms function | 24,976 of 24,976 |
-| Jump-table entries used whose name matches the target (`foo.cfi_jt` branches to `foo`) | 24,976 of 24,976 |
-| Checks whose range was read at the check and whose first entry is the `__typeid` symbol of the id their own slow path passes | range 10,890 of 10,890; single 2,041 of 2,041 (1,036 range and 105 single checks take their range from another check of the same type id and are not counted here) |
-| Entry counts read from the code (`cmp xT, #N`): neighbouring type runs of different type ids that overlap; runs that extend past the next type's `__typeid` symbol; checks whose range, read at the check, gives no candidates (it leaves the table, or its first entry is not an entry) | 0 of 2,488 pairs (1,718 of them start with a range run, whose count is read from the code); 0 of 2,489 runs (and every check of a type id reads the same run); 0 of 13,083 checks |
-| Linked check and call in the same function | 16,003 of 16,003 |
-| Type names equal to `c++filt` | 2,777 of 2,777 |
-
-The two "24,976 of 24,976" rows only show that the jump table itself was decoded right: every entry of this table targets a kallsyms function start, so they would pass for any slice of the table and say nothing about the base and count read at each check. The base and the count are checked by the two rows after them, which can fail: the `__typeid` row checks the first entry, and the entry-count row checks that no count is read too large. For that row, a type's run is the first entry and the number of entries its checks read: range checks whose base was read at the check, with the count from `cmp xT, #N` or the register holding N (1,719 type ids), and single-member checks, one entry (770 type ids); ranges copied from another check of the same id and checks whose slow path passes no type id (the runtime's own, and 11 linked checks on this kernel) are left out. Sorted by first entry, a pair of neighbouring runs of different type ids overlaps when the second starts before the first ends; a run also fails if it extends past the next `__typeid` symbol in the table (2,777 there). A check whose range was read at the check but gives no candidates would drop out of the runs unseen, so it counts as a failure too (all 13,083 such checks, the runtime's and those with no type id included, have candidates; with every count made 100,000 too large in both parsers, 11,042 of them fail). A count read too large fails this row (with the inline range-check parser changed to read every count one too large: 1,244 of 2,487 pairs overlap, 1,319 of 2,515 runs pass a `__typeid` symbol and 3 of 13,085 checks leave the table, while both kallsyms rows stay at 100%); a count read too small would not. For one type at a time, a count one too large fails the row for 1,341 of the 1,719 range types (1,340 by an overlap or a `__typeid` symbol, and the last run in the table by leaving it), and for 1,184 of 1,605 on GKI 5.10, where only the overlap and the table end apply; the rest escape because the entry right after their run is read by no check of the row and has no `__typeid` symbol. The `__typeid` and entry-count rows check consistency (the base and the count read from the code, the type id from the slow path and the kernel's own symbols agree); the last two check the linking (each check and the call it was linked to lie in the same kallsyms function) and the type-name demangler (against `c++filt`). None of these rows proves that a call can reach every candidate. A candidate list is a type filter, as with kCFI.
-
-Limits, read before relying on it:
-
-- **Two kernels were measured.** On Android 12 GKI `gki-certified-boot-android12-5.10-2024-01_r1` ([zip](https://dl.google.com/android/gki/gki-certified-boot-android12-5.10-2024-01_r1.zip), kernel from `boot-5.10.img`; same scanner, same `tools/eval_gki_oldcfi.py`, symbols from vmlinux-to-elf): 14,136 of 20,939 `blr` in kernel text get candidates (67.5%), median 6; all 23,399 distinct candidates start at a kallsyms function and every entry's name matches its target; the jump table ends where its entries end, and the rest up to `__cfi_jt_end` is zero padding. That kernel's kallsyms keeps only one `__typeid` name, so its types show as 64-bit ids and the `__typeid` row of the table above cannot be checked there, nor the `__typeid` half of the entry-count row; its other half finds no overlap: 0 of 2,344 pairs of neighbouring runs (2,345 type ids: 1,605 range, 740 single), every check of an id reading the same run, and 0 of 12,896 checks whose range was read at the check without candidates. The scanner reads only 8-byte `bti c; b` jump-table entries; a build without BTI lays its jump table out differently (we expect 4-byte `b` entries, not checked), and CFIScope does not look for that. x86-64 kernels with this CFI are not read.
-- **Module targets are not listed.** A call whose type has no function in the kernel image is checked only by `__cfi_slowpath`; CFIScope shows its type and "no candidate in this image" (2,087 slow-path-only sites on this kernel, the two cases below included). The same applies to a copy of a call that the compiler placed on a check's slow path: it runs only when the pointer is not one of the image's functions of that type. When symbols are available, 241 of these slow-path sites belong to a type that does have functions in the image, which means an inline check was not decoded; those are marked "candidates unknown".
-- **Tracepoint and vendor-hook calls are not checked by design** (the kernel calls them without CFI), so there is nothing to read and they stay unresolved, like assembly and `__nocfi` code. These, the slow-path-only calls and the checks this scanner does not decode make up the 7,686 unresolved `blr`. `tools/eval_gki_oldcfi.py` splits them: 1,950 are linked to a check that has no candidates in the image (slow-path-only types, ranges not found); 1,537 sit in tracepoint and vendor-hook iterators (`__traceiter_*`; none of these functions has a `ror #3` or a `__cfi_slowpath` call before the call); 1,015 are the CFI runtime's own calls: an inlined slow path calls `find_check_fn` and then the `__cfi_check` of the kernel or module that holds the pointer through a register; 2,030 look like tracepoint loops inlined into other functions (the probe's function and data read as a pair: `ldar xR, [xM]; ldr x0, [xM, #8]; blr xR`), which are also called without a check; 225 have a `ror #3` or a `__cfi_slowpath` call in the 32 instructions before them (most likely checks this scanner does not decode, such as a `sub` and `ror` more than four instructions apart); and 929 have none of these (most likely calls without a CFI check: assembly, `__nocfi` code, BPF dispatch). The last three numbers come from pattern matches, not from decoding. Leaving out the runtime's own calls, 14,052 of 20,723 `blr` (67.8%) get candidates.
-- **Linking is linear.** A check is linked to the first `blr` of its register on the straight path after it (following up to two unconditional branches), or to a later call that reuses it. The register holding the type's first entry is found by walking back from the check, stopping at function starts and at code that does not fall through. Checks whose base or call is found only through the control-flow graph are missed (on this kernel, the walk finds no base for 1,033 checks: 979 of them take the range of another check with the same type id (the table's 1,036 + 105 = 1,141 counts listed sites instead: 954 of these checks, plus 187 slow-path sites whose undecoded inline check got its range the same way; the other 25 guard a call together with a check of the same range and are listed once), 54 have no range; 156 checks have no linked call: 141 are the CFI runtime's own, all the checks inside `__cfi_check`, which Callers leaves out; the other 15 are listed by Callers after the calls and not counted. GKI 5.10: 140, of them 131 in `__cfi_check`).
-- **Not run in IDA.** Like the rest of CFIScope, the IDA side was tested only against fake `ida_*` modules (`tests/test_plugin_stub.py`, `tests/test_entry_stub.py`). The scanner is the same code as the command line.
-
-Known-answer test: `tests/fixtures/aarch64-jtcfi.elf` is assembled by `tools/gen_fixtures.py --jtcfi-only` (no compiler): a 4-entry jump table and nine calls (a `b.hs` range check, a `b.lo` check with the base in a register copy and the count in a register, a `b.hi` check, a check hoisted out of a loop, a single-member check, a slow-path-only call, a range check with an unrelated instruction between the subtract and the rotate, the same with the pointer copied to another register there and called through it, and a check whose slow path is inlined), plus two checks with no linked call: one whose pointer is stored and called after a reload, and the check inside a small `__cfi_check` runtime function. `tests/test_oldcfi.py` checks each call's kind, type id, type name and exact candidates against `tests/fixtures/jtcfi_truth.json`, and that Callers counts the seven calls of `f_b`, lists the first unlinked check after them and leaves out the runtime's. The command line gives:
-
-```
-$ python3 -m cfiscope tests/fixtures/aarch64-jtcfi.elf --sites
-0xffffffc008000088  call_hs+0x28                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080000fc  call_lo+0x48                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc008000130  call_hi+0x24                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc008000188  call_hoisted+0x2c                        call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080001dc  call_single+0x20                         call single void (void*)  1 candidate(s): g_one
-0xffffffc008000230  call_slow+0x28                           call slowpath type id 0x07ff5a213d37b1a6  no candidate in this image (module functions only)
-0xffffffc008000268  call_gap+0x28                            call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080002bc  call_gapcopy+0x28                        call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc00800030c  call_inline+0x24                         call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc008000358  call_unlinked+0x14                       type check only (call not linked) range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080003c0  __cfi_check+0x24                         CFI runtime check (guards no call) range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-```
-
-and its callers of `f_b`: seven calls, then the unlinked check in `call_unlinked`; the runtime's check in `__cfi_check` is left out:
-
-```
-$ python3 -m cfiscope tests/fixtures/aarch64-jtcfi.elf --callers f_b
-7 call site(s) can reach f_b (+1 type check(s) whose call was not linked, listed last)
-0xffffffc008000088  call_hs+0x28                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080000fc  call_lo+0x48                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc008000130  call_hi+0x24                             call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc008000188  call_hoisted+0x2c                        call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc008000268  call_gap+0x28                            call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc0080002bc  call_gapcopy+0x28                        call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc00800030c  call_inline+0x24                         call range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-0xffffffc008000358  call_unlinked+0x14                       type check only (call not linked) range int (file*, int)  3 candidate(s): f_a, f_b, f_c
-```
-
 ## How it works
 
 The two ends that kCFI leaves in the binary, from the bundled `tests/fixtures/x86_64-plain.o` (`objdump -d -M intel`; comments added):
@@ -336,6 +90,82 @@ impl_2_1:
 CFIScope reads the hash from every check, indexes the hash stored in front of every function, and joins the two: this call gets `impl_2_0`, `impl_2_1`, `impl_2_2`. On aarch64 the check loads the 32-bit word in front of the target, compares it with the hash, and branches over a `brk` trap before the `blr`; CFIScope anchors on that `b.eq` + `brk` pair.
 
 `cfiscope/core.py` has no IDA dependency: it finds the per-architecture check sequences, reads the expected hash from each, indexes the hash stored just before every function, and joins the two. `cfiscope/idalayer.py` is the thin IDA layer.
+
+More: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
+
+## Install
+
+```
+hcli plugin install cfiscope
+```
+
+Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later.
+
+The plugin index can lag a day or more behind the [GitHub releases](https://github.com/nightshift-labs-ai/cfiscope/releases). If `hcli plugin status` shows an older version than the latest release, install the release zip directly:
+
+```
+hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/tags/v0.1.20.zip
+```
+
+## Try it
+
+The menu names below are under Edit > Plugins. Scan and the two lookups are also on the right-click menu (CFIScope submenu). Use the menus rather than the hotkeys: on many Linux desktops `Ctrl-Alt-T` opens a terminal.
+
+Quick try, no download (about a minute). The repository ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`.
+
+1. Open `tests/fixtures/x86_64-kernel.o` (or `aarch64-kernel.o`) in IDA. After `hcli plugin install cfiscope` the fixtures are in `$IDAUSR/plugins/cfiscope/tests/fixtures/` (`~/.idapro/plugins/...` on Linux and macOS, `%APPDATA%\Hex-Rays\IDA Pro\plugins\...` on Windows).
+2. Choose **CFIScope: Scan kCFI calls**. It should find 21 kCFI call sites, one per function-pointer type in `t.c`, each with candidates (the counts are printed in the Output window).
+3. Put the cursor on the call in `do_call_2` and choose **CFIScope: Candidates for this call**. It should list `impl_2_0`, `impl_2_1`, `impl_2_2`.
+4. Put the cursor on `impl_2_1` and choose **CFIScope: Callers of this function**. It should list that call in `do_call_2`.
+
+A real kernel:
+
+1. Download the public aarch64 Android kernel used for the output above and the [numbers](docs/VERIFICATION.md): [gki-certified-boot-android14-6.1-2024-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip), extract the kernel with `python3 tools/extract_bootimg.py boot-6.1.img Image` (no dependencies), and restore its symbols with [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf): `vmlinux-to-elf Image gki.elf`.
+2. Open the resulting ELF in IDA and let auto-analysis finish.
+3. Choose **CFIScope: Scan kCFI calls**.
+4. On any `blr` preceded by a kCFI check, choose **CFIScope: Candidates for this call** to list the functions it can reach. On a function, choose **CFIScope: Callers of this function** to list the indirect calls that can reach it.
+
+## Features
+
+- **Scan kCFI calls** (`Ctrl-Alt-K`): comments every kCFI call site with the type hash and candidate count. Adds cross-references when the list is short (at most 16) and offers to create functions at candidates IDA has not recognised. It asks first; Cancel writes nothing.
+- **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach.
+- **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give.
+- **Remove annotations**: removes the comments and cross-references the scan added. Functions created when you answered Yes stay.
+- **Pseudocode comments** (with the Hex-Rays decompiler): the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2`.
+- **Linux 5.x jump-table CFI** (aarch64, Android 12/13 GKI 5.10 and 5.15, since v0.1.17): reads each call's candidates from the compiler's jump table. See [docs/JTCFI.md](docs/JTCFI.md).
+- **Command line and headless**: the scanner is plain Python 3 with no dependencies; `tools/cfiscope_headless.py` runs the plugin through idalib. See [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#without-ida-scripts-other-tools-ci).
+
+```
+python3 -m cfiscope vmlinux                         # summary
+python3 -m cfiscope vmlinux --sites                 # every call site and its candidates
+python3 -m cfiscope vmlinux --callers tcp_sendmsg   # indirect calls that can reach a function
+python3 -m cfiscope vmlinux --targets 0xffffffc008cc55ac
+python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
+```
+
+```
+python3 tools/cfiscope_headless.py vmlinux [--define-functions] [--remove] [--no-analysis]
+```
+
+Full description of each action: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#the-actions-in-full).
+
+## Limitations
+
+- **Not yet run inside real IDA.** The IDA layer was tested only against fake `ida_*` modules, the pseudocode comments only against a fake `ida_hexrays`.
+- **Candidates are type-compatible functions.** kCFI proves a function has the right type hash, not that a given call ever reaches it.
+- **Some lists are long.** Median 6 candidates per call that has any, but the largest lists have 1,458 to 1,812.
+- **No candidates for some calls.** On GKI 6.1, 1,937 of 13,897 sites carry a hash that no function in the image has.
+- **Not supported:** GCC-built kernels and x86-64 kernels with the jump-table CFI. The scan finds 0 sites and says so.
+- **Jump-table CFI:** aarch64 only, two kernels measured. Tracepoint and vendor-hook calls are not checked by design and stay unresolved. See [docs/JTCFI.md](docs/JTCFI.md#limits).
+- **Text bounds in IDA:** leaving out candidates in `.rodata` and data in practice needs the input ELF still at its path.
+- **Pseudocode comments** are display text only; nothing is saved in the database.
+- **Hotkeys:** many Linux desktops take `Ctrl-Alt-T` for a terminal and Keypatch uses `Ctrl-Alt-K`. Use the menus, or rebind the keys in Options > Shortcuts.
+
+## Status
+
+**CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is in [docs/VERIFICATION.md](docs/VERIFICATION.md): the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
+
+CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
 
 ## Credits
 
