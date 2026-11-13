@@ -73,6 +73,7 @@ def kcfi_hash(mangled):
 # A canonical type is a tuple:
 #   ("b", code)                builtin, e.g. ("b", "i")
 #   ("n", name)                struct / union / enum (or a typedef naming an anonymous one)
+#   ("s", name)                std::name (only AArch64's va_list, struct __va_list)
 #   ("p", t)                   pointer
 #   ("q", quals, t)            quals: a string of "r", "V", "K" (restrict, volatile, const)
 #   ("a", n, t)                array of n (n None: unknown bound)
@@ -102,6 +103,8 @@ def _plain(t):
         return t[1]
     if k == "n":
         return "%d%s" % (len(t[1].encode("utf-8")), t[1])
+    if k == "s":                          # std::name (AArch64's va_list is std::__va_list)
+        return "St%d%s" % (len(t[1]), t[1])
     if k == "p":
         return "P" + _plain(t[1])
     if k == "q":
@@ -130,7 +133,7 @@ class _Mangler:
         if key in self.subs:
             return _seq_id(self.subs[key])
         k = t[0]
-        if k == "n":
+        if k in ("n", "s"):
             out = key
         elif k == "p":
             out = "P" + self.type(t[1])
@@ -261,6 +264,8 @@ class BTF:
         if kind == K_TYPEDEF:
             return self.canon(st, depth + 1, name)
         if kind in (K_STRUCT, K_UNION, K_ENUM, K_ENUM64, K_FWD):
+            if name == "__va_list" and kind in (K_STRUCT, K_FWD):
+                return ("s", name)      # AAPCS64: va_list is struct std::__va_list, mangled St9__va_list
             if name:
                 return ("n", name)
             if typedef_name:
@@ -461,4 +466,5 @@ def name_sites(sites, names):
 
 def named_summary(named, total):
     """'kCFI hashes named: N of M (x%)'."""
-    return "kCFI hashes named: %d of %d (%.1f%%)" % (named, total, 100.0 * named / total if total else 0.0)
+    pct = int(1000 * named / total) / 10.0 if total else 0.0    # rounded down: 100.0% only when all are named
+    return "kCFI hashes named: %d of %d (%.1f%%)" % (named, total, pct)

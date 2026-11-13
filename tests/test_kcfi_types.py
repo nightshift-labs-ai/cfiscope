@@ -73,6 +73,15 @@ class Mangle(unittest.TestCase):
         self.assertEqual(K._param(f), ("p", f))
         self.assertEqual(K._param(("q", "K", ("b", "i"))), ("b", "i"))
 
+    def test_aarch64_va_list(self):
+        # AAPCS64 va_list is std::__va_list. 0x37b1f161 is the hash at btf_show's call of show->showfn in the
+        # GKI 6.1 kernel (candidates btf_seq_show, btf_snprintf_show), void (struct btf_show *, const char *, va_list).
+        f = ("f", ("b", "v"), [("p", ("n", "btf_show")), ("p", ("q", "K", ("b", "c"))), ("s", "__va_list")], False)
+        self.assertEqual(K.mangle(f), "_ZTSFvP8btf_showPKcSt9__va_listE")
+        self.assertEqual(K.kcfi_hash(K.mangle(f)), 0x37b1f161)
+        self.assertEqual(K.named_summary(4182, 4184), "kCFI hashes named: 4182 of 4184 (99.9%)")
+        self.assertEqual(K.named_summary(3, 3), "kCFI hashes named: 3 of 3 (100.0%)")
+
     def test_seq_ids(self):
         self.assertEqual([K._seq_id(i) for i in (0, 1, 10, 11, 36, 37)], ["S_", "S0_", "S9_", "SA_", "SZ_", "S10_"])
 
