@@ -224,7 +224,7 @@ class BTFNames(unittest.TestCase):
     def test_sites_text(self):
         rc, out, _ = run(self.A64, "--sites", "--btf", self.BTF)
         self.assertEqual(rc, 0)
-        self.assertIn("call hash 0x4f4ccb9d (int (file*, int))  1 candidate(s): ops_open", out)
+        self.assertIn("call hash 0x4f4ccb9d (int (struct file *, int))  1 candidate(s): ops_open", out)
         self.assertIn("call hash 0x1300e12b (long (short, int))  1 candidate(s): f_ls", out)
         self.assertIn("call hash 0x4a7b6fdc  0 candidate(s)", out)        # int (unsigned long): not in this BTF
 
@@ -236,7 +236,7 @@ class BTFNames(unittest.TestCase):
         doc = json.loads(out)
         self.assertEqual(doc["stats"]["kcfi_hashes_named"], 3)
         by_hash = {s["hash"]: s for s in doc["sites"]}
-        self.assertEqual(by_hash["0xf2e4b17f"]["type"], "void (file*, file*)")
+        self.assertEqual(by_hash["0xf2e4b17f"]["type"], "void (struct file *, struct file *)")
         self.assertEqual(by_hash["0xf2e4b17f"]["type_mangled"], "_ZTSFvP4fileS0_E")
         self.assertIn("ops.release", by_hash["0xf2e4b17f"]["type_examples"])
         self.assertIsNone(by_hash["0x4a7b6fdc"]["type"])

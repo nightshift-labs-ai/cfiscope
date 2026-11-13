@@ -72,7 +72,8 @@ def kcfi_hash(mangled):
 # ---- Itanium mangling of C function types ----
 # A canonical type is a tuple:
 #   ("b", code)                builtin, e.g. ("b", "i"); plain char is ("b", "c", "u2i8" or "u2u8") (its signedness)
-#   ("n", name)                struct / union / enum (or a typedef naming an anonymous one)
+#   ("n", name, tag)           struct / union / enum (tag "struct" / "union" / "enum"; "" for a typedef naming an
+#                              anonymous one; the tag is only used for the C label, c_type)
 #   ("s", name)                std::name (only AArch64's va_list, struct __va_list)
 #   ("p", t)                   pointer
 #   ("q", quals, t)            quals: a string of "r", "V", "K" (restrict, volatile, const)
@@ -163,6 +164,47 @@ class _Mangler:
             out = "F" + ret + _params(t[2], t[3], self.type) + "E"
         self.subs[key] = len(self.subs)
         return out
+
+
+_C_BASE = {"v": "void", "b": "_Bool", "c": "char", "a": "signed char", "h": "unsigned char", "s": "short",
+           "t": "unsigned short", "i": "int", "j": "unsigned int", "l": "long", "m": "unsigned long",
+           "x": "long long", "y": "unsigned long long", "n": "__int128", "o": "unsigned __int128",
+           "f": "float", "d": "double", "e": "long double", "g": "__float128", "DF16_": "_Float16"}
+_C_QUALS = (("K", "const"), ("V", "volatile"), ("r", "restrict"))
+
+
+def c_type(t, inner=""):
+    """C text of a canonical type t (see mangle()) around the declarator text `inner` ('' = abstract type), e.g.
+    'int (struct file *, void (*)(int))'."""
+    k = t[0]
+    if k == "b":
+        base = _C_BASE.get(t[1], t[1])
+    elif k == "n":
+        base = (t[2] + " " if len(t) > 2 and t[2] else "") + t[1]
+    elif k == "s":
+        base = "va_list" if t[1] == "__va_list" else "std::" + t[1]
+    elif k == "q":
+        quals = " ".join(w for c, w in _C_QUALS if c in t[1])
+        if t[2][0] == "p":                   # a qualified pointer: 'char *const'
+            return _pointer(t[2][1], "*" + quals + (" " + inner if inner else ""))
+        return quals + " " + c_type(t[2], inner)
+    elif k == "p":
+        return _pointer(t[1], "*" + inner)
+    elif k == "a":
+        return c_type(t[2], "%s[%s]" % (inner, "" if t[1] is None else t[1]))
+    elif k == "f":
+        if t[2] is None:                     # K&R "()"
+            return c_type(t[1], inner + "()")
+        params = [c_type(p) for p in t[2]] + (["..."] if t[3] else [])
+        return c_type(t[1], "%s(%s)" % (inner, ", ".join(params) or "void"))
+    else:
+        raise Unmangleable(k)
+    return base + (" " + inner if inner else "")
+
+
+def _pointer(pointee, text):
+    """A pointer declarator around the pointee: parentheses when it points at a function or an array."""
+    return c_type(pointee, "(%s)" % text if pointee[0] in ("f", "a") else text)
 
 
 def mangle(t, normalize=False):
@@ -286,10 +328,11 @@ class BTF:
         if kind in (K_STRUCT, K_UNION, K_ENUM, K_ENUM64, K_FWD):
             if name == "__va_list" and kind in (K_STRUCT, K_FWD):
                 return ("s", name)      # AAPCS64: va_list is struct std::__va_list, mangled St9__va_list
-            if name:
-                return ("n", name)
+            if name:  # the tag only matters for the C label (c_type); the mangling is the name alone
+                tag = {K_STRUCT: "struct", K_UNION: "union", K_ENUM: "enum", K_ENUM64: "enum"}.get(kind)
+                return ("n", name, tag or ("union" if kflag else "struct"))   # K_FWD: kflag 1 = union
             if typedef_name:
-                return ("n", typedef_name)
+                return ("n", typedef_name, "")
             raise Unmangleable("anonymous struct, union or enum")
         if kind == K_ARRAY:
             return ("a", extra[2], self.canon(extra[0], depth + 1))
@@ -403,6 +446,7 @@ class TypeNames:
     def __init__(self, btf, examples=3):
         self.by_hash = defaultdict(dict)
         self.plain_of = defaultdict(set)     # integer-normalized mangled name -> the plain mangled names behind it
+        self.readable = {}                   # plain mangled name -> C text (c_type of its canonical type)
         self.protos = self.unmangleable = 0
         funcs, others = defaultdict(list), defaultdict(list)    # FUNC_PROTO id -> names
         for tid, (kind, name, _kf, st, extra) in enumerate(btf.types):
@@ -436,6 +480,8 @@ class TypeNames:
                 variants.append((("f", t[1], None, False), False))
             for v, with_names in variants:
                 plain = mangle(v)
+                if plain not in self.readable:
+                    self.readable[plain] = c_type(v)
                 for mangled in (plain, mangle(v, normalize=True)):   # plain and integer-normalized kCFI
                     if mangled != plain:
                         self.plain_of[mangled].add(plain)
@@ -454,9 +500,10 @@ class TypeNames:
         """[(mangled, readable, examples)] for a 32-bit hash, [] if no prototype gives it."""
         out = []
         for mangled, ex in sorted(self.by_hash.get(h, {}).items()):
-            readable = demangle_type(mangled)
+            readable = self.readable.get(mangled) or demangle_type(mangled)
             if mangled in self.plain_of:       # one normalized name can stand for several C types (long, long long)
-                readable = " | ".join(sorted(demangle_type(p) or p for p in self.plain_of[mangled])) + " [normalized]"
+                readable = " | ".join(sorted(self.readable.get(p) or demangle_type(p) or p
+                                             for p in self.plain_of[mangled])) + " [normalized]"
             out.append((mangled, readable or mangled, list(ex)))
         return out
 

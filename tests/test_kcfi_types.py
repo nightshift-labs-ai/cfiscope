@@ -113,13 +113,53 @@ class FixtureBTF(unittest.TestCase):
         tn = K.load_type_names(read("kcfi_types_btf.o"))
         self.assertEqual(tn.unmangleable, 0)
         self.assertEqual(tn.lookup(0x2c94c37f),
-                         [("_ZTSFiP7sk_buffPKcPFviEE", "int (sk_buff*, char const*, void (*)(int))", ["f_skb"])])
-        self.assertEqual(tn.label(0x5cc832a4), "int (sk_buff*, sk_buff*)")
+                         [("_ZTSFiP7sk_buffPKcPFviEE", "int (struct sk_buff *, const char *, void (*)(int))", ["f_skb"])])
+        self.assertEqual(tn.label(0x5cc832a4), "int (struct sk_buff *, struct sk_buff *)")
         mangled, readable, ex = tn.lookup(0x4f4ccb9d)[0]
         self.assertEqual(mangled, "_ZTSFiP4fileiE")
         self.assertIn("ops_open", ex)
         self.assertIn("ops.open", ex)            # the struct member of the same type
         self.assertIsNone(tn.label(0x12345678))
+
+    def test_c_labels(self):
+        """Labels read as kernel C: struct/union/enum tags kept, a typedef that names an anonymous type kept, C
+        declarators for pointers to functions; the canonical type (typedefs of named types resolved, parameters
+        decayed, top-level qualifiers dropped), because that is what the hash covers."""
+        data = read("kcfi_types_btf.o")
+        btf = K.BTF(K.find_btf(data))
+        tn = K.load_type_names(data)
+        protos = proto_ids(btf)
+        want = {
+            "f_ls": "long (short, int)",
+            "f_skb": "int (struct sk_buff *, const char *, void (*)(int))",
+            "f_void": "void (void)",
+            "f_two": "int (struct sk_buff *, struct sk_buff *)",
+            "f_cc": "int (const char *, const char *)",
+            "f_u64": "unsigned long long (unsigned int, unsigned long long, _Bool)",
+            "f_uc": "unsigned char (signed char, char, unsigned short)",
+            "f_pte": "pte_t (pte_t, anon_e)",
+            "f_enum": "int (enum color, union u *)",
+            "f_va": "int (const char *, ...)",
+            "f_vp": "void *(const volatile void *, long long, unsigned long long)",
+            "f_arr": "int (int *, char *, int)",
+            "f_cbt": "void (void (*)(int), void (*)(int), struct file **)",
+            "f_fp2": "int (int (*)(struct file *, int), struct file *)",
+            "f_dbl": "double (float, double)",
+            "ops_open": "int (struct file *, int)",
+            "ops_release": "void (struct file *, struct file *)",
+        }
+        for name, text in sorted(want.items()):
+            with self.subTest(name):
+                h = K.kcfi_hash(K.mangle(btf.canon(protos[name])))
+                self.assertEqual(tn.label(h), text)
+
+    def test_c_type_declarators(self):
+        b = lambda c: ("b", c)
+        self.assertEqual(K.c_type(("p", ("q", "r", ("p", b("c"))))), "char *restrict *")
+        self.assertEqual(K.c_type(("p", ("a", 4, b("i")))), "int (*)[4]")
+        self.assertEqual(K.c_type(("p", ("p", ("f", b("v"), [b("i")], False)))), "void (**)(int)")
+        self.assertEqual(K.c_type(("f", ("p", ("f", b("i"), [], False)), [b("l")], False)), "int (*(long))(void)")
+        self.assertEqual(K.c_type(("q", "K", ("n", "x", "struct"))), "const struct x")
 
     def test_find_btf_raw_and_embedded(self):
         blob = K.find_btf(read("kcfi_types_btf.o"))

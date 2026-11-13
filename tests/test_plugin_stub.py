@@ -348,8 +348,8 @@ class BTFTypeNames(unittest.TestCase):
         sites, stats = il.scan()
         by_hash = {s.hash: s for s in sites}
         self.assertEqual(stats["kcfi_hashes_named"], 3)
-        self.assertIn("0x4F4CCB9D int (file*, int): 1 candidate(s)", il.describe(by_hash[0x4f4ccb9d]))
-        self.assertIn("(hash 0x4F4CCB9D, int (file*, int))", il.targets_title(by_hash[0x4f4ccb9d]))
+        self.assertIn("0x4F4CCB9D int (struct file *, int): 1 candidate(s)", il.describe(by_hash[0x4f4ccb9d]))
+        self.assertIn("(hash 0x4F4CCB9D, int (struct file *, int))", il.targets_title(by_hash[0x4f4ccb9d]))
         self.assertIn("0x4A7B6FDC: no implementation", il.describe(by_hash[0x4a7b6fdc]))   # not in this BTF
         self.assertRegex(il.pseudocode_text(by_hash[0x1300e12b]),
                          r"^CFIScope: 1 candidate of long \(short, int\): 0x[0-9a-fA-F]+$")
