@@ -1,0 +1,1055 @@
+{
+"source": "kcfi_oracle.c built by zig 0.17.1 (clang 22.1.8): x86_64-linux-gnu -fsanitize=kcfi -O1 (hash; aarch64 gives the same) and with -fsanitize-cfi-icall-experimental-normalize-integers (hash_normalized_ints); kcfi_oracle_btf.o = -target bpfel-freestanding-none -g -O2 (BTF). Regenerate: projects/ida-contest2026/review_s175/kcfi_oracle/README.txt",
+"functions": [
+{
+"fn": "f_void_void",
+"hash": 2772461324,
+"hash_normalized_ints": 3854859616,
+"in_btf": true
+},
+{
+"fn": "f_int_void",
+"hash": 917620134,
+"hash_normalized_ints": 1874538549,
+"in_btf": true
+},
+{
+"fn": "f_char",
+"hash": 1678808739,
+"hash_normalized_ints": 3038244441,
+"in_btf": true
+},
+{
+"fn": "f_schar",
+"hash": 3669641460,
+"hash_normalized_ints": 3038244441,
+"in_btf": true
+},
+{
+"fn": "f_uchar",
+"hash": 2367183222,
+"hash_normalized_ints": 2116364946,
+"in_btf": true
+},
+{
+"fn": "f_short",
+"hash": 1086226466,
+"hash_normalized_ints": 4078737356,
+"in_btf": true
+},
+{
+"fn": "f_ushort",
+"hash": 4012082024,
+"hash_normalized_ints": 4240541089,
+"in_btf": true
+},
+{
+"fn": "f_int",
+"hash": 329620,
+"hash_normalized_ints": 3453911627,
+"in_btf": true
+},
+{
+"fn": "f_uint",
+"hash": 1731883814,
+"hash_normalized_ints": 2010610996,
+"in_btf": true
+},
+{
+"fn": "f_long",
+"hash": 3006902709,
+"hash_normalized_ints": 816387977,
+"in_btf": true
+},
+{
+"fn": "f_ulong",
+"hash": 3342817626,
+"hash_normalized_ints": 3076381910,
+"in_btf": true
+},
+{
+"fn": "f_llong",
+"hash": 718145241,
+"hash_normalized_ints": 816387977,
+"in_btf": true
+},
+{
+"fn": "f_ullong",
+"hash": 1196738035,
+"hash_normalized_ints": 3076381910,
+"in_btf": true
+},
+{
+"fn": "f_bool",
+"hash": 1778703774,
+"hash_normalized_ints": 2116364946,
+"in_btf": true
+},
+{
+"fn": "f_i128",
+"hash": 800756143,
+"hash_normalized_ints": 2406903611,
+"in_btf": false
+},
+{
+"fn": "f_u128",
+"hash": 1278521738,
+"hash_normalized_ints": 1503366605,
+"in_btf": false
+},
+{
+"fn": "f_float",
+"hash": 3966942408,
+"hash_normalized_ints": 2286792485,
+"in_btf": true
+},
+{
+"fn": "f_double",
+"hash": 2456091273,
+"hash_normalized_ints": 2479828717,
+"in_btf": true
+},
+{
+"fn": "f_ldouble",
+"hash": 1093002707,
+"hash_normalized_ints": 314646207,
+"in_btf": true
+},
+{
+"fn": "f_mixed_ints",
+"hash": 2566068873,
+"hash_normalized_ints": 1347057983,
+"in_btf": false
+},
+{
+"fn": "f_mixed_ints2",
+"hash": 2988180971,
+"hash_normalized_ints": 2810254388,
+"in_btf": true
+},
+{
+"fn": "f_float_mix",
+"hash": 1795960187,
+"hash_normalized_ints": 3462489825,
+"in_btf": true
+},
+{
+"fn": "f_short_int",
+"hash": 318824747,
+"hash_normalized_ints": 3789023865,
+"in_btf": true
+},
+{
+"fn": "t_u8",
+"hash": 2367183222,
+"hash_normalized_ints": 2116364946,
+"in_btf": true
+},
+{
+"fn": "t_u16",
+"hash": 4012082024,
+"hash_normalized_ints": 4240541089,
+"in_btf": true
+},
+{
+"fn": "t_u32",
+"hash": 1731883814,
+"hash_normalized_ints": 2010610996,
+"in_btf": true
+},
+{
+"fn": "t_u64",
+"hash": 1196738035,
+"hash_normalized_ints": 3076381910,
+"in_btf": true
+},
+{
+"fn": "t_s8",
+"hash": 3669641460,
+"hash_normalized_ints": 3038244441,
+"in_btf": true
+},
+{
+"fn": "t_s32",
+"hash": 329620,
+"hash_normalized_ints": 3453911627,
+"in_btf": true
+},
+{
+"fn": "t_s64",
+"hash": 718145241,
+"hash_normalized_ints": 816387977,
+"in_btf": true
+},
+{
+"fn": "t_size",
+"hash": 3342817626,
+"hash_normalized_ints": 3076381910,
+"in_btf": true
+},
+{
+"fn": "t_ssize",
+"hash": 348550756,
+"hash_normalized_ints": 2729838637,
+"in_btf": true
+},
+{
+"fn": "t_bool",
+"hash": 1778703774,
+"hash_normalized_ints": 2116364946,
+"in_btf": true
+},
+{
+"fn": "t_gfp",
+"hash": 494557411,
+"hash_normalized_ints": 3044484860,
+"in_btf": true
+},
+{
+"fn": "t_loff",
+"hash": 3860367326,
+"hash_normalized_ints": 3576144094,
+"in_btf": true
+},
+{
+"fn": "t_umode",
+"hash": 2365033535,
+"hash_normalized_ints": 1115440784,
+"in_btf": true
+},
+{
+"fn": "t_pid",
+"hash": 1961665282,
+"hash_normalized_ints": 916516019,
+"in_btf": true
+},
+{
+"fn": "t_phys",
+"hash": 820972915,
+"hash_normalized_ints": 1102547714,
+"in_btf": true
+},
+{
+"fn": "t_uintptr",
+"hash": 2192597484,
+"hash_normalized_ints": 139514420,
+"in_btf": true
+},
+{
+"fn": "t_ktime",
+"hash": 1915797290,
+"hash_normalized_ints": 3862961341,
+"in_btf": true
+},
+{
+"fn": "t_poll",
+"hash": 2246419998,
+"hash_normalized_ints": 192430538,
+"in_btf": true
+},
+{
+"fn": "t_blk",
+"hash": 3548147851,
+"hash_normalized_ints": 927602968,
+"in_btf": true
+},
+{
+"fn": "t_vmfault",
+"hash": 1469081112,
+"hash_normalized_ints": 51062245,
+"in_btf": true
+},
+{
+"fn": "t_le32",
+"hash": 4111905741,
+"hash_normalized_ints": 932471953,
+"in_btf": true
+},
+{
+"fn": "same_u64_a",
+"hash": 3269056504,
+"hash_normalized_ints": 683691546,
+"in_btf": true
+},
+{
+"fn": "same_u64_b",
+"hash": 3269056504,
+"hash_normalized_ints": 683691546,
+"in_btf": true
+},
+{
+"fn": "same_u64_c",
+"hash": 3269056504,
+"hash_normalized_ints": 683691546,
+"in_btf": true
+},
+{
+"fn": "same_irq_a",
+"hash": 4178511350,
+"hash_normalized_ints": 3538947041,
+"in_btf": true
+},
+{
+"fn": "same_irq_b",
+"hash": 4178511350,
+"hash_normalized_ints": 3538947041,
+"in_btf": true
+},
+{
+"fn": "same_size_a",
+"hash": 2860393327,
+"hash_normalized_ints": 1353875199,
+"in_btf": true
+},
+{
+"fn": "same_size_b",
+"hash": 2860393327,
+"hash_normalized_ints": 1353875199,
+"in_btf": true
+},
+{
+"fn": "same_bool_a",
+"hash": 801698938,
+"hash_normalized_ints": 977034957,
+"in_btf": true
+},
+{
+"fn": "same_bool_b",
+"hash": 801698938,
+"hash_normalized_ints": 977034957,
+"in_btf": true
+},
+{
+"fn": "same_work_a",
+"hash": 3093299638,
+"hash_normalized_ints": 2785506444,
+"in_btf": true
+},
+{
+"fn": "same_work_b",
+"hash": 3093299638,
+"hash_normalized_ints": 2785506444,
+"in_btf": true
+},
+{
+"fn": "same_fp_a",
+"hash": 1233600898,
+"hash_normalized_ints": 2507530936,
+"in_btf": true
+},
+{
+"fn": "same_fp_b",
+"hash": 1233600898,
+"hash_normalized_ints": 2507530936,
+"in_btf": true
+},
+{
+"fn": "same_long_a",
+"hash": 3006902709,
+"hash_normalized_ints": 816387977,
+"in_btf": true
+},
+{
+"fn": "same_long_b",
+"hash": 3006902709,
+"hash_normalized_ints": 816387977,
+"in_btf": true
+},
+{
+"fn": "same_long_c",
+"hash": 3006902709,
+"hash_normalized_ints": 816387977,
+"in_btf": true
+},
+{
+"fn": "same_uint_a",
+"hash": 1731883814,
+"hash_normalized_ints": 2010610996,
+"in_btf": true
+},
+{
+"fn": "s_skb",
+"hash": 493685942,
+"hash_normalized_ints": 3012872988,
+"in_btf": true
+},
+{
+"fn": "s_netdev_xmit",
+"hash": 1155890755,
+"hash_normalized_ints": 3296811791,
+"in_btf": true
+},
+{
+"fn": "s_list",
+"hash": 2554280331,
+"hash_normalized_ints": 1124527682,
+"in_btf": true
+},
+{
+"fn": "s_list_same",
+"hash": 3197800409,
+"hash_normalized_ints": 1515012537,
+"in_btf": true
+},
+{
+"fn": "s_rcu",
+"hash": 2127083732,
+"hash_normalized_ints": 681213752,
+"in_btf": true
+},
+{
+"fn": "s_cbhead",
+"hash": 2914817336,
+"hash_normalized_ints": 3562901482,
+"in_btf": true
+},
+{
+"fn": "s_union_inc",
+"hash": 84066767,
+"hash_normalized_ints": 440073936,
+"in_btf": true
+},
+{
+"fn": "s_union_comp",
+"hash": 2879728744,
+"hash_normalized_ints": 3574899648,
+"in_btf": true
+},
+{
+"fn": "s_enum_dir",
+"hash": 3843676347,
+"hash_normalized_ints": 1185639525,
+"in_btf": true
+},
+{
+"fn": "s_enum_fwd",
+"hash": 1517162888,
+"hash_normalized_ints": 2868711355,
+"in_btf": true
+},
+{
+"fn": "s_seq_show",
+"hash": 3618992887,
+"hash_normalized_ints": 1128220431,
+"in_btf": true
+},
+{
+"fn": "s_seq_start",
+"hash": 288890297,
+"hash_normalized_ints": 2363279940,
+"in_btf": true
+},
+{
+"fn": "s_open",
+"hash": 2399652437,
+"hash_normalized_ints": 2552825629,
+"in_btf": true
+},
+{
+"fn": "s_read",
+"hash": 3899056884,
+"hash_normalized_ints": 4061415194,
+"in_btf": true
+},
+{
+"fn": "s_uread",
+"hash": 3899056884,
+"hash_normalized_ints": 4061415194,
+"in_btf": true
+},
+{
+"fn": "s_write",
+"hash": 2590379680,
+"hash_normalized_ints": 3515970078,
+"in_btf": true
+},
+{
+"fn": "s_ioctl",
+"hash": 3759409357,
+"hash_normalized_ints": 720817595,
+"in_btf": true
+},
+{
+"fn": "s_mmap",
+"hash": 2241513476,
+"hash_normalized_ints": 2111916748,
+"in_btf": true
+},
+{
+"fn": "s_read_iter",
+"hash": 3323420419,
+"hash_normalized_ints": 2403374832,
+"in_btf": true
+},
+{
+"fn": "s_timer",
+"hash": 2444535866,
+"hash_normalized_ints": 1184366065,
+"in_btf": true
+},
+{
+"fn": "s_probe",
+"hash": 1061512543,
+"hash_normalized_ints": 711998475,
+"in_btf": true
+},
+{
+"fn": "s_sendmsg",
+"hash": 515746101,
+"hash_normalized_ints": 3773571745,
+"in_btf": true
+},
+{
+"fn": "s_sock",
+"hash": 1923820074,
+"hash_normalized_ints": 3117230053,
+"in_btf": true
+},
+{
+"fn": "s_page",
+"hash": 2550275331,
+"hash_normalized_ints": 2654229997,
+"in_btf": true
+},
+{
+"fn": "s_super",
+"hash": 3595689386,
+"hash_normalized_ints": 3476772750,
+"in_btf": true
+},
+{
+"fn": "a_atomic_read",
+"hash": 281839347,
+"hash_normalized_ints": 3382144539,
+"in_btf": true
+},
+{
+"fn": "a_atomic_add",
+"hash": 2399537993,
+"hash_normalized_ints": 1588881306,
+"in_btf": true
+},
+{
+"fn": "a_atomic64",
+"hash": 3083592869,
+"hash_normalized_ints": 1152158554,
+"in_btf": true
+},
+{
+"fn": "a_pgprot",
+"hash": 203971617,
+"hash_normalized_ints": 932383634,
+"in_btf": false
+},
+{
+"fn": "a_swp",
+"hash": 3896308561,
+"hash_normalized_ints": 1739898248,
+"in_btf": false
+},
+{
+"fn": "a_mode",
+"hash": 3741936565,
+"hash_normalized_ints": 487965017,
+"in_btf": true
+},
+{
+"fn": "a_word",
+"hash": 162621841,
+"hash_normalized_ints": 2855081110,
+"in_btf": true
+},
+{
+"fn": "a_named_tag",
+"hash": 1716137702,
+"hash_normalized_ints": 2587071327,
+"in_btf": true
+},
+{
+"fn": "a_named_tag2",
+"hash": 1716137702,
+"hash_normalized_ints": 2587071327,
+"in_btf": true
+},
+{
+"fn": "a_anon_inc",
+"hash": 1315591842,
+"hash_normalized_ints": 1239491967,
+"in_btf": true
+},
+{
+"fn": "q_const_char",
+"hash": 3053840481,
+"hash_normalized_ints": 4151226421,
+"in_btf": true
+},
+{
+"fn": "q_const_void",
+"hash": 3482303373,
+"hash_normalized_ints": 1086156188,
+"in_btf": true
+},
+{
+"fn": "q_volatile",
+"hash": 3450577848,
+"hash_normalized_ints": 992043932,
+"in_btf": true
+},
+{
+"fn": "q_volatile2",
+"hash": 207477628,
+"hash_normalized_ints": 3641839180,
+"in_btf": true
+},
+{
+"fn": "q_restrict",
+"hash": 2537456772,
+"hash_normalized_ints": 3907039263,
+"in_btf": true
+},
+{
+"fn": "q_restrict_pp",
+"hash": 3069442643,
+"hash_normalized_ints": 1268966615,
+"in_btf": true
+},
+{
+"fn": "q_toplevel_const",
+"hash": 2322033959,
+"hash_normalized_ints": 2128255708,
+"in_btf": true
+},
+{
+"fn": "q_toplevel_const2",
+"hash": 2322033959,
+"hash_normalized_ints": 2128255708,
+"in_btf": true
+},
+{
+"fn": "q_toplevel_constptr",
+"hash": 1109234670,
+"hash_normalized_ints": 3738081740,
+"in_btf": true
+},
+{
+"fn": "q_const_ret",
+"hash": 858328921,
+"hash_normalized_ints": 2028872450,
+"in_btf": true
+},
+{
+"fn": "q_const_ret_toplevel",
+"hash": 4163143612,
+"hash_normalized_ints": 2681198727,
+"in_btf": true
+},
+{
+"fn": "q_cv_struct",
+"hash": 3250954167,
+"hash_normalized_ints": 642851577,
+"in_btf": true
+},
+{
+"fn": "p_pp",
+"hash": 1710388498,
+"hash_normalized_ints": 2360481873,
+"in_btf": true
+},
+{
+"fn": "p_pcp",
+"hash": 574000934,
+"hash_normalized_ints": 1919867112,
+"in_btf": true
+},
+{
+"fn": "p_cpcp",
+"hash": 643799136,
+"hash_normalized_ints": 26199942,
+"in_btf": true
+},
+{
+"fn": "p_ppp",
+"hash": 1432495665,
+"hash_normalized_ints": 3638059736,
+"in_btf": true
+},
+{
+"fn": "p_ppstruct",
+"hash": 1920971027,
+"hash_normalized_ints": 1371740900,
+"in_btf": true
+},
+{
+"fn": "p_const_pp",
+"hash": 3792595754,
+"hash_normalized_ints": 1413881431,
+"in_btf": true
+},
+{
+"fn": "arr_int",
+"hash": 987060938,
+"hash_normalized_ints": 160323275,
+"in_btf": true
+},
+{
+"fn": "arr_int16",
+"hash": 987060938,
+"hash_normalized_ints": 160323275,
+"in_btf": true
+},
+{
+"fn": "arr_ptr",
+"hash": 987060938,
+"hash_normalized_ints": 160323275,
+"in_btf": true
+},
+{
+"fn": "arr_const_char",
+"hash": 1227882357,
+"hash_normalized_ints": 2193983687,
+"in_btf": true
+},
+{
+"fn": "arr_2d",
+"hash": 3639438673,
+"hash_normalized_ints": 2476585492,
+"in_btf": true
+},
+{
+"fn": "arr_static",
+"hash": 1098267292,
+"hash_normalized_ints": 3473768378,
+"in_btf": true
+},
+{
+"fn": "arr_const_q",
+"hash": 2114736805,
+"hash_normalized_ints": 3086893964,
+"in_btf": true
+},
+{
+"fn": "arr_struct",
+"hash": 927551155,
+"hash_normalized_ints": 292474158,
+"in_btf": true
+},
+{
+"fn": "fp_param",
+"hash": 1204518899,
+"hash_normalized_ints": 1473427937,
+"in_btf": true
+},
+{
+"fn": "fp_cmp",
+"hash": 3551890504,
+"hash_normalized_ints": 1770300323,
+"in_btf": true
+},
+{
+"fn": "fp_irq",
+"hash": 3316958161,
+"hash_normalized_ints": 3800948273,
+"in_btf": true
+},
+{
+"fn": "fp_rcu",
+"hash": 2855387340,
+"hash_normalized_ints": 2484512880,
+"in_btf": true
+},
+{
+"fn": "fp_judge",
+"hash": 747946879,
+"hash_normalized_ints": 2394171957,
+"in_btf": true
+},
+{
+"fn": "fp_ret",
+"hash": 605907920,
+"hash_normalized_ints": 3144251321,
+"in_btf": true
+},
+{
+"fn": "fp_ret_typedef",
+"hash": 885097956,
+"hash_normalized_ints": 2132153942,
+"in_btf": true
+},
+{
+"fn": "fp_ptr_to_fp",
+"hash": 3692652930,
+"hash_normalized_ints": 2682037399,
+"in_btf": true
+},
+{
+"fn": "fp_ptr_to_fp2",
+"hash": 324797439,
+"hash_normalized_ints": 3587588404,
+"in_btf": true
+},
+{
+"fn": "fp_const_fp",
+"hash": 131620657,
+"hash_normalized_ints": 3657313761,
+"in_btf": true
+},
+{
+"fn": "fp_nested",
+"hash": 1020061294,
+"hash_normalized_ints": 510362722,
+"in_btf": true
+},
+{
+"fn": "fp_variadic_cb",
+"hash": 1271735874,
+"hash_normalized_ints": 3623644401,
+"in_btf": true
+},
+{
+"fn": "fp_noproto_cb",
+"hash": 856725659,
+"hash_normalized_ints": 3967782618,
+"in_btf": true
+},
+{
+"fn": "v_printk",
+"hash": 4283365212,
+"hash_normalized_ints": 1326429767,
+"in_btf": false
+},
+{
+"fn": "v_snprintf",
+"hash": 457189731,
+"hash_normalized_ints": 2713405522,
+"in_btf": false
+},
+{
+"fn": "v_dev_err",
+"hash": 2434500107,
+"hash_normalized_ints": 2766979476,
+"in_btf": false
+},
+{
+"fn": "v_seq_printf",
+"hash": 3269769466,
+"hash_normalized_ints": 2644427295,
+"in_btf": false
+},
+{
+"fn": "n_void_params",
+"hash": 1922186383,
+"hash_normalized_ints": 3862961341,
+"in_btf": true
+},
+{
+"fn": "n_noproto",
+"hash": 3048444764,
+"hash_normalized_ints": 3790767837,
+"in_btf": true
+},
+{
+"fn": "n_noproto_int",
+"hash": 2571006860,
+"hash_normalized_ints": 3174079847,
+"in_btf": true
+},
+{
+"fn": "bv_small",
+"hash": 3261813389,
+"hash_normalized_ints": 2820786378,
+"in_btf": true
+},
+{
+"fn": "bv_big",
+"hash": 4163913184,
+"hash_normalized_ints": 3999269305,
+"in_btf": true
+},
+{
+"fn": "bv_ret_small",
+"hash": 388597958,
+"hash_normalized_ints": 2052837780,
+"in_btf": false
+},
+{
+"fn": "bv_union",
+"hash": 104332862,
+"hash_normalized_ints": 3772042044,
+"in_btf": true
+},
+{
+"fn": "bv_list",
+"hash": 2865758667,
+"hash_normalized_ints": 389490693,
+"in_btf": false
+},
+{
+"fn": "ld_ret",
+"hash": 2934854651,
+"hash_normalized_ints": 25134825,
+"in_btf": true
+},
+{
+"fn": "ld_ptr",
+"hash": 1889679034,
+"hash_normalized_ints": 3282582483,
+"in_btf": true
+},
+{
+"fn": "m_six",
+"hash": 576778229,
+"hash_normalized_ints": 3169662982,
+"in_btf": false
+},
+{
+"fn": "m_eight",
+"hash": 498736786,
+"hash_normalized_ints": 1405440140,
+"in_btf": false
+},
+{
+"fn": "m_void_ptr",
+"hash": 946980743,
+"hash_normalized_ints": 2857171630,
+"in_btf": true
+},
+{
+"fn": "m_void_ptr_const",
+"hash": 3913865929,
+"hash_normalized_ints": 2049944214,
+"in_btf": true
+},
+{
+"fn": "m_char_ptr_ret",
+"hash": 2414135555,
+"hash_normalized_ints": 3140633756,
+"in_btf": true
+},
+{
+"fn": "m_noreturn",
+"hash": 1227882357,
+"hash_normalized_ints": 2193983687,
+"in_btf": true
+},
+{
+"fn": "m_irq_thread",
+"hash": 4178511350,
+"hash_normalized_ints": 3538947041,
+"in_btf": true
+},
+{
+"fn": "m_bool_ptr",
+"hash": 1422495399,
+"hash_normalized_ints": 3018538658,
+"in_btf": true
+},
+{
+"fn": "m_ptr_bool",
+"hash": 863705270,
+"hash_normalized_ints": 3654099650,
+"in_btf": true
+},
+{
+"fn": "m_u8_ptr",
+"hash": 1921876763,
+"hash_normalized_ints": 3108481113,
+"in_btf": true
+},
+{
+"fn": "m_ptr_char_types",
+"hash": 1527553922,
+"hash_normalized_ints": 3685976313,
+"in_btf": true
+},
+{
+"fn": "m_float_ptr",
+"hash": 3332160622,
+"hash_normalized_ints": 3048641791,
+"in_btf": true
+},
+{
+"fn": "m_task",
+"hash": 2314953021,
+"hash_normalized_ints": 3228165220,
+"in_btf": true
+},
+{
+"fn": "m_bpf",
+"hash": 2655455657,
+"hash_normalized_ints": 1965108321,
+"in_btf": true
+},
+{
+"fn": "m_ptr_size_t",
+"hash": 2366565571,
+"hash_normalized_ints": 722332872,
+"in_btf": true
+},
+{
+"fn": "m_list_cmp",
+"hash": 3336045579,
+"hash_normalized_ints": 2465692031,
+"in_btf": true
+},
+{
+"fn": "m_struct_ptr_ret_dev",
+"hash": 404524889,
+"hash_normalized_ints": 3406891618,
+"in_btf": true
+},
+{
+"fn": "m_enum_param",
+"hash": 1405460178,
+"hash_normalized_ints": 1173569190,
+"in_btf": true
+},
+{
+"fn": "m_ptr_enum",
+"hash": 3094596918,
+"hash_normalized_ints": 961538404,
+"in_btf": true
+},
+{
+"fn": "m_ptr_ptr_fn",
+"hash": 1454528658,
+"hash_normalized_ints": 3414465784,
+"in_btf": true
+},
+{
+"fn": "m_volatile_int",
+"hash": 3747971642,
+"hash_normalized_ints": 3799433973,
+"in_btf": true
+},
+{
+"fn": "m_volatile_toplevel",
+"hash": 27004076,
+"hash_normalized_ints": 1162514891,
+"in_btf": true
+},
+{
+"fn": "m_ptr_int128",
+"hash": 2807278716,
+"hash_normalized_ints": 3414394466,
+"in_btf": true
+},
+{
+"fn": "m_func_returning_ptr_arr",
+"hash": 1382660942,
+"hash_normalized_ints": 4135592202,
+"in_btf": true
+},
+{
+"fn": "m_ptr_arr_param",
+"hash": 3706827345,
+"hash_normalized_ints": 25585673,
+"in_btf": true
+},
+{
+"fn": "m_char_arr_ptr",
+"hash": 1021558779,
+"hash_normalized_ints": 4215829536,
+"in_btf": true
+}
+]
+}

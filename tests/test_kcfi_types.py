@@ -109,6 +109,32 @@ class FixtureBTF(unittest.TestCase):
                 checked += 1
         self.assertEqual(checked, 17)
 
+    def test_oracle_corpus(self):
+        """175 kernel-style prototypes (kcfi_oracle.c), hashes from clang; 162 reach BTF (the bpf target rejects
+        the rest). Every one matches in both modes except K&R 'f()' definitions, which BTF records like 'f(void)'
+        (the kernel forbids them: -Werror=strict-prototypes)."""
+        import json
+        with open(os.path.join(FIX, "kcfi_oracle_truth.json")) as fh:
+            truth = [x for x in json.load(fh)["functions"] if x["in_btf"]]
+        btf = K.BTF(K.find_btf(read("kcfi_oracle_btf.o")))
+        protos = proto_ids(btf)
+        for kind, name, _kf, st, extra in btf.types:      # bodies the bpf target cannot build: struct members
+            if kind in (K.K_STRUCT, K.K_UNION):
+                for moff, mtid, _o in extra:
+                    pid = K._proto_behind(btf, mtid)
+                    if pid:
+                        protos.setdefault(btf.name(moff), pid)
+        miss, missn = [], []
+        for x in truth:
+            t = btf.canon(protos[x["fn"]])
+            if K.kcfi_hash(K.mangle(t)) != x["hash"]:
+                miss.append(x["fn"])
+            if K.kcfi_hash(K.mangle(t, normalize=True)) != x["hash_normalized_ints"]:  # x86-64
+                missn.append(x["fn"])
+        self.assertEqual(len(truth), 162)
+        self.assertEqual(sorted(miss), ["n_noproto", "n_noproto_int"])
+        self.assertEqual(sorted(missn), ["n_noproto", "n_noproto_int"])
+
     def test_type_names_table(self):
         tn = K.load_type_names(read("kcfi_types_btf.o"))
         self.assertEqual(tn.unmangleable, 0)
