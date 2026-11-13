@@ -138,7 +138,8 @@ class FixtureBTF(unittest.TestCase):
     def test_normalized_integers_match_arm64_preamble(self):
         """kcfi_types_a64_norm.o = kcfi_types.c for aarch64 with -fsanitize-cfi-icall-experimental-normalize-integers
         (zig 0.17.1 / clang 22.1.8). arm64's plain char is unsigned (u2u8); the fixture's BTF comes from the bpf
-        target, where it is signed, so plain char is set to arm64's here (a kernel's own BTF carries the right one)."""
+        target, where it is signed, so plain char is set to arm64's here. (Kernel BTF from pahole does not mark plain char
+        signed, and every kernel since Linux 6.2 builds it unsigned, so the unmarked default, unsigned, fits there.)"""
         def arm64_char(t):
             if t[0] == "b":
                 return ("b", "c", "u2u8") if t[1] == "c" else t

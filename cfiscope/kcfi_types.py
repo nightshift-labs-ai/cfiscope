@@ -304,7 +304,8 @@ class BTF:
             code = _INT_NAMES.get(name)
             if code is None:
                 raise Unmangleable("unknown int type %r" % name)
-            if code == "c":                  # BTF_INT_SIGNED: plain char's signedness, for normalized integers
+            if code == "c":                  # BTF_INT_SIGNED: plain char's signedness, for normalized integers (pahole never
+                                             # sets it: unsigned, as kernels >= 6.2 build char on every arch)
                 return ("b", "c", "u2i8" if (extra >> 24) & 1 else "u2u8")
             return ("b", code)
         if kind == K_FLOAT:
@@ -532,7 +533,7 @@ class TypeNames:
         return out
 
     def label(self, h):
-        """Readable type(s) of a hash ('int (file*, int)'), ' | ' between collisions; None if unknown."""
+        """Readable C type(s) of a hash ('int (struct file *, int)'), ' | ' between collisions; None if unknown."""
         names = [r for _m, r, _e in self.lookup(h)]
         return " | ".join(names) if names else None
 

@@ -30,7 +30,7 @@ class Site:
     # Jump-table CFI (Linux 5.x) only; kCFI sites keep the defaults.
     kind: str = "kcfi"     # "kcfi", or "range" / "single" / "slowpath" for jump-table CFI
     type_id: int = None    # 64-bit cross-DSO type id (MD5 of the mangled type name), when known
-    type_name: str = None  # demangled type, e.g. "int (file*, int)", when symbols name it
+    type_name: str = None  # the type: C from BTF for kCFI ("int (struct file *, int)"), demangled for jump-table CFI
     type_mangled: str = None  # e.g. "_ZTSFiP4fileiE"
     jt_base: int = 0       # first jump-table entry the check accepts
     jt_count: int = 0      # number of entries it accepts
