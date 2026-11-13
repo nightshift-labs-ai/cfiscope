@@ -153,7 +153,7 @@ Full description of each action: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#the
 
 - **Not yet run inside real IDA.** The IDA layer was tested only against fake `ida_*` modules, the pseudocode comments only against a fake `ida_hexrays`.
 - **Candidates are type-compatible functions.** kCFI proves a function has the right type hash, not that a given call ever reaches it.
-- **Some lists are long.** Median 6 candidates per call that has any, but the largest lists have 1,458 to 1,812.
+- **Some lists are long.** On each of the four kCFI GKI kernels measured, the median is 6 candidates per call that has any, but the largest list has 1,458 to 1,812.
 - **No candidates for some calls.** On GKI 6.1, 1,937 of 13,897 sites carry a hash that no function in the image has.
 - **Not supported:** GCC-built kernels and x86-64 kernels with the jump-table CFI. The scan finds 0 sites and says so.
 - **Jump-table CFI:** aarch64 only, two kernels measured. Tracepoint and vendor-hook calls are not checked by design and stay unresolved. See [docs/JTCFI.md](docs/JTCFI.md#limits).
