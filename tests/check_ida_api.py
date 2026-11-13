@@ -32,7 +32,8 @@ MEMBERS = [("ida_hexrays", "Hexrays_Hooks", m) for m in ("func_printed", "hook",
     [("ida_hexrays", "eamap_t", "__iter__"), ("ida_hexrays", "eamap_t", "__getitem__"),
      ("ida_hexrays", "cinsnptrvec_t", "__iter__"), ("ida_pro", "strvec_t", "__getitem__"),
      ("ida_pro", "strvec_t", "__len__"), ("ida_kernwin", "simpleline_t", "line"),
-     ("ida_funcs", "func_t", "tailqty")]   # in_cfi_runtime: a function with tail chunks is judged by name only
+     ("ida_funcs", "func_t", "tailqty")] + \
+    [("ida_netnode", "netnode", m) for m in ("hashset_buf", "hashstr_buf", "index", "kill")]   # the scan marker
 for mod, cls, name in MEMBERS:
     checked += 1
     body = re.search(r"^class %s\b.*?(?=^class |\Z)" % cls, open(os.path.join(sys.argv[1], mod + ".pyi")).read(), re.M | re.S)
