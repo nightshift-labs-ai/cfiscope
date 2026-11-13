@@ -71,7 +71,7 @@ def kcfi_hash(mangled):
 
 # ---- Itanium mangling of C function types ----
 # A canonical type is a tuple:
-#   ("b", code)                builtin, e.g. ("b", "i")
+#   ("b", code)                builtin, e.g. ("b", "i"); plain char is ("b", "c", "u2i8" or "u2u8") (its signedness)
 #   ("n", name)                struct / union / enum (or a typedef naming an anonymous one)
 #   ("s", name)                std::name (only AArch64's va_list, struct __va_list)
 #   ("p", t)                   pointer
@@ -124,13 +124,28 @@ def _params(params, varargs, fn):
     return "".join(fn(p) for p in params) + ("z" if varargs else "")
 
 
+# -fsanitize-cfi-icall-experimental-normalize-integers (CONFIG_CFI_ICALL_NORMALIZE_INTEGERS, kernels with Rust):
+# integer builtins become vendor types by size and signedness, substituted by one representative per name, and
+# the mangled name gets the suffix ".normalized".
+_NORM = {"a": "u2i8", "h": "u2u8", "b": "u2u8", "s": "u3i16", "t": "u3u16", "i": "u3i32", "j": "u3u32",
+         "l": "u3i64", "m": "u3u64", "x": "u3i64", "y": "u3u64", "n": "u4i128", "o": "u4u128"}
+
+
 class _Mangler:
-    def __init__(self):
+    def __init__(self, normalize=False):
         self.subs = {}
+        self.normalize = normalize
 
     def type(self, t):
         if t[0] == "b":
-            return t[1]
+            v = (t[2] if len(t) > 2 else _NORM.get(t[1])) if self.normalize else None
+            if v is None:
+                return t[1]
+            key = "#" + v
+            if key in self.subs:
+                return _seq_id(self.subs[key])
+            self.subs[key] = len(self.subs)
+            return v
         key = _plain(t)
         if key in self.subs:
             return _seq_id(self.subs[key])
@@ -150,11 +165,12 @@ class _Mangler:
         return out
 
 
-def mangle(t):
-    """'_ZTS' + the Itanium mangling of a canonical function type (see above)."""
+def mangle(t, normalize=False):
+    """'_ZTS' + the Itanium mangling of a canonical function type (see above); with normalize, the
+    integer-normalized form ('_ZTSFu3i64u3i16u3i32E.normalized')."""
     if t[0] != "f":
         raise Unmangleable("not a function type")
-    return "_ZTS" + _Mangler().type(t)
+    return "_ZTS" + _Mangler(normalize).type(t) + (".normalized" if normalize else "")
 
 
 # ---- BTF ----
@@ -246,6 +262,8 @@ class BTF:
             code = _INT_NAMES.get(name)
             if code is None:
                 raise Unmangleable("unknown int type %r" % name)
+            if code == "c":                  # BTF_INT_SIGNED: plain char's signedness, for normalized integers
+                return ("b", "c", "u2i8" if (extra >> 24) & 1 else "u2u8")
             return ("b", code)
         if kind == K_FLOAT:
             if name not in _FLOAT_NAMES:
@@ -384,6 +402,7 @@ class TypeNames:
 
     def __init__(self, btf, examples=3):
         self.by_hash = defaultdict(dict)
+        self.plain_of = defaultdict(set)     # integer-normalized mangled name -> the plain mangled names behind it
         self.protos = self.unmangleable = 0
         funcs, others = defaultdict(list), defaultdict(list)    # FUNC_PROTO id -> names
         for tid, (kind, name, _kf, st, extra) in enumerate(btf.types):
@@ -404,19 +423,26 @@ class TypeNames:
                 continue
             self.protos += 1
             try:
-                mangled = mangle(btf.canon(tid))
+                t = btf.canon(tid)
+                mangle(t)
             except Unmangleable:
                 self.unmangleable += 1
                 continue
-            fs, os_ = seen.setdefault(mangled, ([], []))
-            fs.extend(n for n in funcs.get(tid, ()) if len(fs) < examples)
-            os_.extend(n for n in others.get(tid, ()) if len(os_) < examples)
+            variants = [(t, True)]
             if not btf.types[tid][4] and tid in funcs:
                 # A function defined "long f()" (K&R) and one defined "long f(void)" have the same BTF
                 # (FUNC_PROTO, vlen 0) but different kCFI hashes (_ZTSFlE, _ZTSFlvE).  The K&R type is
                 # entered too, without example names, since BTF cannot say which functions are K&R.
-                t = btf.canon(tid)
-                seen.setdefault(mangle(("f", t[1], None, False)), ([], []))
+                variants.append((("f", t[1], None, False), False))
+            for v, with_names in variants:
+                plain = mangle(v)
+                for mangled in (plain, mangle(v, normalize=True)):   # plain and integer-normalized kCFI
+                    if mangled != plain:
+                        self.plain_of[mangled].add(plain)
+                    fs, os_ = seen.setdefault(mangled, ([], []))
+                    if with_names:
+                        fs.extend(n for n in funcs.get(tid, ()) if len(fs) < examples)
+                        os_.extend(n for n in others.get(tid, ()) if len(os_) < examples)
         for mangled, (fs, os_) in seen.items():
             names = []
             for n in fs + os_:                 # functions first, then struct members and typedefs
@@ -428,7 +454,10 @@ class TypeNames:
         """[(mangled, readable, examples)] for a 32-bit hash, [] if no prototype gives it."""
         out = []
         for mangled, ex in sorted(self.by_hash.get(h, {}).items()):
-            out.append((mangled, demangle_type(mangled) or mangled, list(ex)))
+            readable = demangle_type(mangled)
+            if mangled in self.plain_of:       # one normalized name can stand for several C types (long, long long)
+                readable = " | ".join(sorted(demangle_type(p) or p for p in self.plain_of[mangled])) + " [normalized]"
+            out.append((mangled, readable or mangled, list(ex)))
         return out
 
     def label(self, h):

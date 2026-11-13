@@ -197,5 +197,35 @@ class QuirksBTF(unittest.TestCase):
         self.assertEqual(tn.lookup(hashes["n_noproto_int"])[0][2], [])    # K&R guess: no example names
 
 
+class Normalized(unittest.TestCase):
+    """-fsanitize-cfi-icall-experimental-normalize-integers (kernels with Rust): u3i32-style integers, '.normalized'."""
+
+    def test_clang_hash(self):
+        # long (short, int) built by clang with the flag: 0xe1d7ea79 (review_s175 ground-truth corpus, x86_64)
+        f = ("f", ("b", "l"), [("b", "s"), ("b", "i")], False)
+        self.assertEqual(K.mangle(f, normalize=True), "_ZTSFu3i64u3i16u3i32E.normalized")
+        self.assertEqual(K.kcfi_hash(K.mangle(f, normalize=True)), 0xe1d7ea79)
+        # long and long long are the same vendor type, substituted by one representative
+        g = ("f", ("b", "v"), [("b", "l"), ("b", "x"), ("p", ("b", "l"))], False)
+        self.assertEqual(K.mangle(g, normalize=True), "_ZTSFvu3i64S_PS_E.normalized")
+
+    def test_every_function_hash_is_named(self):
+        d, S, text = sections(os.path.join(FIX, "kcfi_types_x64_norm.o"))
+        tn = K.load_type_names(read("kcfi_types_btf.o"))
+        checked = 0
+        for name, (sh, val) in sorted(symbols(d, S).items()):
+            if sh not in text or val < 5 or name == "call_some" or name.startswith("__cfi_"):
+                continue
+            with self.subTest(name):
+                self.assertEqual(text[sh][val - 5], 0xB8)           # mov eax, imm32 in front of the function
+                h = struct.unpack_from("<I", text[sh], val - 4)[0]
+                found = [m for m, _r, _e in tn.lookup(h)]
+                self.assertTrue(found and all(m.endswith(".normalized") for m in found), "%s 0x%08x" % (name, h))
+                checked += 1
+        self.assertEqual(checked, 17)
+        self.assertEqual(tn.label(0xe1d7ea79), "long (short, int) [normalized]")
+        self.assertEqual(tn.label(0x1300e12b), "long (short, int)")          # the plain hash stays named too
+
+
 if __name__ == "__main__":
     unittest.main()
