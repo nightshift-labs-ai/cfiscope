@@ -342,6 +342,36 @@ class CraftedBTF(unittest.TestCase):
         self.assertLess(tn.unmangleable, 30)        # the small ones near the end of the chain are still named
 
 
+class CraftedDepth(unittest.TestCase):
+    """s176 final check M1: the canon memo must keep the 64-level cap: a failure cached on a deep walk must not fail a
+    shallow use of the same type, and results must not depend on the order prototypes are read."""
+
+    @staticmethod
+    def chain_btf(n=70, off=30):
+        strs = b"\0int\0"
+        types = [struct.pack("<3I", 1, K.K_INT << 24, 4) + struct.pack("<I", (1 << 24) | 32)]          # 1 int
+        first = 4
+        types.append(struct.pack("<3I", 0, (K.K_FUNC_PROTO << 24) | 1, 1) + struct.pack("<2I", 0, first))
+        types.append(struct.pack("<3I", 0, (K.K_FUNC_PROTO << 24) | 1, 1) + struct.pack("<2I", 0, first + off))
+        for i in range(n):  # a chain of n pointers ending at int; proto 2 starts at its head, proto 3 off pointers in
+            types.append(struct.pack("<3I", 0, K.K_PTR << 24, first + i + 1 if i < n - 1 else 1))
+        tsec = b"".join(types)
+        return struct.pack("<HBBIIIII", 0xEB9F, 1, 0, 24, 0, len(tsec), len(tsec), len(strs)) + tsec + strs
+
+    def outcome(self, btf, tid):
+        try:
+            K.mangle(btf.canon(tid))
+            return "ok"
+        except K.Unmangleable:
+            return "too deep"
+
+    def test_order_does_not_matter(self):
+        for order in ((2, 3), (3, 2)):
+            btf = K.BTF(self.chain_btf())
+            got = {tid: self.outcome(btf, tid) for tid in order}
+            self.assertEqual(got, {2: "too deep", 3: "ok"}, order)
+
+
 class AnonTypedefBTF(unittest.TestCase):
     """tests/fixtures/kcfi_anon.c: an anonymous struct or enum is mangled under its first typedef's name, also when a
     prototype reaches it through a pointer typedef (review s176 m2: such prototypes were unmangleable)."""

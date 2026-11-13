@@ -304,14 +304,14 @@ class BTF:
         return names
 
     def canon(self, tid, depth=0, typedef_name=None):
-        """Canonical type (see mangle()) of BTF type id tid. Results (and failures) are kept per (tid, typedef name),
+        """Canonical type (see mangle()) of BTF type id tid. Results (and failures) are kept per (tid, depth, typedef name),
         so shared types are read once (review s176: a crafted DAG made this exponential)."""
         memo = self.__dict__.setdefault("_canon_memo", {})
-        key = (tid, typedef_name)
+        key = (tid, depth, typedef_name)   # s176 check M1: the depth too, so the 64-level cap holds
         if key in memo:
             got = memo[key]
             if isinstance(got, Unmangleable):
-                raise got
+                raise got.with_traceback(None)   # s176 check m3: no traceback growing with every re-raise
             return got
         try:
             memo[key] = self._canon(tid, depth, typedef_name)
