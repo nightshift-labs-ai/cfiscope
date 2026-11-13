@@ -94,7 +94,9 @@ def restore_scan(flush=True):
         if not sites:
             return False
         STATE["pseudo"] = {s.call_ea or s.check_ea: s for s in sites}
-        report("restored the scan saved in this database (%d checks, read-only): pseudocode comments are on" % len(sites))
+        hooked = hook_pseudocode() if flush else True    # inside func_printed the hook is there
+        report("restored the scan saved in this database (%d checks, read-only)%s"
+               % (len(sites), ": pseudocode comments are on" if hooked else ""))
     except (Exception, KeyboardInterrupt):  # noqa: BLE001  a convenience: never break the decompiler or a lookup
         STATE["restored"] = True
         try:
@@ -103,7 +105,7 @@ def restore_scan(flush=True):
         except Exception:  # noqa: BLE001
             pass
         return False
-    if flush and hook_pseudocode():
+    if flush and hooked:
         flush_pseudocode()
     return True
 
