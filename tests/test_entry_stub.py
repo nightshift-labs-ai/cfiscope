@@ -410,6 +410,10 @@ class Reopen(unittest.TestCase):
         real = il.scan
         il.scan = lambda: self.scans.append(1) or real()
         self.addCleanup(setattr, il, "scan", real)
+        self.loads = []                             # the marker is looked at once per database, not on every print
+        real_load = il.load_marker
+        il.load_marker = lambda: self.loads.append(1) or real_load()
+        self.addCleanup(setattr, il, "load_marker", real_load)
         def forbidden(*a, **k):
             raise AssertionError("the restore must not ask or write: %r" % (a,))
         kw, X, F, B = (sys.modules[n] for n in ("ida_kernwin", "ida_xref", "ida_funcs", "ida_bytes"))
@@ -417,21 +421,25 @@ class Reopen(unittest.TestCase):
                           (X, "add_dref"), (X, "del_dref"), (F, "add_func"), (B, "set_cmt")):
             setattr(mod, name, forbidden)
         self.before = (dict(self.w.cmts), set(self.w.crefs), set(self.w.data_xrefs), set(self.w.funcs),
-                       set(self.w.planned_funcs))
+                       set(self.w.planned_funcs), {n: dict(v) for n, v in self.w.netnodes.items()})
         self.log["msgs"].clear()
         p = self.E.PLUGIN_ENTRY()
         p.init()
         return p
 
     def unchanged(self):
-        self.assertEqual((self.w.cmts, self.w.crefs, self.w.data_xrefs, self.w.funcs, self.w.planned_funcs), self.before)
+        # netnodes too: reading the marker must not create its netnode (a database write)
+        self.assertEqual((self.w.cmts, self.w.crefs, self.w.data_xrefs, self.w.funcs, self.w.planned_funcs,
+                          self.w.netnodes), self.before)
 
     def printed(self, sites=None):
         """A decompiled function holding the call of the first scanned site; its printed lines."""
         if sites is None:
             sites = self.first_sites
         cf = FakeCfunc(["void f(void)", "{", "  g();", "}"], {sites[0].call_ea: ["s"]}, {"s": (2, 2)})
+        flushed = self.log["hx_flushed"]
         self.assertEqual(self.E.STATE["hx"].func_printed(cf), 0)
+        self.assertEqual(self.log["hx_flushed"], flushed)   # never clear_cached_cfuncs inside a decompiler callback
         return cf.text()[2]
 
     def scanned(self, create=0):
@@ -470,7 +478,9 @@ class Reopen(unittest.TestCase):
         site = sys.modules["cfiscope.idalayer"].scan()[0][0]
         p = self.reopen(p)
         self.assertEqual(self.printed([site]), "  g();")
+        self.assertEqual(self.printed([site]), "  g();")
         self.assertEqual((self.scans, self.E.STATE["sites"]), ([], None))
+        self.assertEqual(self.loads, [1])
         self.unchanged()
 
     def test_skipped_while_analysis_runs(self):
@@ -499,11 +509,17 @@ class Reopen(unittest.TestCase):
                 self.addCleanup(delattr, kw.Choose, "Show")
                 p = self.reopen(self.scanned(), fresh_module=True)
                 kw.get_screen_ea = lambda: at(self.first_sites[0])
-                kw.show_wait_box = lambda t: None           # a lookup the user asked for may show its wait box
+                box, scanned_in_box = [False], []           # a lookup the user asked for may show its wait box
+                kw.show_wait_box = lambda t: box.__setitem__(0, True)
+                kw.hide_wait_box = lambda: box.__setitem__(0, False)
+                il = sys.modules["cfiscope.idalayer"]
+                counted = il.scan
+                il.scan = lambda: scanned_in_box.append(box[0]) or counted()
                 flushed = self.log["hx_flushed"]
                 self.assertEqual(getattr(self.E, action)().activate(None), 1)
                 self.assertEqual(len(shown), 1)
                 self.assertEqual(self.scans, [1])
+                self.assertEqual(scanned_in_box, [True])    # the restore reuses the lookup's scan, run behind its box
                 self.assertEqual(self.log["hx_flushed"], flushed + 1)  # decompiled before the lookup: printed again
                 self.assertIn("// CFIScope: ", self.printed())
                 self.assertEqual(self.scans, [1])
@@ -534,14 +550,17 @@ class Reopen(unittest.TestCase):
         self.w.mem[seg.start_ea + 0x1000] = self.w.mem.pop(seg.start_ea)
         seg.start_ea += 0x1000; seg.end_ea += 0x1000
         p = self.reopen(p)
-        self.assertEqual(self.printed([types.SimpleNamespace(call_ea=self.first_sites[0].call_ea + 0x1000)]), "  g();")
+        moved = [types.SimpleNamespace(call_ea=self.first_sites[0].call_ea + 0x1000)]
+        self.assertEqual(self.printed(moved), "  g();")
+        self.assertEqual(self.printed(moved), "  g();")
         self.assertEqual(self.scans, [])
-        self.assertEqual(sum("segments changed since" in m for m in self.log["msgs"]), 1)
+        self.assertEqual(self.loads, [1])
+        self.assertEqual(sum("segments changed since" in m for m in self.log["msgs"]), 1)   # said once, not per print
         self.unchanged()
 
     def test_unreadable_marker_is_ignored(self):
         p = self.reopen(self.scanned())
-        self.w.netnodes[NODE][(72, "scan")] = "{not json"
+        self.w.netnodes[NODE][(72, "scan")] = self.before[-1][NODE][(72, "scan")] = "{not json"
         self.assertEqual(self.printed(), "  g();")
         self.assertEqual(self.scans, [])
         self.assertEqual(self.log["msgs"], ["[CFIScope] %s loaded\n" % self.E.__version__])
