@@ -163,5 +163,39 @@ class FixtureBTF(unittest.TestCase):
         self.assertEqual(K.mangle(btf.canon(protos["f_vp"])), "_ZTSFPvPVKvxyE")
 
 
+class QuirksBTF(unittest.TestCase):
+    """tests/fixtures/kcfi_quirks.c (aarch64 kCFI + bpf BTF): const return types, K&R () prototypes.
+    Found by the review_s175 ground-truth corpus (175 functions; these were its 4 mismatches)."""
+
+    def preamble_hashes(self):
+        d, S, text = sections(os.path.join(FIX, "kcfi_quirks_a64.o"))
+        out = {}
+        for name, (sh, val) in symbols(d, S).items():
+            if sh in text and val >= 4:
+                out[name] = struct.unpack_from("<I", text[sh], val - 4)[0]
+        return out
+
+    def test_mangling(self):
+        btf = K.BTF(K.find_btf(read("kcfi_quirks_btf.o")))
+        protos = proto_ids(btf)
+        self.assertEqual(K.mangle(btf.canon(protos["q_const_ret_toplevel"])), "_ZTSFKivE")
+        self.assertEqual(K.mangle(btf.canon(protos["q_volatile_ret"])), "_ZTSFVliE")
+        self.assertEqual(K.mangle(btf.canon(protos["fp_noproto_cb"])), "_ZTSFvPFiEE")
+        self.assertEqual(K.mangle(btf.canon(protos["fp_void_cb"])), "_ZTSFvPFivEE")
+
+    def test_every_function_hash_is_named(self):
+        # BTF cannot tell long f() from long f(void) (both FUNC_PROTO vlen=0), so a FUNC's empty prototype is
+        # also entered under its K&R hash; every function's preamble hash must be in the table.
+        hashes = self.preamble_hashes()
+        self.assertEqual(len(hashes), 8)
+        tn = K.load_type_names(read("kcfi_quirks_btf.o"))
+        for name, h in sorted(hashes.items()):
+            with self.subTest(name):
+                self.assertTrue(tn.lookup(h), "%s 0x%08x not named" % (name, h))
+        self.assertEqual([m for m, _r, _e in tn.lookup(hashes["n_noproto"])], ["_ZTSFlE"])
+        self.assertEqual([m for m, _r, _e in tn.lookup(hashes["n_void_params"])], ["_ZTSFlvE"])
+        self.assertEqual(tn.lookup(hashes["n_noproto_int"])[0][2], [])    # K&R guess: no example names
+
+
 if __name__ == "__main__":
     unittest.main()

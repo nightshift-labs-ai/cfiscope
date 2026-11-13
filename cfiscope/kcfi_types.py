@@ -77,7 +77,7 @@ def kcfi_hash(mangled):
 #   ("p", t)                   pointer
 #   ("q", quals, t)            quals: a string of "r", "V", "K" (restrict, volatile, const)
 #   ("a", n, t)                array of n (n None: unknown bound)
-#   ("f", ret, params, varargs)
+#   ("f", ret, params, varargs)  params None: no prototype (K&R "()"), mangled with no parameter code
 
 class Unmangleable(ValueError):
     pass
@@ -117,6 +117,8 @@ def _plain(t):
 
 
 def _params(params, varargs, fn):
+    if params is None:                    # K&R "()": clang mangles a FunctionNoProtoType as F<ret>E
+        return ""
     if not params and not varargs:
         return "v"
     return "".join(fn(p) for p in params) + ("z" if varargs else "")
@@ -276,7 +278,9 @@ class BTF:
         if kind == K_FUNC:
             return self.canon(st, depth + 1)
         if kind == K_FUNC_PROTO:
-            ret = _unqualified(self.canon(st, depth + 1))
+            ret = self.canon(st, depth + 1)       # clang keeps a top-level const / volatile on the return type
+            if len(extra) == 1 and extra[0][1] == 0:
+                return ("f", ret, None, False)    # int (*)(): clang's BTF writes one unnamed varargs parameter
             params, varargs = [], False
             for i, (_n, ptid) in enumerate(extra):
                 if ptid == 0:
@@ -407,6 +411,12 @@ class TypeNames:
             fs, os_ = seen.setdefault(mangled, ([], []))
             fs.extend(n for n in funcs.get(tid, ()) if len(fs) < examples)
             os_.extend(n for n in others.get(tid, ()) if len(os_) < examples)
+            if not btf.types[tid][4] and tid in funcs:
+                # A function defined "long f()" (K&R) and one defined "long f(void)" have the same BTF
+                # (FUNC_PROTO, vlen 0) but different kCFI hashes (_ZTSFlE, _ZTSFlvE).  The K&R type is
+                # entered too, without example names, since BTF cannot say which functions are K&R.
+                t = btf.canon(tid)
+                seen.setdefault(mangle(("f", t[1], None, False)), ([], []))
         for mangled, (fs, os_) in seen.items():
             names = []
             for n in fs + os_:                 # functions first, then struct members and typedefs
