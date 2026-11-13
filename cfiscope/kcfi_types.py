@@ -218,6 +218,11 @@ class BTF:
             self.types.append((kind, self.name(name_off), kflag, st, extra))
         if p != end:
             raise BTFError("BTF type section is truncated")
+        # A module's .BTF is split BTF: its names and type ids continue those of vmlinux's BTF, which is not here.
+        n = len(self.types)
+        for kind, name_off, refs in _offsets(blob, t0, end):
+            if name_off >= str_len or any(r >= n for r in refs):
+                raise BTFError("split BTF (a module's .BTF refers to vmlinux's types); give the kernel's BTF instead")
 
     def name(self, off):
         e = self.strings.find(b"\0", off)
@@ -277,6 +282,34 @@ class BTF:
                 params.append(_param(self.canon(ptid, depth + 1)))
             return ("f", ret, params, varargs)
         raise Unmangleable("kind %d" % kind)
+
+
+def _offsets(blob, p, end):
+    """(kind, name_off, [referenced type ids]) of each BTF type record, for the split-BTF check."""
+    while p < end:
+        name_off, info, st = struct.unpack_from("<3I", blob, p)
+        p += 12
+        vlen, kind = info & 0xffff, (info >> 24) & 0x1f
+        refs = [st] if kind in (K_PTR, K_TYPEDEF, K_VOLATILE, K_CONST, K_RESTRICT, K_FUNC, K_FUNC_PROTO, K_VAR,
+                                K_TYPE_TAG, K_DECL_TAG) else []
+        if kind == K_INT:
+            p += 4
+        elif kind == K_ARRAY:
+            refs += struct.unpack_from("<2I", blob, p)
+            p += 12
+        elif kind in (K_STRUCT, K_UNION, K_DATASEC):
+            refs += [struct.unpack_from("<I", blob, p + 12 * i + 4)[0] for i in range(vlen)]
+            p += 12 * vlen
+        elif kind == K_ENUM64:
+            p += 12 * vlen
+        elif kind == K_FUNC_PROTO:
+            refs += [struct.unpack_from("<I", blob, p + 8 * i + 4)[0] for i in range(vlen)]
+            p += 8 * vlen
+        elif kind == K_ENUM:
+            p += 8 * vlen
+        elif kind in (K_VAR, K_DECL_TAG):
+            p += 4
+        yield kind, name_off, refs
 
 
 def _unqualified(t):

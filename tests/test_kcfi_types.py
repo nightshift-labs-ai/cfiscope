@@ -26,6 +26,19 @@ def proto_ids(btf):
     return out
 
 
+def _extra(t):
+    kind, extra = t[0], t[4]
+    if kind == K.K_INT:
+        return 4
+    if kind == K.K_ARRAY:
+        return 12
+    if kind in (K.K_STRUCT, K.K_UNION, K.K_DATASEC, K.K_ENUM64):
+        return 12 * len(extra)
+    if kind in (K.K_ENUM, K.K_FUNC_PROTO):
+        return 8 * len(extra)
+    return 4 if kind in (K.K_VAR, K.K_DECL_TAG) else 0
+
+
 class Hash(unittest.TestCase):
     def test_xxh64_reference(self):
         self.assertEqual(K.xxh64(b""), 0xEF46DB3751D8E999)
@@ -106,6 +119,21 @@ class FixtureBTF(unittest.TestCase):
         self.assertEqual(K.find_btf(image), blob)                                 # inside a raw image
         self.assertIsNone(K.find_btf(b"\x9f\xeb\x01\x00" + b"\x00" * 100))
         self.assertIsNone(K.find_btf(read("kcfi_types_a64.o")))                   # no .BTF section
+
+    def test_split_btf_refused(self):
+        # A module's split BTF names strings and types of vmlinux's BTF: refused rather than misread.
+        blob = bytearray(K.find_btf(read("kcfi_types_btf.o")))
+        hdr_len = struct.unpack_from("<I", blob, 4)[0]
+        struct.pack_into("<I", blob, hdr_len, 3000000)                 # first type's name in vmlinux's strings
+        with self.assertRaises(K.BTFError):
+            K.BTF(bytes(blob))
+        blob = bytearray(K.find_btf(read("kcfi_types_btf.o")))
+        b = K.BTF(bytes(blob))
+        ptr = next(i for i, t in enumerate(b.types) if t[0] == K.K_PTR)
+        off = hdr_len + sum(12 + _extra(t) for t in b.types[1:ptr])
+        struct.pack_into("<I", blob, off + 8, 70000)                    # a pointer to a vmlinux type id
+        with self.assertRaises(K.BTFError):
+            K.BTF(bytes(blob))
 
     def test_param_adjustments(self):
         btf = K.BTF(K.find_btf(read("kcfi_types_btf.o")))
