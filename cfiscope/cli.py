@@ -319,7 +319,9 @@ def main(argv=None):
         stats = dict(stats, arch=arch, named_functions=len(symbols))
         if stats.get("scheme") == "jump-table CFI":
             stats["named_checks"] = name_jt_types(sites, every)
-        type_names = _type_names(a, data) if stats.get("scheme") != "jump-table CFI" else None
+        # review s176 N3: the input's own BTF is read only when there is a kCFI call to name (--btf is always read)
+        type_names = (_type_names(a, data) if stats.get("scheme") != "jump-table CFI" and (a.btf or sites)
+                      else None)
         if a.btf and stats.get("scheme") == "jump-table CFI":  # review s176 N2: say so instead of ignoring it silently
             print("cfiscope: --btf is for kCFI type hashes; ignored for this jump-table CFI kernel", file=sys.stderr)
         if type_names is not None:

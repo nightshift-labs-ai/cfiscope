@@ -282,6 +282,34 @@ class BTFOnJumpTableCFI(unittest.TestCase):
         self.assertIn("--btf is for kCFI type hashes; ignored for this jump-table CFI kernel", err)
 
 
+class UnreadableBTFNoSites(unittest.TestCase):
+    def test_no_warning_without_kcfi_sites(self):
+        # review s176 N3: the input's unreadable BTF was reported even when there is no kCFI call to name
+        sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+        try:
+            import add_btf_section as A
+        finally:
+            sys.path.pop(0)
+        bad = struct.pack("<HBBIIIII", 0xEB9F, 1, 0, 24, 0, 16, 16, 4) + b"\xff" * 20   # header + junk types
+        with open(os.path.join(FIX, "kcfi_quirks_a64.o"), "rb") as fh:
+            obj = A.add_btf(fh.read(), bad)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "nosites.o")
+            with open(path, "wb") as fh:
+                fh.write(obj)
+            rc, out, err = run(path)
+            self.assertEqual(rc, 0)
+            self.assertIn("call sites 0", out)
+            self.assertNotIn("BTF is unreadable", err)
+            with open(os.path.join(FIX, "x86_64-plain.o"), "rb") as fh:   # 21 kCFI sites: the warning stays
+                obj = A.add_btf(fh.read(), bad)
+            with open(path, "wb") as fh:
+                fh.write(obj)
+            rc, out, err = run(path)
+            self.assertEqual(rc, 0)
+            self.assertIn("BTF is unreadable", err)
+
+
 class QuickTryFixtureBTF(unittest.TestCase):
     """s176: the Quick-try fixtures carry the BTF of t.c (tools/add_btf_section.py), so the first try names types."""
 
