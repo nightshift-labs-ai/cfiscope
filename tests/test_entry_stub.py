@@ -800,6 +800,47 @@ class Reopen(unittest.TestCase):
         self.assertEqual([self.E.STATE[k] for k in ("sites", "stats", "layout", "pseudo", "hx")], [None] * 5)
         self.assertEqual((il.CALLS, il.JT["table"], il.JT["entry_of"]), (set(), None, {}))
 
+    def test_pseudocode_lookups_after_reopen(self):
+        """From a pseudocode window after reopening: the restore runs (one scan, cache flushed) before the decompiler
+        view is fetched (ux177 + reopen177 merge; merge check s177 MINOR)."""
+        for action in ("TargetsAction", "CallersAction"):
+            with self.subTest(action=action):
+                self.setUp()
+                kw = sys.modules["ida_kernwin"]
+                shown = []
+                kw.Choose.Show = lambda chooser, modal=False: shown.append((chooser.title, modal)) or (1 if modal else True)
+                self.addCleanup(delattr, kw.Choose, "Show")
+                p = self.reopen(self.scanned(), fresh_module=True)
+                kw.show_wait_box = lambda t: None
+                kw.hide_wait_box = lambda: None
+                kw.warning = lambda t: self.log["msgs"].append("WARN " + t)
+                sites = self.first_sites
+                a, b, c = sorted(sites, key=lambda s: s.call_ea)[:3]
+                cf = FakeCfunc(["int f(void)", "{", "  x = fp(1);", "  y = gp(2) + hp(3);", "}"],
+                                 {a.call_ea: ["a"], b.call_ea: ["b"], c.call_ea: ["c"]},
+                                 {"a": (6, 2), "b": (6, 3), "c": (15, 3)}, entry_ea=sorted(a.targets)[0])
+                hx = sys.modules["ida_hexrays"]
+                flushed0 = self.log["hx_flushed"]
+                seen_flush = []
+                vdui = types.SimpleNamespace(cfunc=cf, cpos=types.SimpleNamespace(lnnum=3))
+                hx.get_widget_vdui = lambda w: seen_flush.append(self.log["hx_flushed"]) or vdui
+                kw.get_screen_ea = lambda: 2**64 - 1
+                r = getattr(self.E, action)().activate(types.SimpleNamespace(widget=46))
+                self.assertEqual(r, 1, self.log["msgs"])
+                self.assertEqual(self.scans, [1])                 # one scan: the lookup's, reused by the restore
+                self.assertEqual(self.log["hx_flushed"], flushed0 + 1)
+                self.assertEqual(seen_flush, [flushed0 + 1])      # vdui fetched after the restore's flush
+                il = self.E.idalayer
+                if action == "TargetsAction":
+                    self.assertEqual(shown[0], ("CFIScope: 2 calls on this pseudocode line", True))
+                    self.assertEqual(shown[1][0], il.targets_title(c))
+                else:
+                    self.assertTrue(shown and not shown[-1][1])
+                self.assertIn("// CFIScope: ", self.printed())
+                self.assertEqual(self.scans, [1])
+                self.unchanged()
+                p.term()
+
 
 class JumpTableCfi(unittest.TestCase):
     """The plugin actions on the hand-assembled Linux 5.x jump-table CFI fixture."""
