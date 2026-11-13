@@ -332,8 +332,8 @@ class BTF:
             code = _INT_NAMES.get(name)
             if code is None:
                 raise Unmangleable("unknown int type %r" % name)
-            if code == "c":                  # BTF_INT_SIGNED: plain char's signedness, for normalized integers (pahole never
-                                             # sets it: unsigned, as kernels >= 6.2 build char on every arch)
+            if code == "c":                  # BTF_INT_SIGNED: plain char's signedness, for normalized integers (pahole leaves
+                                             # plain char unmarked: unsigned, as kernels >= 6.2 build it on every arch)
                 return ("b", "c", "u2i8" if (extra >> 24) & 1 else "u2u8")
             return ("b", code)
         if kind == K_FLOAT:

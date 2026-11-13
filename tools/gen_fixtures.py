@@ -4,7 +4,11 @@
 kCFI objects (needs ziglang: pip install ziglang): the C file declares many function
 signatures, several implementations each and one indirect call per signature.  truth.json
 records which functions this generator wrote for each signature, and their offsets in the
-compiled objects, so the scanner can be scored.
+compiled objects, so the scanner can be scored. The two Quick-try objects x86_64-kernel.o and aarch64-kernel.o
+also carry the BTF of t.c; after rebuilding them, add it again (the tests check it):
+    zig cc -target bpfel-freestanding-none -g -O2 -c tests/fixtures/t.c -o /tmp/t_btf.o
+    python3 tools/add_btf_section.py /tmp/t_btf.o tests/fixtures/x86_64-kernel.o x.o && mv x.o tests/fixtures/x86_64-kernel.o
+    (the same for aarch64-kernel.o)
 
 Jump-table CFI (Linux 5.x, aarch64) fixture, no compiler needed: aarch64-jtcfi.elf is
 assembled word by word below in the shapes Clang uses in Android GKI 5.15 kernels, and

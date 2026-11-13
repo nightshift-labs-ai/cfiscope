@@ -23,8 +23,13 @@ def sections(d):
     return hdrs, names, shstrndx
 
 
+def read(path):
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
 def btf_of(path):
-    d = open(path, "rb").read()
+    d = read(path)
     hdrs, names, _ = sections(d)
     if ".BTF" not in names:
         raise SystemExit("%s has no .BTF section" % path)
@@ -60,7 +65,7 @@ def add_btf(dst, btf):
 def main():
     if len(sys.argv) != 4:
         sys.exit(__doc__)
-    out = add_btf(open(sys.argv[2], "rb").read(), btf_of(sys.argv[1]))
+    out = add_btf(read(sys.argv[2]), btf_of(sys.argv[1]))
     with open(sys.argv[3], "wb") as fh:
         fh.write(out)
     print("wrote %s (%d bytes, .BTF %d bytes)" % (sys.argv[3], len(out), len(btf_of(sys.argv[3]))))
