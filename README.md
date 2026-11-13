@@ -133,7 +133,7 @@ A real kernel:
 - **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach.
 - **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give.
 - **Remove annotations**: removes the comments and cross-references the scan added. Functions created when you answered Yes stay.
-- **Pseudocode comments** (with the Hex-Rays decompiler): the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2` (the type when the file has BTF).
+- **Pseudocode comments** (with the Hex-Rays decompiler): the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2` (the type when the file has BTF). After you reopen a scanned database they come back without a new Scan (unreleased): the first decompiled function or lookup re-reads the code, read-only.
 - **kCFI hashes named by C function type** (unreleased): when the kernel carries BTF (`CONFIG_DEBUG_INFO_BTF`), or with `--btf PATH`, each hash is shown as its type, e.g. `hash 0x4f4ccb9d (int (struct file *, int))` (CFIScope mangles every BTF prototype the way Clang does and hashes it: `cfiscope/kcfi_types.py`). Named: all 4,184 hashes on GKI 6.1, all 4,466 on GKI 6.6, 4,621 of 4,626 on the Rust-enabled GKI 6.12 (the 5 left are inside Rust code); details in [VERIFICATION](docs/VERIFICATION.md). The IDA layer does the same from the input file's BTF, checked only against fake IDA modules.
 - **Linux 5.x jump-table CFI** (aarch64, Android 12/13 GKI 5.10 and 5.15, since v0.1.17): reads each call's candidates from the compiler's jump table. See [docs/JTCFI.md](docs/JTCFI.md).
 - **Command line and headless**: the scanner is plain Python 3 with no dependencies; `tools/cfiscope_headless.py` adds the same comments and cross-references as Scan, headless with idalib (IDA 9.0 or newer). See [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#without-ida-scripts-other-tools-ci).
@@ -162,7 +162,7 @@ Full description of each action: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#the
 - **Not supported:** GCC-built kernels and x86-64 kernels with the jump-table CFI. The scan finds 0 sites and says so.
 - **Jump-table CFI:** aarch64 only, two kernels measured. Tracepoint and vendor-hook calls are not checked by design and stay unresolved. See [docs/JTCFI.md](docs/JTCFI.md#limits).
 - **Text bounds in IDA:** leaving out candidates in `.rodata` and data in practice needs the input ELF still at its path.
-- **Pseudocode comments** are display text only; nothing is saved in the database.
+- **Pseudocode comments** are display text only; the database keeps just a small "scanned" marker. After a rebase, run Scan again to get them back.
 - **Hotkeys:** many Linux desktops take `Ctrl-Alt-T` for a terminal and Keypatch uses `Ctrl-Alt-K`. Use the menus, or rebind the keys in Options > Shortcuts.
 
 ## Status
