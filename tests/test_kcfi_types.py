@@ -135,6 +135,36 @@ class FixtureBTF(unittest.TestCase):
         self.assertEqual(sorted(miss), ["n_noproto", "n_noproto_int"])
         self.assertEqual(sorted(missn), ["n_noproto", "n_noproto_int"])
 
+    def test_normalized_integers_match_arm64_preamble(self):
+        """kcfi_types_a64_norm.o = kcfi_types.c for aarch64 with -fsanitize-cfi-icall-experimental-normalize-integers
+        (zig 0.17.1 / clang 22.1.8). arm64's plain char is unsigned (u2u8); the fixture's BTF comes from the bpf
+        target, where it is signed, so plain char is set to arm64's here (a kernel's own BTF carries the right one)."""
+        def arm64_char(t):
+            if t[0] == "b":
+                return ("b", "c", "u2u8") if t[1] == "c" else t
+            if t[0] in ("p",):
+                return ("p", arm64_char(t[1]))
+            if t[0] == "q":
+                return ("q", t[1], arm64_char(t[2]))
+            if t[0] == "a":
+                return ("a", t[1], arm64_char(t[2]))
+            if t[0] == "f":
+                return ("f", arm64_char(t[1]), None if t[2] is None else [arm64_char(x) for x in t[2]], t[3])
+            return t
+        d, S, text = sections(os.path.join(FIX, "kcfi_types_a64_norm.o"))
+        syms = symbols(d, S)
+        btf = K.BTF(K.find_btf(read("kcfi_types_btf.o")))
+        protos = proto_ids(btf)
+        checked = 0
+        for name, (sh, val) in sorted(syms.items()):
+            if sh not in text or val < 4 or name == "call_some":
+                continue
+            with self.subTest(name):
+                want = struct.unpack_from("<I", text[sh], val - 4)[0]
+                self.assertEqual(K.kcfi_hash(K.mangle(arm64_char(btf.canon(protos[name])), normalize=True)), want, name)
+                checked += 1
+        self.assertEqual(checked, 17)
+
     def test_type_names_table(self):
         tn = K.load_type_names(read("kcfi_types_btf.o"))
         self.assertEqual(tn.unmangleable, 0)
