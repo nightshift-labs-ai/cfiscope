@@ -316,6 +316,28 @@ class ArraysBTF(unittest.TestCase):
                 self.assertEqual([(m, r) for m, r, _e in got], [(mangled, label)], "%s 0x%08x" % (name, hashes[name]))
 
 
+class AnonTypedefBTF(unittest.TestCase):
+    """tests/fixtures/kcfi_anon.c: an anonymous struct or enum is mangled under its first typedef's name, also when a
+    prototype reaches it through a pointer typedef (review s176 m2: such prototypes were unmangleable)."""
+
+    def test_every_function_hash_is_named(self):
+        d, S, text = sections(os.path.join(FIX, "kcfi_anon_a64.o"))
+        hashes = {name: struct.unpack_from("<I", text[sh], val - 4)[0]
+                  for name, (sh, val) in symbols(d, S).items() if sh in text and val >= 4}
+        self.assertEqual(sorted(hashes), ["anon_direct", "anon_enum_direct", "anon_enum_ptr", "anon_ptr_both",
+                                          "anon_ptr_td"])
+        tn = K.load_type_names(read("kcfi_anon_btf.o"))
+        want = {"anon_ptr_td": ("_ZTSFiP4a2_tE", "int (a2_t *)"),
+                "anon_direct": ("_ZTSFiP4a2_tE", "int (a2_t *)"),
+                "anon_ptr_both": ("_ZTSFiP4a2_tS0_E", "int (a2_t *, a2_t *)"),
+                "anon_enum_ptr": ("_ZTSFiP4e2_tE", "int (e2_t *)"),
+                "anon_enum_direct": ("_ZTSFi4e2_tE", "int (e2_t)")}
+        for name, (mangled, label) in sorted(want.items()):
+            with self.subTest(name):
+                got = tn.lookup(hashes[name])
+                self.assertEqual([(m, r) for m, r, _e in got], [(mangled, label)], "%s 0x%08x" % (name, hashes[name]))
+
+
 class Normalized(unittest.TestCase):
     """-fsanitize-cfi-icall-experimental-normalize-integers (kernels with Rust): u3i32-style integers, '.normalized'."""
 

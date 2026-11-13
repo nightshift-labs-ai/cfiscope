@@ -291,6 +291,18 @@ class BTF:
         e = self.strings.find(b"\0", off)
         return self.strings[off:e if e >= 0 else len(self.strings)].decode("utf-8", "replace")
 
+    def linkage_names(self):
+        """{anonymous struct/union/enum type id: the name of the first typedef that names it directly}: C and Clang
+        give such a type that typedef's name for linkage ("typedef struct {..} X, *PX": a PX parameter mangles as P1X)."""
+        names = getattr(self, "_linkage", None)
+        if names is None:
+            names = self._linkage = {}
+            for kind, name, _kf, st, _extra in self.types:
+                if (kind == K_TYPEDEF and name and 0 < st < len(self.types) and not self.types[st][1]
+                        and self.types[st][0] in (K_STRUCT, K_UNION, K_ENUM, K_ENUM64)):
+                    names.setdefault(st, name)
+        return names
+
     def canon(self, tid, depth=0, typedef_name=None):
         """Canonical type (see mangle()) of BTF type id tid."""
         if depth > 64:
@@ -334,8 +346,11 @@ class BTF:
             if name:  # the tag only matters for the C label (c_type); the mangling is the name alone
                 tag = {K_STRUCT: "struct", K_UNION: "union", K_ENUM: "enum", K_ENUM64: "enum"}.get(kind)
                 return ("n", name, tag or ("union" if kflag else "struct"))   # K_FWD: kflag 1 = union
-            if typedef_name:
-                return ("n", typedef_name, "")
+            # the typedef on the path first: BTF dedup can merge identical anonymous types of several typedefs; the
+            # first direct typedef only when the path had none, as through a pointer typedef (review s176 m2)
+            linkage = typedef_name or self.linkage_names().get(tid)
+            if linkage:
+                return ("n", linkage, "")
             raise Unmangleable("anonymous struct, union or enum")
         if kind == K_ARRAY:
             # review s176 F1/M1: BTF writes 0 elements for both "T []" and GNU "T [0]"; read it as "[]" (Clang: A_),
