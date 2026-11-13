@@ -529,15 +529,21 @@ class Reopen(unittest.TestCase):
         self.unchanged()
 
     def test_failing_restore_is_soft(self):
-        p = self.reopen(self.scanned())
-        def boom():
-            raise RuntimeError("CFIScope supports 64-bit x86 and AArch64 databases only.")
-        sys.modules["cfiscope.idalayer"].scan = boom
-        self.assertEqual(self.printed(), "  g();")
-        self.assertEqual(self.printed(), "  g();")
-        self.assertEqual(sum("could not restore" in m for m in self.log["msgs"]), 1)
-        self.assertFalse(any("pseudocode comment failed" in m for m in self.log["msgs"]))
-        self.unchanged()
+        # An error, or Cancel in IDAPython's own "Running Python script" box (KeyboardInterrupt), during the restore:
+        # one line in the Output window, the decompiler prints as usual, no second try.
+        for error in (RuntimeError("CFIScope supports 64-bit x86 and AArch64 databases only."),
+                      KeyboardInterrupt("User interrupted")):
+            with self.subTest(error=type(error).__name__):
+                self.setUp()
+                p = self.reopen(self.scanned())
+                def boom():
+                    raise error
+                sys.modules["cfiscope.idalayer"].scan = boom
+                self.assertEqual(self.printed(), "  g();")
+                self.assertEqual(self.printed(), "  g();")
+                self.assertEqual(sum("could not restore" in m for m in self.log["msgs"]), 1)
+                self.assertFalse(any("pseudocode comment failed" in m for m in self.log["msgs"]))
+                self.unchanged()
 
     def test_remove_clears_marker(self):
         p = self.scanned()

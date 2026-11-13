@@ -94,7 +94,7 @@ def restore_scan(flush=True):
             return False
         STATE["pseudo"] = {s.call_ea or s.check_ea: s for s in sites}
         report("restored the scan saved in this database (%d checks, read-only): pseudocode comments are on" % len(sites))
-    except Exception:  # noqa: BLE001  a convenience: never break the decompiler or a lookup
+    except (Exception, KeyboardInterrupt):  # noqa: BLE001  a convenience: never break the decompiler or a lookup
         STATE["restored"] = True
         try:
             report("could not restore the scan saved in this database; run Scan kCFI calls again:\n%s"
