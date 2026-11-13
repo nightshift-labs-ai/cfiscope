@@ -297,8 +297,9 @@ def _offsets(blob, p, end):
         elif kind == K_ARRAY:
             refs += struct.unpack_from("<2I", blob, p)
             p += 12
-        elif kind in (K_STRUCT, K_UNION, K_DATASEC):
-            refs += [struct.unpack_from("<I", blob, p + 12 * i + 4)[0] for i in range(vlen)]
+        elif kind in (K_STRUCT, K_UNION, K_DATASEC):    # members {name_off, type, offset}; DATASEC {type, offset, size}
+            at = 0 if kind == K_DATASEC else 4
+            refs += [struct.unpack_from("<I", blob, p + 12 * i + at)[0] for i in range(vlen)]
             p += 12 * vlen
         elif kind == K_ENUM64:
             p += 12 * vlen

@@ -135,6 +135,16 @@ class FixtureBTF(unittest.TestCase):
         with self.assertRaises(K.BTFError):
             K.BTF(bytes(blob))
 
+    def test_datasec_offsets_are_not_type_ids(self):
+        # vmlinux's .data..percpu DATASEC has variable offsets far above its type count: not split BTF.
+        blob = bytearray(K.find_btf(read("kcfi_types_btf.o")))
+        hdr_len = struct.unpack_from("<I", blob, 4)[0]
+        b = K.BTF(bytes(blob))
+        ds = next(i for i, t in enumerate(b.types) if t[0] == K.K_DATASEC)
+        off = hdr_len + sum(12 + _extra(t) for t in b.types[1:ds])
+        struct.pack_into("<I", blob, off + 12 + 4, 5000000)            # first variable's offset
+        self.assertEqual(len(K.BTF(bytes(blob)).types), len(b.types))
+
     def test_param_adjustments(self):
         btf = K.BTF(K.find_btf(read("kcfi_types_btf.o")))
         protos = proto_ids(btf)
