@@ -304,7 +304,23 @@ class BTF:
         return names
 
     def canon(self, tid, depth=0, typedef_name=None):
-        """Canonical type (see mangle()) of BTF type id tid."""
+        """Canonical type (see mangle()) of BTF type id tid. Results (and failures) are kept per (tid, typedef name),
+        so shared types are read once (review s176: a crafted DAG made this exponential)."""
+        memo = self.__dict__.setdefault("_canon_memo", {})
+        key = (tid, typedef_name)
+        if key in memo:
+            got = memo[key]
+            if isinstance(got, Unmangleable):
+                raise got
+            return got
+        try:
+            memo[key] = self._canon(tid, depth, typedef_name)
+        except Unmangleable as e:
+            memo[key] = e
+            raise
+        return memo[key]
+
+    def _canon(self, tid, depth=0, typedef_name=None):
         if depth > 64:
             raise Unmangleable("type chain too deep")
         if tid >= len(self.types):
@@ -468,6 +484,22 @@ def find_btf(data):
     return data[best[0]:best[0] + best[1]] if best else None
 
 
+MAX_TYPE_NODES = 4096   # a canonical prototype larger than this (expanded) is skipped; kernel ones have a few dozen
+
+
+def tree_size(t, _seen=None):
+    """Nodes of canonical type t when expanded as a tree; shared sub-tuples are counted per use but computed once."""
+    seen = {} if _seen is None else _seen
+    if not isinstance(t, tuple):
+        if isinstance(t, list):
+            return sum(tree_size(x, seen) for x in t)
+        return 0
+    n = seen.get(id(t))
+    if n is None:
+        n = seen[id(t)] = 1 + sum(tree_size(x, seen) for x in t)
+    return n
+
+
 def zero_bound(t):
     """t with every unknown-bound array ("a", None, ...) read as a GNU zero-length one ("a", 0, ...): BTF writes both
     the same way (review s176 F1/M1)."""
@@ -517,6 +549,8 @@ class TypeNames:
             self.protos += 1
             try:
                 t = btf.canon(tid)
+                if tree_size(t) > MAX_TYPE_NODES:   # shared parts still expand in mangle() and c_type()
+                    raise Unmangleable("type too large")
                 mangle(t)
             except Unmangleable:
                 self.unmangleable += 1

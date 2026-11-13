@@ -1,4 +1,5 @@
 """kCFI hash -> C function type: xxHash64, Itanium mangling of C function types, and BTF."""
+import time
 import os, struct, sys, unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, ".."))
@@ -314,6 +315,31 @@ class ArraysBTF(unittest.TestCase):
             with self.subTest(name):
                 got = tn.lookup(hashes[name])
                 self.assertEqual([(m, r) for m, r, _e in got], [(mangled, label)], "%s 0x%08x" % (name, hashes[name]))
+
+
+class CraftedBTF(unittest.TestCase):
+    """review s176 NIT: a crafted chain of FUNC_PROTOs, each taking two pointers to the next, made canon() exponential
+    (5.96 s at 18 levels; the depth cap allows ~32). A plugin that opens untrusted binaries must not hang on one."""
+
+    @staticmethod
+    def chain(levels):
+        strs = b"\0int\0"
+        types = [struct.pack("<3I", 1, (K.K_INT << 24), 4) + struct.pack("<I", (1 << 24) | 32)]   # id 1: int
+        for k in range(levels):  # id 2+2k: FUNC_PROTO(p, p) with p = id 3+2k: PTR -> the next FUNC_PROTO
+            pid = 2 + 2 * k
+            nxt, tgt = (pid + 2, pid + 1) if k < levels - 1 else (1, 1)
+            types.append(struct.pack("<3I", 0, (K.K_FUNC_PROTO << 24) | 2, 1) + struct.pack("<2I", 0, tgt) * 2)
+            types.append(struct.pack("<3I", 0, (K.K_PTR << 24), nxt))
+        tsec = b"".join(types)
+        return struct.pack("<HBBIIIII", 0xEB9F, 1, 0, 24, 0, len(tsec), len(tsec), len(strs)) + tsec + strs
+
+    def test_exponential_chain_is_fast(self):
+        start = time.monotonic()
+        tn = K.TypeNames(K.BTF(self.chain(30)))
+        self.assertLess(time.monotonic() - start, 5.0)
+        self.assertEqual(tn.protos, 30)
+        self.assertGreater(tn.unmangleable, 0)      # the huge ones are skipped, not hung on
+        self.assertLess(tn.unmangleable, 30)        # the small ones near the end of the chain are still named
 
 
 class AnonTypedefBTF(unittest.TestCase):
