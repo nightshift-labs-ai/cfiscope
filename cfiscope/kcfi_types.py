@@ -342,20 +342,20 @@ class TypeNames:
     def __init__(self, btf, examples=3):
         self.by_hash = defaultdict(dict)
         self.protos = self.unmangleable = 0
-        users = defaultdict(list)          # FUNC_PROTO id -> example names
+        funcs, others = defaultdict(list), defaultdict(list)    # FUNC_PROTO id -> names
         for tid, (kind, name, _kf, st, extra) in enumerate(btf.types):
             if kind == K_FUNC:
-                users[st].append(name)
-        for tid, (kind, name, _kf, st, extra) in enumerate(btf.types):
-            if kind in (K_STRUCT, K_UNION):
+                funcs[st].append(name)
+            elif kind in (K_STRUCT, K_UNION):
                 for mname_off, mtid, _off in extra:
                     proto = _proto_behind(btf, mtid)
-                    if proto and len(users[proto]) < examples:
-                        users[proto].append("%s.%s" % (name or "(anonymous)", btf.name(mname_off)))
+                    if proto:
+                        others[proto].append("%s.%s" % (name or "(anonymous)", btf.name(mname_off)))
             elif kind == K_TYPEDEF:
                 proto = _proto_behind(btf, st)
-                if proto and len(users[proto]) < examples:
-                    users[proto].append(name)
+                if proto:
+                    others[proto].append(name)
+        seen = {}                          # mangled -> ([function names], [other names])
         for tid, (kind, _name, _kf, _st, _extra) in enumerate(btf.types):
             if kind != K_FUNC_PROTO:
                 continue
@@ -365,10 +365,15 @@ class TypeNames:
             except Unmangleable:
                 self.unmangleable += 1
                 continue
-            entry = self.by_hash[kcfi_hash(mangled)].setdefault(mangled, [])
-            for n in users.get(tid, ()):
-                if len(entry) < examples and n not in entry:
-                    entry.append(n)
+            fs, os_ = seen.setdefault(mangled, ([], []))
+            fs.extend(n for n in funcs.get(tid, ()) if len(fs) < examples)
+            os_.extend(n for n in others.get(tid, ()) if len(os_) < examples)
+        for mangled, (fs, os_) in seen.items():
+            names = []
+            for n in fs + os_:                 # functions first, then struct members and typedefs
+                if n not in names and len(names) < examples:
+                    names.append(n)
+            self.by_hash[kcfi_hash(mangled)][mangled] = names
 
     def lookup(self, h):
         """[(mangled, readable, examples)] for a 32-bit hash, [] if no prototype gives it."""
