@@ -60,9 +60,9 @@ def main(argv):
     res = il.annotate(sites, create_functions=create)
     print()
     if create:
-        print("AFTER Scan kCFI calls (Ctrl-Alt-K): %d sites, %d comments, %d cross-references in the whole database" % (stats["sites"], res["comments"], res["xrefs"]))
+        print("AFTER Scan kCFI calls (Alt-Shift-K): %d sites, %d comments, %d cross-references in the whole database" % (stats["sites"], res["comments"], res["xrefs"]))
     else:
-        print('AFTER Scan kCFI calls (Ctrl-Alt-K), answered No to "Create functions": %d sites, %d comments, %d call and '
+        print('AFTER Scan kCFI calls (Alt-Shift-K), answered No to "Create functions": %d sites, %d comments, %d call and '
               '%d data cross-references in the whole database; %d skipped (no function there)'
               % (stats["sites"], res["comments"], res["xrefs"], res["data_xrefs_inside_function"],
                  res["xrefs_skipped_no_function"]))
@@ -73,12 +73,12 @@ def main(argv):
         tos = sorted({t for (f, t, _) in w.data_xrefs if f == at})
         print("  data xrefs from this call (%d): %s" % (len(tos), ", ".join(il.target_name(t) for t in tos)))
     print()
-    print("Candidates for this call (Ctrl-Alt-T): window '%s'" % il.targets_title(site))
+    print("Candidates for this call (Alt-Shift-T): window '%s'" % il.targets_title(site))
     for ea, nm, note in il.targets_rows(site):
         print("  %s  %s%s" % (hex(ea), nm, ("  " + note) if note else ""))
     print()
     rows = il.callers_rows(sites, callee_ea)
-    print("Callers of this function (Ctrl-Alt-C) on %s: %d row(s)" % (names(callee_ea), len(rows)))
+    print("Callers of this function (Alt-Shift-X) on %s: %d row(s)" % (names(callee_ea), len(rows)))
     for ea, nm, note in rows:
         print("  %s  %s  %s" % (hex(ea), nm, note))
     print()

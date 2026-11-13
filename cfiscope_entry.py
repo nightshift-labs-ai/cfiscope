@@ -281,10 +281,12 @@ class RemoveAction(ida_kernwin.action_handler_t):
         return ida_kernwin.AST_ENABLE_ALWAYS
 
 
+# Default keys: none of IDA 9's published defaults, and not Ctrl-Alt-T (a terminal on GNOME/Ubuntu, so IDA never sees
+# it) or Ctrl-Alt-K (Keypatch). Options > Shortcuts rebinds them.
 ACTIONS = [
-    ("cfiscope:scan", "CFIScope: Scan kCFI calls", ScanAction, "Ctrl-Alt-K"),
-    ("cfiscope:targets", "CFIScope: Candidates for this call", TargetsAction, "Ctrl-Alt-T"),
-    ("cfiscope:callers", "CFIScope: Callers of this function", CallersAction, "Ctrl-Alt-C"),
+    ("cfiscope:scan", "CFIScope: Scan kCFI calls", ScanAction, "Alt-Shift-K"),
+    ("cfiscope:targets", "CFIScope: Candidates for this call", TargetsAction, "Alt-Shift-T"),
+    ("cfiscope:callers", "CFIScope: Callers of this function", CallersAction, "Alt-Shift-X"),
     ("cfiscope:remove", "CFIScope: Remove annotations", RemoveAction, ""),
 ]
 

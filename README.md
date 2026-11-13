@@ -42,11 +42,11 @@ $ python3 -I tools/showcase_ida_stub.py gki.elf sock_sendmsg+0xb4 tcp_sendmsg
 BEFORE (no CFIScope): 0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8
   comment: none; code xrefs from this call: none (indirect)
 
-AFTER Scan kCFI calls (Ctrl-Alt-K): 13897 sites, 13897 comments, 44718 cross-references in the whole database
+AFTER Scan kCFI calls (Alt-Shift-K): 13897 sites, 13897 comments, 44718 cross-references in the whole database
 0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI 0x1EBDA935 int (struct socket *, struct msghdr *, unsigned long): 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
   code xrefs from this call (14): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
 
-Candidates for this call (Ctrl-Alt-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (hash 0x1EBDA935, int (struct socket *, struct msghdr *, unsigned long))'
+Candidates for this call (Alt-Shift-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (hash 0x1EBDA935, int (struct socket *, struct msghdr *, unsigned long))'
   0xffffffc00897842c  tun_sendmsg
   0xffffffc008cd2ac4  sock_no_sendmsg
   0xffffffc008d8cd98  netlink_sendmsg
@@ -62,7 +62,7 @@ Candidates for this call (Ctrl-Alt-T): window 'kCFI candidates for the call at 0
   0xffffffc008f6cc48  vsock_connectible_sendmsg
   0xffffffc008f72e10  xsk_sendmsg
 
-Callers of this function (Ctrl-Alt-C) on tcp_sendmsg: 3 row(s)
+Callers of this function (Alt-Shift-X) on tcp_sendmsg: 3 row(s)
   0xffffffc008cc5778  kernel_sendmsg_locked+0x64  11 candidate(s)
   0xffffffc008e433c8  inet_sendmsg+0x58  11 candidate(s)
   0xffffffc008ead820  inet6_sendmsg+0x58  11 candidate(s)
@@ -111,14 +111,14 @@ hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/
 
 ## Try it
 
-The menu names below are under Edit > Plugins. Scan and the two lookups are also on the right-click menu (CFIScope submenu). Use the menus rather than the hotkeys: on many Linux desktops `Ctrl-Alt-T` opens a terminal.
+The menu names below are under Edit > Plugins, with their default keys. Scan and the two lookups are also on the right-click menu (CFIScope submenu).
 
 Quick try, no download (about a minute). The repository ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`.
 
 1. Open `tests/fixtures/x86_64-kernel.o` (or `aarch64-kernel.o`) in IDA. After `hcli plugin install cfiscope` the fixtures are in `$IDAUSR/plugins/cfiscope/tests/fixtures/` (`~/.idapro/plugins/...` on Linux and macOS, `%APPDATA%\Hex-Rays\IDA Pro\plugins\...` on Windows).
-2. Choose **CFIScope: Scan kCFI calls**. It should find 21 kCFI call sites, one per function-pointer type in `t.c`, each with candidates (the counts are printed in the Output window).
-3. Put the cursor on the call in `do_call_2` and choose **CFIScope: Candidates for this call**. It should list `impl_2_0`, `impl_2_1`, `impl_2_2`; the call's comment and the list title name the type, `long (short, int)`, from the BTF of `t.c` that these two fixtures carry.
-4. Put the cursor on `impl_2_1` and choose **CFIScope: Callers of this function**. It should list that call in `do_call_2`.
+2. Choose **CFIScope: Scan kCFI calls** (`Alt-Shift-K`) and answer its question about creating functions. It should find 21 kCFI call sites, one per function-pointer type in `t.c`, each with candidates (the counts are printed in the Output window).
+3. Put the cursor on the call in `do_call_2` and choose **CFIScope: Candidates for this call** (`Alt-Shift-T`). It should list `impl_2_0`, `impl_2_1`, `impl_2_2`; the call's comment and the list title name the type, `long (short, int)`, from the BTF of `t.c` that these two fixtures carry.
+4. Put the cursor on `impl_2_1` and choose **CFIScope: Callers of this function** (`Alt-Shift-X`). It should list that call in `do_call_2`.
 
 A real kernel:
 
@@ -129,9 +129,9 @@ A real kernel:
 
 ## Features
 
-- **Scan kCFI calls** (`Ctrl-Alt-K`): comments every kCFI call site with the type hash and candidate count. Adds cross-references when the list is short (at most 16) and offers to create functions at candidates IDA has not recognised. It asks first; Cancel writes nothing.
-- **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach.
-- **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give.
+- **Scan kCFI calls** (`Alt-Shift-K`): comments every kCFI call site with the type hash and candidate count. Adds cross-references when the list is short (at most 16) and offers to create functions at candidates IDA has not recognised. It asks first; Cancel writes nothing.
+- **Candidates for this call** (`Alt-Shift-T`): a jump list of every function the call under the cursor can reach.
+- **Callers of this function** (`Alt-Shift-X`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give.
 - **Remove annotations**: removes the comments and cross-references the scan added. Functions created when you answered Yes stay.
 - **Pseudocode comments** (with the Hex-Rays decompiler): the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2` (the type when the file has BTF).
 - **kCFI hashes named by C function type** (unreleased): when the kernel carries BTF (`CONFIG_DEBUG_INFO_BTF`), or with `--btf PATH`, each hash is shown as its type, e.g. `hash 0x4f4ccb9d (int (struct file *, int))` (CFIScope mangles every BTF prototype the way Clang does and hashes it: `cfiscope/kcfi_types.py`). Named: all 4,184 hashes on GKI 6.1, all 4,466 on GKI 6.6, 4,621 of 4,626 on the Rust-enabled GKI 6.12 (the 5 left are inside Rust code); details in [VERIFICATION](docs/VERIFICATION.md). The IDA layer does the same from the input file's BTF, checked only against fake IDA modules.
@@ -163,7 +163,7 @@ Full description of each action: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#the
 - **Jump-table CFI:** aarch64 only, two kernels measured. Tracepoint and vendor-hook calls are not checked by design and stay unresolved. See [docs/JTCFI.md](docs/JTCFI.md#limits).
 - **Text bounds in IDA:** leaving out candidates in `.rodata` and data in practice needs the input ELF still at its path.
 - **Pseudocode comments** are display text only; nothing is saved in the database.
-- **Hotkeys:** many Linux desktops take `Ctrl-Alt-T` for a terminal and Keypatch uses `Ctrl-Alt-K`. Use the menus, or rebind the keys in Options > Shortcuts.
+- **Hotkeys:** `Alt-Shift-K`, `T`, `X` are not among IDA 9's published default shortcuts, Keypatch's or GNOME's window-manager keys; another plugin may still use them. Rebind in Options > Shortcuts.
 
 ## Status
 

@@ -9,14 +9,22 @@ import test_plugin_stub as T  # noqa: E402
 def load_entry(name="x86_64-kernel", proc="metapc", ext=".o"):
     w, _ = T.IdaLayer("test_flow").make(name, proc, ext=ext)
     kw, ia = sys.modules["ida_kernwin"], sys.modules["ida_idaapi"]
-    log = {"msgs": [], "menu": [], "popup": [], "registered": [], "hooked": 0, "asked": [], "world": w}
+    log = {"msgs": [], "menu": [], "popup": [], "registered": [], "hooked": 0, "asked": [], "world": w, "keys": {},
+           "shown": [], "pick": -1}
     kw.msg = lambda t: log["msgs"].append(t)
     kw.show_wait_box = lambda t: None
     kw.hide_wait_box = lambda: None
     kw.warning = lambda t: log["msgs"].append("WARN " + t)
     kw.action_handler_t = type("action_handler_t", (), {})
     kw.AST_ENABLE_ALWAYS, kw.SETMENU_APP, kw.BWN_DISASM, kw.BWN_PSEUDOCODE = 1, 0, 27, 46
-    kw.action_desc_t = lambda name, label, handler, key: name
+    kw.action_desc_t = lambda name, label, handler, key: log["keys"].__setitem__(name, key) or name
+    # Choose(title, cols, flags=0); Show(modal=False): a modal chooser returns the picked row or NO_SELECTION (-1).
+    kw.Choose.__init__ = lambda chooser, title, cols, flags=0: setattr(chooser, "title", title)
+    def show(chooser, modal=False):
+        log["shown"].append((chooser.title, modal))
+        return log["pick"] if modal else 0
+    kw.Choose.Show = show
+    kw.get_screen_ea = lambda: 2**64 - 1
     kw.register_action = lambda d: log["registered"].append(d) or True
     kw.unregister_action = lambda n: log["registered"].remove(n) or True
     kw.attach_action_to_menu = lambda path, n, f: log["menu"].append((path, n)) or True
@@ -229,6 +237,26 @@ class Entry(unittest.TestCase):
         self.assertEqual(waited, [])
         self.assertTrue(w.cmts)
 
+    # Keys a CFIScope default must not take: IDA 9's published default shortcuts that use Alt or Ctrl+Alt
+    # (docs.hex-rays.com/core/user-interface/reference/shortcuts, read 2026-11-13), Keypatch's Ctrl-Alt-K, and keys
+    # that common Linux desktops keep for themselves (GNOME/Ubuntu: Ctrl-Alt-T terminal, Ctrl-Alt-L lock screen,
+    # Ctrl-Alt-Delete log out, Alt-Shift-Tab windows). Also IDA 9.x's "Find a value" (Alt-Shift-V, release notes) and
+    # the keys of the IDAPython examples in the SDK (print_registers.py Alt-Shift-C; Ctrl-Alt-C).
+    TAKEN = ["Alt-Enter", "Alt-M", "Alt-T", "Alt-B", "Alt-I", "Alt-C", "Ctrl-Alt-B", "Ctrl-Alt-S", "Alt-R", "Alt-P",
+             "Alt-Q", "Alt-A", "Ctrl-Shift-M", "Ctrl-Alt-K", "Ctrl-Alt-T", "Ctrl-Alt-L", "Ctrl-Alt-Delete",
+             "Alt-Shift-Tab", "Alt-Shift-V", "Alt-Shift-C", "Ctrl-Alt-C", "Ctrl-Alt-Shift-M"]
+
+    def test_default_hotkeys(self):
+        _, E, log = load_entry()
+        E.PLUGIN_ENTRY().init()
+        self.assertEqual(log["keys"], {"cfiscope:scan": "Alt-Shift-K", "cfiscope:targets": "Alt-Shift-T",
+                                       "cfiscope:callers": "Alt-Shift-X", "cfiscope:remove": ""})
+        norm = lambda k: frozenset(k.lower().replace("+", "-").split("-"))
+        taken = {norm(k) for k in self.TAKEN}
+        for name, key in log["keys"].items():
+            if key:
+                self.assertNotIn(norm(key), taken, name)
+
     def test_menus_and_popup(self):
         _, E, log = load_entry()
         p = E.PLUGIN_ENTRY()
@@ -251,8 +279,8 @@ class Line:
 class FakeCfunc:
     """A decompiled function: pseudocode lines, an eamap (address -> statements) and each statement's (x, y)."""
 
-    def __init__(self, lines, eamap, coords):
-        self.sv, self.eamap, self.coords = [Line(t) for t in lines], eamap, coords
+    def __init__(self, lines, eamap, coords, entry_ea=None):
+        self.sv, self.eamap, self.coords, self.entry_ea = [Line(t) for t in lines], eamap, coords, entry_ea
 
     def get_eamap(self):
         return self.eamap
@@ -282,6 +310,8 @@ def fake_hexrays(log, available=True):
     hx.Hexrays_Hooks = Hexrays_Hooks
     hx.init_hexrays_plugin = lambda flags=0: available
     hx.clear_cached_cfuncs = lambda: log.update(hx_flushed=log["hx_flushed"] + 1)
+    # get_widget_vdui(f: TWidget) -> vdui_t, or None ("nullptr"): log["vdui"] is a vdui_t with .cfunc and .cpos.lnnum
+    hx.get_widget_vdui = lambda widget: log.get("vdui")
     sys.modules["ida_hexrays"] = hx
     return hx
 

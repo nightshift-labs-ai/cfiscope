@@ -48,7 +48,7 @@ class Showcase(unittest.TestCase):
             not_a_function(os.path.join(HERE, "fixtures", "x86_64-kernel.o"), "impl_2_1", obj)
             out = subprocess.run([sys.executable, "-I", TOOL, obj, "do_call_2+0x1a", "impl_2_0", "--no"],
                                  capture_output=True, text=True, check=True).stdout
-        self.assertIn('AFTER Scan kCFI calls (Ctrl-Alt-K), answered No to "Create functions": 21 sites, 21 comments, '
+        self.assertIn('AFTER Scan kCFI calls (Alt-Shift-K), answered No to "Create functions": 21 sites, 21 comments, '
                       '75 call and 1 data cross-references in the whole database; 0 skipped (no function there)', out)
         self.assertIn("code xrefs from this call (2): impl_2_0, impl_2_2", out)
         self.assertIn("data xrefs from this call (1): __cfi_impl_2_1+0x20", out)
