@@ -12,7 +12,7 @@ Kernel attack surface runs through function pointers: `file_operations`, `net_de
 - **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach. If the cursor is not on a kCFI check or its call, the nearest check in the same function is used; the list's title names the call address it chose.
 - **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give. Only calls are counted: with the Linux 5.x jump-table CFI, a check whose call was not linked comes after the calls as a type check only, and the CFI runtime's own checks (in `__cfi_check`, which guard no call) are left out.
 - **Remove annotations**: removes the comments and cross-references the scan added, and turns the pseudocode comments off. Functions created when you answered Yes stay, including any IDA makes itself from a call cross-reference. The Output window's `functions created` counts only those CFIScope made: after Yes, a candidate inside another function gets a call cross-reference and no `add_func`, so a function IDA may make there is not counted.
-- **Pseudocode comments** (with the Hex-Rays decompiler): after a scan, the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2` (at most 5 names, then "and N more"). The line is found through the decompiler's address map when a function is printed; the comment is display text only, nothing is saved in the database. Not yet run in IDA and not tested with the real decompiler, only against a fake `ida_hexrays` module.
+- **Pseudocode comments** (with the Hex-Rays decompiler): after a scan, the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2` (at most 5 names, then "and N more"). The line is found through the decompiler's address map when a function is printed; the comment is display text only, nothing is saved in the database. Not yet run in IDA and not tested with the real decompiler, only against a fake `ida_hexrays` module.
 
 All four actions are under Edit > Plugins. Scan and the two lookups are also on the right-click menu of disassembly and pseudocode views (CFIScope submenu). Many Linux desktops take `Ctrl-Alt-T` for a terminal and Keypatch uses `Ctrl-Alt-K`: use the menus, or rebind the keys in Options > Shortcuts.
 
@@ -36,13 +36,13 @@ The same scan from the command line, real output:
 
 ```
 $ python3 -m cfiscope tests/fixtures/x86_64-kernel.o --sites --max-list 4
-0x108033  do_call_0+0x13  jump hash 0x7230bf2a  4 candidate(s): impl_0_0, impl_0_1, impl_0_2, impl_0_3
-0x116033  do_call_1+0x13  jump hash 0x36b1c5a6  6 candidate(s): impl_1_0, impl_1_1, impl_1_2, impl_1_3 ...
-0x11e03a  do_call_2+0x1a  jump hash 0x1300e12b  3 candidate(s): impl_2_0, impl_2_1, impl_2_2
+0x108033  do_call_0+0x13  jump hash 0x7230bf2a (long long (void))  4 candidate(s): impl_0_0, impl_0_1, impl_0_2, impl_0_3
+0x116033  do_call_1+0x13  jump hash 0x36b1c5a6 (int (void))  6 candidate(s): impl_1_0, impl_1_1, impl_1_2, impl_1_3 ...
+0x11e03a  do_call_2+0x1a  jump hash 0x1300e12b (long (short, int))  3 candidate(s): impl_2_0, impl_2_1, impl_2_2
 ...
 ```
 
-(Spacing condensed. Addresses are where the command-line tool lays out the object's sections; IDA will place them elsewhere.)
+(Spacing condensed. Addresses are where the command-line tool lays out the object's sections; IDA will place them elsewhere. The types in brackets come from the BTF of `t.c` that the two `*-kernel.o` fixtures carry, added with `tools/add_btf_section.py`.)
 
 ## Without IDA (scripts, other tools, CI)
 

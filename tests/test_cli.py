@@ -274,5 +274,40 @@ class BTFNames(unittest.TestCase):
         self.assertIn("no BTF found", err)
 
 
+class QuickTryFixtureBTF(unittest.TestCase):
+    """s176: the Quick-try fixtures carry the BTF of t.c (tools/add_btf_section.py), so the first try names types."""
+
+    def test_fixtures_name_every_hash(self):
+        for arch in ("x86_64", "aarch64"):
+            rc, out, _ = run(os.path.join(FIX, arch + "-kernel.o"))
+            self.assertEqual(rc, 0)
+            self.assertIn("kCFI hashes named: 21 of 21 (100.0%)", out, arch)
+
+    def test_add_btf_section_round_trip(self):
+        sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+        try:
+            import add_btf_section as A
+        finally:
+            sys.path.pop(0)
+        btf = A.btf_of(os.path.join(HERE, "fixtures", "x86_64-kernel.o"))
+        self.assertEqual(btf[:2], b"\x9f\xeb")  # BTF magic 0xeb9f, little-endian
+        with open(os.path.join(FIX, "aarch64-plain.o"), "rb") as fh:
+            plain = fh.read()
+        out = A.add_btf(plain, btf)
+        hdrs0, names0, strndx = A.sections(plain)
+        hdrs1, names1, _ = A.sections(out)
+        self.assertEqual(names1, names0 + [".BTF"])
+        for i, (h0, h1) in enumerate(zip(hdrs0, hdrs1)):  # every old section keeps its bytes (names: + ".BTF")
+            old, new = plain[h0[4]:h0[4] + h0[5]], out[h1[4]:h1[4] + h1[5]]
+            if i == strndx:
+                self.assertEqual(new, old + b".BTF\x00")
+            elif h0[1] != 8:  # not SHT_NOBITS
+                self.assertEqual(new, old)
+        h = hdrs1[-1]
+        self.assertEqual(out[h[4]:h[4] + h[5]], btf)
+        with self.assertRaises(SystemExit):
+            A.add_btf(out, btf)  # a second .BTF is refused
+
+
 if __name__ == "__main__":
     unittest.main()

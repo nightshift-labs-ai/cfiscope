@@ -117,7 +117,7 @@ Quick try, no download (about a minute). The repository ships small objects buil
 
 1. Open `tests/fixtures/x86_64-kernel.o` (or `aarch64-kernel.o`) in IDA. After `hcli plugin install cfiscope` the fixtures are in `$IDAUSR/plugins/cfiscope/tests/fixtures/` (`~/.idapro/plugins/...` on Linux and macOS, `%APPDATA%\Hex-Rays\IDA Pro\plugins\...` on Windows).
 2. Choose **CFIScope: Scan kCFI calls**. It should find 21 kCFI call sites, one per function-pointer type in `t.c`, each with candidates (the counts are printed in the Output window).
-3. Put the cursor on the call in `do_call_2` and choose **CFIScope: Candidates for this call**. It should list `impl_2_0`, `impl_2_1`, `impl_2_2`.
+3. Put the cursor on the call in `do_call_2` and choose **CFIScope: Candidates for this call**. It should list `impl_2_0`, `impl_2_1`, `impl_2_2`; the call's comment and the list title name the type, `long (short, int)`, from the BTF of `t.c` that these two fixtures carry.
 4. Put the cursor on `impl_2_1` and choose **CFIScope: Callers of this function**. It should list that call in `do_call_2`.
 
 A real kernel:
@@ -133,7 +133,7 @@ A real kernel:
 - **Candidates for this call** (`Ctrl-Alt-T`): a jump list of every function the call under the cursor can reach.
 - **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give.
 - **Remove annotations**: removes the comments and cross-references the scan added. Functions created when you answered Yes stay.
-- **Pseudocode comments** (with the Hex-Rays decompiler): the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2`.
+- **Pseudocode comments** (with the Hex-Rays decompiler): the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2` (the type when the file has BTF).
 - **kCFI hashes named by C function type** (unreleased): when the kernel carries BTF (`CONFIG_DEBUG_INFO_BTF`), or with `--btf PATH`, each hash is shown as its type, e.g. `hash 0x4f4ccb9d (int (struct file *, int))`. A kCFI hash is the low 32 bits of xxHash64 of `_ZTS` + the Itanium mangling of the function type, so CFIScope mangles every BTF function prototype and matches (`cfiscope/kcfi_types.py`). On the GKI 6.1 kernel of the walkthrough, its own BTF names 4,182 of the 4,184 distinct hashes at call sites (99.9%), on GKI 6.6 all 4,466, and on GKI 6.12, whose Rust support switches kCFI to integer-normalized hashes, 4,621 of 4,626 (the 5 left are calls inside Rust's `core::fmt`, whose types are not in BTF), measured with the command line on the raw `Image`; the IDA layer does the same from the input file's BTF, checked only against fake IDA modules.
 - **Linux 5.x jump-table CFI** (aarch64, Android 12/13 GKI 5.10 and 5.15, since v0.1.17): reads each call's candidates from the compiler's jump table. See [docs/JTCFI.md](docs/JTCFI.md).
 - **Command line and headless**: the scanner is plain Python 3 with no dependencies; `tools/cfiscope_headless.py` adds the same comments and cross-references as Scan, headless with idalib (IDA 9.0 or newer). See [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#without-ida-scripts-other-tools-ci).

@@ -33,10 +33,12 @@ class Showcase(unittest.TestCase):
                               "do_call_2+0x1a", "impl_2_1"], capture_output=True, text=True, check=True).stdout
         self.assertIn("comment: none; code xrefs from this call: none", out)
         self.assertIn("21 sites, 21 comments, 76 cross-references", out)
-        self.assertIn("; kCFI 0x1300E12B: 3 candidate(s): impl_2_0, impl_2_1, impl_2_2", out)
+        # s176: the fixture carries the BTF of t.c (tools/add_btf_section.py), so the Quick try shows the C type too
+        self.assertIn("; kCFI 0x1300E12B long (short, int): 3 candidate(s): impl_2_0, impl_2_1, impl_2_2", out)
+        self.assertIn("(hash 0x1300E12B, long (short, int))", out)
         self.assertIn("code xrefs from this call (3): impl_2_0, impl_2_1, impl_2_2", out)
         self.assertIn("on impl_2_1: 1 row(s)\n  0x11e03a  do_call_2+0x1a  3 candidate(s)", out)
-        self.assertIn("// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2", out)
+        self.assertIn("// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2", out)
 
     def test_fixture_no(self):
         # --no answers No to "Create functions" (annotate(sites, create_functions=False)). Without impl_2_1's symbol,
