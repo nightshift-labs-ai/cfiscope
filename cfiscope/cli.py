@@ -5,6 +5,7 @@
     python3 -m cfiscope vmlinux --callers tcp_sendmsg
     python3 -m cfiscope vmlinux --targets 0xffffffc008cc55ac
     python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
+    python3 -m cfiscope vmlinux --sites --btf vmlinux.btf   # name kCFI hashes by C type
 
 Input is a 64-bit little-endian ELF (a vmlinux, or a kernel whose symbols
 were restored with vmlinux-to-elf, or a relocatable .o/.ko), or a raw kernel
@@ -12,6 +13,9 @@ image with --raw.  Symbols print names and, when the ELF names _stext,
 _etext, _sinittext and _einittext, leave out kCFI candidates between _etext
 and _sinittext outside the code areas named there (core.kernel_text()); the
 scan itself reads code bytes alone.  Add --json for machine output.
+kCFI hashes are named by their C function type when BTF is available: from
+--btf (an ELF with a .BTF section, a raw kernel image, or a raw BTF file), or
+else from the input itself when it carries BTF (--no-btf turns that off).
 """
 import argparse
 import bisect
@@ -19,7 +23,7 @@ import json
 import struct
 import sys
 
-from . import core
+from . import core, kcfi_types
 from .core import name_jt_types, resolve, type_label
 
 EM_X86_64, EM_AARCH64 = 62, 183
@@ -184,7 +188,7 @@ def runtime_test(names, ranges):
     return in_runtime
 
 
-def _site_dict(s, names, limit):
+def _site_dict(s, names, limit, type_names=None):
     out = {
         "call": "0x%x" % s.call_ea if s.call_ea else None,
         "check": "0x%x" % s.check_ea,
@@ -194,6 +198,10 @@ def _site_dict(s, names, limit):
         "candidates": len(s.targets),
         "targets": [{"ea": "0x%x" % t, "name": names(t)} for t in s.targets[:limit]],
     }
+    if s.kind == "kcfi" and type_names is not None:     # only with BTF: output is unchanged without it
+        out["type"] = s.type_name
+        out["type_mangled"] = s.type_mangled
+        out["type_examples"] = sorted({e for _m, _r, ex in type_names.lookup(s.hash) for e in ex})
     if s.kind != "kcfi":     # jump-table CFI: the hash is the 64-bit type id
         out["hash"] = "0x%016x" % s.type_id if s.type_id is not None else None
         out.update(_jt_dict(s))
@@ -234,8 +242,9 @@ def _site_line(s, names, limit):
         return "%s  %-40s %s %s  %s%s%s" % (
             where, names(s.call_ea or s.check_ea), kind, type_label(s) or "type unknown", count,
             ": " if shown else "", shown + more)
-    return "%s  %-40s %s hash 0x%08x  %d candidate(s)%s%s" % (
-        where, names(s.call_ea or s.check_ea), kind, s.hash, len(s.targets),
+    typed = " (%s)" % s.type_name if s.type_name else ""
+    return "%s  %-40s %s hash 0x%08x%s  %d candidate(s)%s%s" % (
+        where, names(s.call_ea or s.check_ea), kind, s.hash, typed, len(s.targets),
         ": " if shown else "", shown + more)
 
 
@@ -253,6 +262,27 @@ def _print_jt_summary(st):
           % (st["median_candidates_resolved"], st["median_candidates"], st["max_candidates"]))
 
 
+def _type_names(a, data):
+    """kcfi_types.TypeNames from --btf, else from the input's own BTF; None if there is none."""
+    if a.btf:
+        with open(a.btf, "rb") as fh:
+            btf_data = fh.read()
+        try:
+            names = kcfi_types.load_type_names(btf_data)
+        except (kcfi_types.BTFError, struct.error) as e:
+            raise InputError("%s: unreadable BTF (%s)" % (a.btf, e))
+        if names is None:
+            raise InputError("%s: no BTF found (no .BTF section, BTF header or raw BTF)" % a.btf)
+        return names
+    if a.no_btf:
+        return None
+    try:
+        return kcfi_types.load_type_names(data)
+    except (kcfi_types.BTFError, struct.error) as e:
+        print("cfiscope: the input's BTF is unreadable, kCFI hashes not named (%s)" % e, file=sys.stderr)
+        return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="python3 -m cfiscope",
                                  description="Resolve kCFI (and aarch64 Linux 5.x jump-table CFI) indirect calls "
@@ -268,6 +298,10 @@ def main(argv=None):
     ap.add_argument("--max-list", type=int, default=None,
                     help="candidates shown per site (default: 8 in text, all with --json)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--btf", metavar="PATH",
+                    help="name kCFI hashes by C function type from this BTF: an ELF with a .BTF section, a raw "
+                         "kernel image, or a raw BTF file (default: the input's own BTF, if it has any)")
+    ap.add_argument("--no-btf", action="store_true", help="do not look for BTF in the input")
     a = ap.parse_args(argv)
 
     try:
@@ -285,6 +319,10 @@ def main(argv=None):
         stats = dict(stats, arch=arch, named_functions=len(symbols))
         if stats.get("scheme") == "jump-table CFI":
             stats["named_checks"] = name_jt_types(sites, every)
+        type_names = _type_names(a, data) if stats.get("scheme") != "jump-table CFI" else None
+        if type_names is not None:
+            stats["kcfi_hashes_named"], _ = kcfi_types.name_sites(sites, type_names)
+            stats["btf_prototypes"] = type_names.protos
         if a.callers or a.targets:
             want = parse_target(a.callers or a.targets, names)
     except (OSError, InputError, ValueError, OverflowError, struct.error) as e:
@@ -318,7 +356,7 @@ def main(argv=None):
             out["callers"] = {"call_sites": len(calls), "unlinked_checks": len(checks)}
         if chosen is not None:
             limit = 1 << 30 if a.targets or a.max_list is None else a.max_list
-            out["sites"] = [_site_dict(s, names, limit) for s in chosen]
+            out["sites"] = [_site_dict(s, names, limit, type_names) for s in chosen]
         json.dump(out, sys.stdout, indent=1)
         print()
         return 0
@@ -332,6 +370,9 @@ def main(argv=None):
         print("with candidates %d, none %d, exactly one %d" % (st["resolved"], st["unresolved"], st["single_target"]))
         print("median candidates per site with candidates %d (over all sites %d), max %d"
               % (st["median_candidates_resolved"], st["median_candidates"], st["max_candidates"]))
+        if "kcfi_hashes_named" in st and st["sites"]:
+            print(kcfi_types.named_summary(st["kcfi_hashes_named"], st["hashes"])
+                  + " from %d BTF function prototypes" % st["btf_prototypes"])
         if "outside_text" in st and st["sites"]:
             print("candidates outside kernel code left out: %d (between the _etext and _sinittext symbols, outside "
                   "the code areas named there)" % st["outside_text"])

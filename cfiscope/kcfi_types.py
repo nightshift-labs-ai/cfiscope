@@ -401,3 +401,25 @@ def load_type_names(data):
     if blob is None:
         return None
     return TypeNames(BTF(blob))
+
+
+def name_sites(sites, names):
+    """Set type_name / type_mangled of the kCFI sites whose hash a TypeNames names.
+
+    Returns (named, total): distinct kCFI hashes named, distinct kCFI hashes at these sites."""
+    hashes, named = set(), set()
+    for s in sites:
+        if getattr(s, "kind", "kcfi") != "kcfi":
+            continue
+        hashes.add(s.hash)
+        found = names.lookup(s.hash)
+        if found:
+            named.add(s.hash)
+            s.type_mangled = " | ".join(m for m, _r, _e in found)
+            s.type_name = " | ".join(r for _m, r, _e in found)
+    return len(named), len(hashes)
+
+
+def named_summary(named, total):
+    """'kCFI hashes named: N of M (x%)'."""
+    return "kCFI hashes named: %d of %d (%.1f%%)" % (named, total, 100.0 * named / total if total else 0.0)

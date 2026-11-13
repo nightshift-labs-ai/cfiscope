@@ -31,6 +31,11 @@ int f_arr(int a[4], char *restrict p, const int k) { return a[0] + p[0] + k; }
 void f_cbt(cb_t a, cb_t b, struct file **pp) { }
 int f_fp2(int (*g)(struct file *, int), struct file *f) { return 0; }
 double f_dbl(float a, double b) { return a + b; }
+/* Four kCFI call sites; BTF (bpf build) has no int (unsigned long) prototype, so one hash stays unnamed. */
+int call_some(int (*g)(struct file *, int), struct file *f, long (*h)(short, int),
+              void (*r)(struct file *, struct file *), int (*u)(unsigned long)) {
+  r(f, f); return g(f, 1) + h(2, 3) + u(5);
+}
 #endif
 int ops_open(struct file *f, int x) { return x; }
 void ops_release(struct file *a, struct file *b) { }

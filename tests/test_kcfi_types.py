@@ -78,7 +78,7 @@ class FixtureBTF(unittest.TestCase):
         protos = proto_ids(btf)
         checked = 0
         for name, (sh, val) in sorted(syms.items()):
-            if sh not in text or val < 4:
+            if sh not in text or val < 4 or name == "call_some":   # call_some: kCFI only, no BTF
                 continue
             with self.subTest(name):
                 want = struct.unpack_from("<I", text[sh], val - 4)[0]

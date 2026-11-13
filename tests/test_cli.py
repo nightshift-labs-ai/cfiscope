@@ -216,5 +216,63 @@ class Version(unittest.TestCase):
             self.assertEqual(json.load(fh)["plugin"]["version"], __version__)
 
 
+class BTFNames(unittest.TestCase):
+    """kCFI hashes named by C function type from BTF (tests/fixtures/kcfi_types.c, built by zig cc)."""
+    A64 = os.path.join(FIX, "kcfi_types_a64.o")
+    BTF = os.path.join(FIX, "kcfi_types_btf.o")
+
+    def test_sites_text(self):
+        rc, out, _ = run(self.A64, "--sites", "--btf", self.BTF)
+        self.assertEqual(rc, 0)
+        self.assertIn("call hash 0x4f4ccb9d (int (file*, int))  1 candidate(s): ops_open", out)
+        self.assertIn("call hash 0x1300e12b (long (short, int))  1 candidate(s): f_ls", out)
+        self.assertIn("call hash 0x4a7b6fdc  0 candidate(s)", out)        # int (unsigned long): not in this BTF
+
+    def test_summary_and_json(self):
+        rc, out, _ = run(self.A64, "--btf", self.BTF)
+        self.assertEqual(rc, 0)
+        self.assertIn("kCFI hashes named: 3 of 4 (75.0%)", out)
+        rc, out, _ = run(self.A64, "--sites", "--json", "--btf", self.BTF)
+        doc = json.loads(out)
+        self.assertEqual(doc["stats"]["kcfi_hashes_named"], 3)
+        by_hash = {s["hash"]: s for s in doc["sites"]}
+        self.assertEqual(by_hash["0xf2e4b17f"]["type"], "void (file*, file*)")
+        self.assertEqual(by_hash["0xf2e4b17f"]["type_mangled"], "_ZTSFvP4fileS0_E")
+        self.assertIn("ops.release", by_hash["0xf2e4b17f"]["type_examples"])
+        self.assertIsNone(by_hash["0x4a7b6fdc"]["type"])
+
+    def test_unchanged_without_btf(self):
+        rc, out, _ = run(self.A64, "--sites", "--json")
+        self.assertEqual(rc, 0)
+        doc = json.loads(out)
+        self.assertNotIn("kcfi_hashes_named", doc["stats"])
+        self.assertNotIn("type", doc["sites"][0])
+        rc, out, _ = run(self.A64)
+        self.assertNotIn("named", out.replace("named functions", ""))
+
+    def test_input_with_its_own_btf(self):
+        # A raw image holding both the code and a BTF blob: the BTF is found and used without --btf.
+        from cfiscope import kcfi_types
+        with open(self.A64, "rb") as fh:
+            arch, ranges, _ = cli.load_elf(fh.read())
+        base, code = ranges[0]
+        with open(self.BTF, "rb") as fh:
+            blob = kcfi_types.find_btf(fh.read())
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = os.path.join(tmp, "Image")
+            with open(raw, "wb") as fh:
+                fh.write(code + b"\0" * 64 + blob)
+            rc, out, _ = run(raw, "--raw", "--arch", arch, "--base", hex(base), "--json")
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out)["stats"]["kcfi_hashes_named"], 3)
+            rc, out, _ = run(raw, "--raw", "--arch", arch, "--base", hex(base), "--json", "--no-btf")
+            self.assertNotIn("kcfi_hashes_named", json.loads(out)["stats"])
+
+    def test_btf_option_without_btf(self):
+        rc, _, err = run(self.A64, "--btf", os.path.join(FIX, "aarch64-plain.o"))
+        self.assertEqual(rc, 2)
+        self.assertIn("no BTF found", err)
+
+
 if __name__ == "__main__":
     unittest.main()
