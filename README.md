@@ -31,6 +31,8 @@ $ python3 -m cfiscope gki.elf --callers tcp_sendmsg --max-list 3
 
 (Long lines wrapped by hand; spacing condensed.)
 
+This output predates the unreleased naming of hashes by C type. With it, the kernel's own BTF names both hashes, and these lines show the type after the hash: `hash 0x1ebda935 (int (socket*, msghdr*, unsigned long))` and `hash 0x87bcba6f (int (sock*, msghdr*, unsigned long))` (same call addresses and candidate counts; checked with `python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000 --sites` on the raw `Image`, without symbols).
+
 ## What the plugin writes into IDA (fake IDA, not a screenshot)
 
 `tools/showcase_ida_stub.py` loads the same kernel's code segments and symbol names into the fake IDA modules of the stub tests, runs the plugin's own IDA layer (Scan, the two lists, the pseudocode comment) and prints what it wrote. These are the exact strings the plugin hands to IDA; real IDA has not run them and draws its own listing around them. How the counts come about: [docs/VERIFICATION.md](docs/VERIFICATION.md#what-the-plugin-writes-into-ida-fake-ida-not-a-screenshot).
