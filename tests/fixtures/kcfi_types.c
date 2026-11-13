@@ -2,7 +2,8 @@
    and zig cc -target bpfel-freestanding-none -g -O2 -c kcfi_types.c -o kcfi_types_btf.o (zig 0.17.1, clang 22.1.8).
    kcfi_types_x64_norm.o: zig cc -target x86_64-linux-gnu -fsanitize=kcfi
    -fsanitize-cfi-icall-experimental-normalize-integers -O1 -c kcfi_types.c -o kcfi_types_x64_norm.o
-   (integer-normalized hashes, as in kernels with CONFIG_CFI_ICALL_NORMALIZE_INTEGERS). */
+   (integer-normalized hashes, as in kernels with CONFIG_CFI_ICALL_NORMALIZE_INTEGERS); kcfi_types_a64_norm.o: the same
+   with -target aarch64-linux-gnu. */
 /* Fixture for cfiscope.kcfi_types: every function below is address-taken, so clang -fsanitize=kcfi
    writes its type hash in front of it, and its BTF (bpf target) records its prototype. */
 #include <stdarg.h>

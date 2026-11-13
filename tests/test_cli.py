@@ -274,6 +274,14 @@ class BTFNames(unittest.TestCase):
         self.assertIn("no BTF found", err)
 
 
+class BTFOnJumpTableCFI(unittest.TestCase):
+    def test_btf_ignored_with_a_note(self):
+        # review s176 N2: --btf names kCFI hashes only; on a jump-table CFI input it was ignored without a word
+        rc, out, err = run(os.path.join(FIX, "aarch64-jtcfi.elf"), "--btf", "/nonexistent/x.btf")
+        self.assertEqual(rc, 0)
+        self.assertIn("--btf is for kCFI type hashes; ignored for this jump-table CFI kernel", err)
+
+
 class QuickTryFixtureBTF(unittest.TestCase):
     """s176: the Quick-try fixtures carry the BTF of t.c (tools/add_btf_section.py), so the first try names types."""
 

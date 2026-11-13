@@ -50,6 +50,7 @@ Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google downlo
 | Sites with exactly one candidate | 1,695 |
 | Median candidates per site with at least one candidate (over all sites, unresolved included: 4) | 6 |
 | Sites with 1 to 8 candidates / 1 to 16 | 7,091 / 8,998 |
+| kCFI hashes named by C type from the kernel's own BTF (unreleased; `python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000`) | all 4,184 (13,897 of 13,897 sites) from 29,786 BTF prototypes (128,248 types; both counts agree with `bpftool btf dump`); no hash given two types |
 | Candidate start precision: distinct candidates that begin exactly at a kallsyms function symbol (symbols restored by [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf); besides scoring, they bound kernel code, which leaves out 6 candidates in `.rodata`). This checks that candidates are real function starts, not that a call reaches them | 30,357 of 30,561 (99.33%) |
 
 Scan time: the script prints it for the scan with the bounds: 0.8 to 3.1 s in 18 runs (median 1.6 s). The whole command also reads the symbols of `gki.elf` and scans `Image` a second time without the bounds: 2.2 to 6.0 s wall-clock in the same runs (median about 4 s), of which 2.1 to 2.6 s CPU time. Measured on an Intel i9-13900H laptop under WSL2 (4 cores) while other jobs were running (load average 3.9 to 6.5), in single-threaded Python; the wall-clock time followed the load. Expect a different figure on another machine.
