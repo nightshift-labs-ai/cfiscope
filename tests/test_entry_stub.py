@@ -243,8 +243,8 @@ class Entry(unittest.TestCase):
     # Ctrl-Alt-Delete log out, Alt-Shift-Tab windows). Also IDA 9.x's "Find a value" (Alt-Shift-V, release notes) and
     # the keys of the IDAPython examples in the SDK (print_registers.py Alt-Shift-C; Ctrl-Alt-C).
     TAKEN = ["Alt-Enter", "Alt-M", "Alt-T", "Alt-B", "Alt-I", "Alt-C", "Ctrl-Alt-B", "Ctrl-Alt-S", "Alt-R", "Alt-P",
-             "Alt-Q", "Alt-A", "Ctrl-Shift-M", "Ctrl-Alt-K", "Ctrl-Alt-T", "Ctrl-Alt-L", "Ctrl-Alt-Delete",
-             "Alt-Shift-Tab", "Alt-Shift-V", "Alt-Shift-C", "Ctrl-Alt-C", "Ctrl-Alt-Shift-M"]
+             "Alt-Q", "Alt-A", "Alt-L", "Alt-X", "Ctrl-Shift-M", "Ctrl-Alt-K", "Ctrl-Alt-T", "Ctrl-Alt-L",
+             "Ctrl-Alt-Delete", "Alt-Shift-Tab", "Alt-Shift-V", "Alt-Shift-C", "Ctrl-Alt-C", "Ctrl-Alt-Shift-M"]
 
     def test_default_hotkeys(self):
         _, E, log = load_entry()
