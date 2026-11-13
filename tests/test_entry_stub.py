@@ -544,6 +544,30 @@ class Reopen(unittest.TestCase):
         self.assertEqual(self.scans, [1])
         self.unchanged()
 
+    def test_decompiler_loaded_after_init_is_hooked(self):
+        # Hex-Rays loads after this plugin (plugin load order): its plugin_loaded event, or ready_to_run, installs the
+        # decompiler hook once, so the first decompile after reopening still restores. Without a decompiler: nothing.
+        p = self.scanned()
+        sys.modules["ida_hexrays"] = None
+        p = self.reopen(p, fresh_module=True)
+        self.assertIsNone(self.E.STATE["hx"])
+        p.hooks.plugin_loaded(None)
+        p.hooks.ready_to_run()
+        self.assertIsNone(self.E.STATE["hx"])
+        fake_hexrays(self.log, available=False)
+        p.hooks.plugin_loaded(None)
+        self.assertIsNone(self.E.STATE["hx"])
+        fake_hexrays(self.log)
+        p.hooks.plugin_loaded(None)
+        p.hooks.ready_to_run()
+        p.hooks.plugin_loaded(None)
+        self.assertEqual(self.log["hx_hooked"], 1)          # hooked once
+        self.assertIn("// CFIScope: ", self.printed())
+        self.assertEqual(self.scans, [1])
+        self.unchanged()
+        p.term()
+        self.assertEqual(self.log["hx_hooked"], 0)
+
     def test_lookup_restore_without_decompiler(self):
         # No decompiler for this database: the lookup still restores the scan, but does not claim comments are on.
         p = self.scanned()

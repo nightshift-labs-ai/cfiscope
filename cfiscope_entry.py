@@ -372,7 +372,21 @@ ACTIONS = [
 
 
 class PopupHooks(ida_kernwin.UI_Hooks):
-    """Adds the three lookups to the right-click menu of disassembly and pseudocode views."""
+    """Adds the three lookups to the right-click menu of disassembly and pseudocode views, and hooks the decompiler
+    if it loads after this plugin (so the first decompile after reopening restores the scan)."""
+
+    def plugin_loaded(self, plugin_info):
+        self.hook_decompiler()
+
+    def ready_to_run(self):
+        self.hook_decompiler()
+
+    @staticmethod
+    def hook_decompiler():
+        try:
+            hook_pseudocode()       # once: does nothing when hooked, or when there is no decompiler
+        except Exception:  # noqa: BLE001  a UI event must never break because of this plugin
+            pass
 
     def finish_populating_widget_popup(self, widget, popup_handle, ctx=None):
         try:
