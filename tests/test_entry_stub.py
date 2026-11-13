@@ -586,7 +586,7 @@ class Reopen(unittest.TestCase):
 
     def test_failing_restore_is_soft(self):
         # An error, or Cancel in IDAPython's own "Running Python script" box (KeyboardInterrupt), during the restore:
-        # one line in the Output window, the decompiler prints as usual, no second try.
+        # one message in the Output window (an interrupt: one line), the decompiler prints as usual, no second try.
         for error in (RuntimeError("CFIScope supports 64-bit x86 and AArch64 databases only."),
                       KeyboardInterrupt("User interrupted")):
             with self.subTest(error=type(error).__name__):
@@ -597,7 +597,13 @@ class Reopen(unittest.TestCase):
                 sys.modules["cfiscope.idalayer"].scan = boom
                 self.assertEqual(self.printed(), "  g();")
                 self.assertEqual(self.printed(), "  g();")
-                self.assertEqual(sum("could not restore" in m for m in self.log["msgs"]), 1)
+                said = [m for m in self.log["msgs"] if "could not restore" in m]
+                self.assertEqual(len(said), 1)
+                if isinstance(error, KeyboardInterrupt):    # one plain line, as guarded() prints for an interrupt
+                    self.assertEqual(said[0].count("\n"), 1)
+                    self.assertNotIn("Traceback", said[0])
+                else:                                       # one message, with the traceback to report
+                    self.assertIn("Traceback", said[0])
                 self.assertFalse(any("pseudocode comment failed" in m for m in self.log["msgs"]))
                 self.unchanged()
 

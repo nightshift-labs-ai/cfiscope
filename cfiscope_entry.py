@@ -97,11 +97,14 @@ def restore_scan(flush=True):
         hooked = hook_pseudocode() if flush else True    # inside func_printed the hook is there
         report("restored the scan saved in this database (%d checks, read-only)%s"
                % (len(sites), ": pseudocode comments are on" if hooked else ""))
-    except (Exception, KeyboardInterrupt):  # noqa: BLE001  a convenience: never break the decompiler or a lookup
+    except (Exception, KeyboardInterrupt) as e:  # noqa: BLE001  a convenience: never break the decompiler or a lookup
         STATE["restored"] = True
         try:
-            report("could not restore the scan saved in this database; run Scan kCFI calls again:\n%s"
-                   % traceback.format_exc())
+            if isinstance(e, KeyboardInterrupt):    # Cancel in IDAPython's own box: one line, as guarded() prints
+                report("could not restore the scan saved in this database (interrupted); run Scan kCFI calls again")
+            else:
+                report("could not restore the scan saved in this database; run Scan kCFI calls again:\n%s"
+                       % traceback.format_exc())
         except Exception:  # noqa: BLE001
             pass
         return False
