@@ -484,7 +484,7 @@ def find_btf(data):
     return data[best[0]:best[0] + best[1]] if best else None
 
 
-MAX_TYPE_NODES = 4096   # a canonical prototype larger than this (expanded) is skipped; kernel ones have a few dozen
+MAX_TYPE_NODES = 512   # a canonical prototype larger than this (expanded) is skipped; the largest on GKI 6.1-6.12 has 51
 
 
 def tree_size(t, _seen=None):
