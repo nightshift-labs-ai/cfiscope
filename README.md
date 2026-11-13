@@ -14,7 +14,7 @@ Which functions can the indirect call in `sock_sendmsg` reach?
 
 ```
 $ python3 -m cfiscope gki.elf --sites --max-list 20 | grep sock_sendmsg+
-0xffffffc008cc55ac  sock_sendmsg+0xb4  call hash 0x1ebda935 (int (socket*, msghdr*, unsigned long))  14 candidate(s): tun_sendmsg, sock_no_sendmsg,
+0xffffffc008cc55ac  sock_sendmsg+0xb4  call hash 0x1ebda935 (int (struct socket *, struct msghdr *, unsigned long))  14 candidate(s): tun_sendmsg, sock_no_sendmsg,
     netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg,
     packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
 ```
@@ -24,9 +24,9 @@ Which indirect calls can reach `tcp_sendmsg`?
 ```
 $ python3 -m cfiscope gki.elf --callers tcp_sendmsg --max-list 3
 3 call site(s) can reach tcp_sendmsg
-0xffffffc008cc5778  kernel_sendmsg_locked+0x64  call hash 0x87bcba6f (int (sock*, msghdr*, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
-0xffffffc008e433c8  inet_sendmsg+0x58           call hash 0x87bcba6f (int (sock*, msghdr*, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
-0xffffffc008ead820  inet6_sendmsg+0x58          call hash 0x87bcba6f (int (sock*, msghdr*, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008cc5778  kernel_sendmsg_locked+0x64  call hash 0x87bcba6f (int (struct sock *, struct msghdr *, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008e433c8  inet_sendmsg+0x58           call hash 0x87bcba6f (int (struct sock *, struct msghdr *, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008ead820  inet6_sendmsg+0x58          call hash 0x87bcba6f (int (struct sock *, struct msghdr *, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
 ```
 
 (Long lines wrapped by hand; spacing condensed.)
@@ -43,10 +43,10 @@ BEFORE (no CFIScope): 0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8
   comment: none; code xrefs from this call: none (indirect)
 
 AFTER Scan kCFI calls (Ctrl-Alt-K): 13897 sites, 13897 comments, 44718 cross-references in the whole database
-0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI 0x1EBDA935 int (socket*, msghdr*, unsigned long): 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
+0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI 0x1EBDA935 int (struct socket *, struct msghdr *, unsigned long): 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
   code xrefs from this call (14): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
 
-Candidates for this call (Ctrl-Alt-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (hash 0x1EBDA935, int (socket*, msghdr*, unsigned long))'
+Candidates for this call (Ctrl-Alt-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (hash 0x1EBDA935, int (struct socket *, struct msghdr *, unsigned long))'
   0xffffffc00897842c  tun_sendmsg
   0xffffffc008cd2ac4  sock_no_sendmsg
   0xffffffc008d8cd98  netlink_sendmsg
@@ -67,7 +67,7 @@ Callers of this function (Ctrl-Alt-C) on tcp_sendmsg: 3 row(s)
   0xffffffc008e433c8  inet_sendmsg+0x58  11 candidate(s)
   0xffffffc008ead820  inet6_sendmsg+0x58  11 candidate(s)
 
-Pseudocode line of the call (with Hex-Rays):  // CFIScope: 14 candidates of int (socket*, msghdr*, unsigned long): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
+Pseudocode line of the call (with Hex-Rays):  // CFIScope: 14 candidates of int (struct socket *, struct msghdr *, unsigned long): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
 ```
 
 ## How it works
@@ -134,7 +134,7 @@ A real kernel:
 - **Callers of this function** (`Ctrl-Alt-C`): every indirect call site that can reach this function, an answer the normal xrefs window cannot give.
 - **Remove annotations**: removes the comments and cross-references the scan added. Functions created when you answered Yes stay.
 - **Pseudocode comments** (with the Hex-Rays decompiler): the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates: impl_2_0, impl_2_1, impl_2_2`.
-- **kCFI hashes named by C function type** (unreleased): when the kernel carries BTF (`CONFIG_DEBUG_INFO_BTF`), or with `--btf PATH`, each hash is shown as its type, e.g. `hash 0x4f4ccb9d (int (file*, int))`. A kCFI hash is the low 32 bits of xxHash64 of `_ZTS` + the Itanium mangling of the function type, so CFIScope mangles every BTF function prototype and matches (`cfiscope/kcfi_types.py`). On the GKI 6.1 kernel of the walkthrough, its own BTF names 4,182 of the 4,184 distinct hashes at call sites (99.9%), measured with the command line on the raw `Image`; the IDA layer does the same from the input file's BTF, checked only against fake IDA modules.
+- **kCFI hashes named by C function type** (unreleased): when the kernel carries BTF (`CONFIG_DEBUG_INFO_BTF`), or with `--btf PATH`, each hash is shown as its type, e.g. `hash 0x4f4ccb9d (int (struct file *, int))`. A kCFI hash is the low 32 bits of xxHash64 of `_ZTS` + the Itanium mangling of the function type, so CFIScope mangles every BTF function prototype and matches (`cfiscope/kcfi_types.py`). On the GKI 6.1 kernel of the walkthrough, its own BTF names 4,182 of the 4,184 distinct hashes at call sites (99.9%), measured with the command line on the raw `Image`; the IDA layer does the same from the input file's BTF, checked only against fake IDA modules.
 - **Linux 5.x jump-table CFI** (aarch64, Android 12/13 GKI 5.10 and 5.15, since v0.1.17): reads each call's candidates from the compiler's jump table. See [docs/JTCFI.md](docs/JTCFI.md).
 - **Command line and headless**: the scanner is plain Python 3 with no dependencies; `tools/cfiscope_headless.py` adds the same comments and cross-references as Scan, headless with idalib (IDA 9.0 or newer). See [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#without-ida-scripts-other-tools-ci).
 

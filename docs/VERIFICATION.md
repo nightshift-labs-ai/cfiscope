@@ -12,10 +12,10 @@ BEFORE (no CFIScope): 0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8
   comment: none; code xrefs from this call: none (indirect)
 
 AFTER Scan kCFI calls (Ctrl-Alt-K): 13897 sites, 13897 comments, 44718 cross-references in the whole database
-0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI 0x1EBDA935 int (socket*, msghdr*, unsigned long): 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
+0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI 0x1EBDA935 int (struct socket *, struct msghdr *, unsigned long): 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
   code xrefs from this call (14): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
 
-Candidates for this call (Ctrl-Alt-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (hash 0x1EBDA935, int (socket*, msghdr*, unsigned long))'
+Candidates for this call (Ctrl-Alt-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (hash 0x1EBDA935, int (struct socket *, struct msghdr *, unsigned long))'
   0xffffffc00897842c  tun_sendmsg
   0xffffffc008cd2ac4  sock_no_sendmsg
   0xffffffc008d8cd98  netlink_sendmsg
@@ -36,7 +36,7 @@ Callers of this function (Ctrl-Alt-C) on tcp_sendmsg: 3 row(s)
   0xffffffc008e433c8  inet_sendmsg+0x58  11 candidate(s)
   0xffffffc008ead820  inet6_sendmsg+0x58  11 candidate(s)
 
-Pseudocode line of the call (with Hex-Rays):  // CFIScope: 14 candidates of int (socket*, msghdr*, unsigned long): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
+Pseudocode line of the call (with Hex-Rays):  // CFIScope: 14 candidates of int (struct socket *, struct msghdr *, unsigned long): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
 ```
 
 ## kCFI on real kernels
