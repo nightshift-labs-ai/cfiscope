@@ -75,7 +75,8 @@ def restore_scan(flush=True):
     """After a database Scan annotated is opened again: rebuild the scan from the code, so the pseudocode comments and
     the lookups work without pressing Scan. Read-only: it asks nothing and writes nothing to the database (no
     comments, xrefs or functions). Looked at once per database; while auto-analysis runs it waits for a later call.
-    Never raises. flush: drop cached decompilations (not from inside a decompiler callback). True if restored."""
+    Never raises. flush: hook the decompiler if it was not there at init (as Scan does) and drop its cached
+    decompilations; not from inside a decompiler callback. True if restored."""
     if STATE["restored"] or STATE["pseudo"] is not None:
         return False
     try:
@@ -102,7 +103,7 @@ def restore_scan(flush=True):
         except Exception:  # noqa: BLE001
             pass
         return False
-    if flush:
+    if flush and hook_pseudocode():
         flush_pseudocode()
     return True
 
@@ -306,10 +307,10 @@ class ScanAction(ida_kernwin.action_handler_t):
 class TargetsAction(ida_kernwin.action_handler_t):
     @guarded
     def activate(self, ctx):
-        restore_scan()
         sites = scan_or_warn()
         if sites is None:
             return 0
+        restore_scan()          # first lookup after the database is reopened: reuses this scan
         site = idalayer.site_at(sites, ida_kernwin.get_screen_ea())
         if site is None:
             ida_kernwin.warning("No %s check at or near the cursor." % idalayer.scheme_name(sites))
@@ -324,10 +325,10 @@ class TargetsAction(ida_kernwin.action_handler_t):
 class CallersAction(ida_kernwin.action_handler_t):
     @guarded
     def activate(self, ctx):
-        restore_scan()
         sites = scan_or_warn()
         if sites is None:
             return 0
+        restore_scan()          # first lookup after the database is reopened: reuses this scan
         ea = ida_kernwin.get_screen_ea()
         rows = idalayer.callers_rows(sites, ea)
         if not rows:

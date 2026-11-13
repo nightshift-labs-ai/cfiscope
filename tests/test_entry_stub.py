@@ -509,6 +509,25 @@ class Reopen(unittest.TestCase):
                 self.assertEqual(self.scans, [1])
                 self.unchanged()
 
+    def test_lookup_hooks_a_decompiler_loaded_later(self):
+        # Hex-Rays not there yet when the plugin started with the database: a lookup's restore installs the hook, as
+        # Scan does, so the pseudocode comments still come back.
+        p = self.scanned()
+        sys.modules["ida_hexrays"] = None
+        p = self.reopen(p, fresh_module=True)
+        self.assertIsNone(self.E.STATE["hx"])
+        fake_hexrays(self.log)
+        kw = sys.modules["ida_kernwin"]
+        kw.Choose.Show = lambda chooser: True
+        self.addCleanup(delattr, kw.Choose, "Show")
+        kw.get_screen_ea = lambda: self.first_sites[0].call_ea
+        kw.show_wait_box = lambda t: None
+        self.assertEqual(self.E.TargetsAction().activate(None), 1)
+        self.assertEqual(self.log["hx_hooked"], 1)
+        self.assertIn("// CFIScope: ", self.printed())
+        self.assertEqual(self.scans, [1])
+        self.unchanged()
+
     def test_rebased_since_scan_not_restored(self):
         p = self.scanned()
         seg = self.w.segs[0]
