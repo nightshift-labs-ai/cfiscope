@@ -283,8 +283,8 @@ class TargetsAction(ida_kernwin.action_handler_t):
             # Pseudocode: the call(s) on the cursor's line, never a neighbouring check's.
             found = sites_on_line(vu, sites)
             if not found:
-                ida_kernwin.warning("No %s call on this pseudocode line. Put the cursor on a line with a CFIScope "
-                                    "comment." % idalayer.scheme_name(sites))
+                ida_kernwin.warning("No %s call on this pseudocode line. Put the cursor on the line of the indirect "
+                                    "call (after Scan it has a CFIScope comment)." % idalayer.scheme_name(sites))
                 return 0
             site = found[0] if len(found) == 1 else idalayer.pick_site(found)
             if site is None:

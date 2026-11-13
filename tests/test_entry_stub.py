@@ -429,8 +429,8 @@ class Pseudocode(unittest.TestCase):
         n = len(shown)
         self.assertEqual(self.lookup(self.E.TargetsAction, 4, cf, screen_ea=a.call_ea), 0)
         self.assertEqual(len(shown), n)
-        self.assertIn("WARN No kCFI call on this pseudocode line. Put the cursor on a line with a CFIScope comment.",
-                      self.log["msgs"])
+        self.assertIn("WARN No kCFI call on this pseudocode line. Put the cursor on the line of the indirect call "
+                      "(after Scan it has a CFIScope comment).", self.log["msgs"])
 
     def test_callers_from_pseudocode_use_the_decompiled_function(self):
         _, sites = self.scanned_plugin()
