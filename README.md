@@ -213,7 +213,7 @@ Full description of each action: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#the
 
 **CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is in [docs/VERIFICATION.md](docs/VERIFICATION.md): the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
 
-Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (176 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules; two are skipped unless you name the real files they need: `CFISCOPE_KO_DIR`, the folder with the GKI modules of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), and `CFISCOPE_GKI_ELF`, the `gki.elf` of the walkthrough).
+Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (189 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules, and the picture above against its SVG; six are skipped unless you name the real files they need: one needs `CFISCOPE_KO_DIR`, the folder with the GKI modules of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), and five need `CFISCOPE_GKI_ELF`, the `gki.elf` of the walkthrough).
 
 CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
 
