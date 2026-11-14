@@ -56,6 +56,20 @@ $ python3 -m cfiscope gki.elf --callers tcp_sendmsg --max-list 3
 
 The tag at the end of each line says whether the image stores `tcp_sendmsg` in a slot of the member that call loads, and those calls come first. `tcp_sendmsg` is stored at byte 104 of `tcp_prot` and `tcpv6_prot`, a `proto.sendmsg` slot, the member the first two calls load. The third is a type-only match: `kernel_sendmsg_locked+0x64` loads offset 216 (`proto_ops.sendmsg_locked` in BTF), and of its 11 candidates only `tcp_sendmsg_locked` is stored at that offset of an object (`inet_stream_ops`, `inet6_stream_ops`); `tcp_sendmsg` is among the 10 of the same type only.
 
+Which functions implement `file_operations.unlocked_ioctl`, whether or not a call in this image checks them (unreleased)?
+
+```
+$ python3 -m cfiscope gki.elf --implements file_operations.unlocked_ioctl --max-list 4
+136 function(s) with kCFI hash 0xe01408cd (long (struct file *, unsigned int, unsigned long)), the type of file_operations.unlocked_ioctl
+    0xffffffc008055064  kvm_device_ioctl
+    0xffffffc00805513c  kvm_no_compat_ioctl
+    0xffffffc0080553f0  kvm_vm_ioctl
+    0xffffffc008057774  kvm_vcpu_ioctl
+    ... 132 more
+```
+
+Every function with that member's type hash in front of it: 134 ioctl handlers (118 of the 272 functions named `*_ioctl`, the rest of those have other types, plus names such as `snd_pcm_ioctl_compat`) and `memfd_fcntl` and `pipe_fcntl`, of the same type. A C type, a hash or a function's name works too, and in a module, where such handlers have no call site, this is the only list that shows them ([Try it](#try-it)).
+
 The type after each hash comes from the kernel's own BTF (new in 0.1.22, see [Features](#features)). The struct member before `hash` (unreleased, aarch64) is the one BTF member of the call's type at the byte offset the call loads its pointer from: a match, not proof (see [Limitations](#limitations)). Here it is right: `sock->ops->sendmsg` is a load from byte 136 of `struct proto_ops`. The slot groups and tags (unreleased) come from a scan of the image's static data for the candidates' addresses (see [Features](#features)). This is the output of the code on `gki.elf`, re-run 2026-11-14 (review s197), byte for byte.
 
 ## What the plugin writes into IDA (fake IDA, not a screenshot)
@@ -136,7 +150,7 @@ hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/
 
 ## Try it
 
-The menu names below are under Edit > Plugins, with their default keys. Scan, the two lookups and the call-site list are also on the right-click menu (CFIScope submenu). After `hcli plugin install cfiscope` the plugin folder is `~/.idapro/plugins/cfiscope` on Linux and macOS and `%APPDATA%\Hex-Rays\IDA Pro\plugins\cfiscope` on Windows (`$IDAUSR/plugins/cfiscope` if you set `IDAUSR`). It holds the test objects (`tests/fixtures/`), the helper scripts (`tools/`) and the command-line tool (`cfiscope/`). The commands below use the Linux and macOS path.
+The menu names below are under Edit > Plugins, with their default keys. Scan, the three lookups and the call-site list are also on the right-click menu (CFIScope submenu). After `hcli plugin install cfiscope` the plugin folder is `~/.idapro/plugins/cfiscope` on Linux and macOS and `%APPDATA%\Hex-Rays\IDA Pro\plugins\cfiscope` on Windows (`$IDAUSR/plugins/cfiscope` if you set `IDAUSR`). It holds the test objects (`tests/fixtures/`), the helper scripts (`tools/`) and the command-line tool (`cfiscope/`). The commands below use the Linux and macOS path.
 
 Quick try, no download (about a minute). The plugin ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`.
 
@@ -182,13 +196,16 @@ A real module (1.4 MB, no conversion): the GKI android14-6.1 `bluetooth.ko` of [
    curl -s 'https://android.googlesource.com/kernel/prebuilts/6.1/arm64/+/ad5f1ad22dd47c7b244ec697c5e61f90783a06c2/kernel-6.1?format=TEXT' | base64 -d > kernel-6.1
    cd ~/.idapro/plugins/cfiscope
    python3 -m cfiscope ~/bluetooth.ko --sites --btf ~/kernel-6.1      # all 48 hashes named
+   python3 -m cfiscope ~/bluetooth.ko --implements proto_ops.ioctl --btf ~/kernel-6.1
    ```
+   The last one lists `bt_sock_ioctl`, `hci_sock_ioctl` and `hci_sock_compat_ioctl` (unreleased): the module's `proto_ops.ioctl` handlers, whose type no call site of the module checks, so no candidate list has them.
 
 ## Features
 
 - **Scan kCFI calls** (`Alt-Shift-K`): comments every kCFI call site with the type hash and candidate count. Adds cross-references when the list is short (at most 16), or to a longer list's candidates stored at the offset of the call's member when those are at most 16 (unreleased; not to those found by array stride only), and offers to create functions at candidates IDA has not recognised. It asks first; Cancel writes nothing.
 - **Candidates for this call** (`Alt-Shift-T`): a jump list of every function the call under the cursor may reach (its kCFI type). In pseudocode it takes the call on the cursor's line and asks which one if the line has several.
 - **Callers of this function** (`Alt-Shift-X`): every indirect call site that may reach this function, by its kCFI type (in pseudocode, the decompiled function). With struct members (unreleased), the calls whose member slot holds the function come first, and each row says `stored in a proto.sendmsg slot`, `by array stride` or `same type only` (`--callers` ends its lines with the same tag). IDA's own xrefs window shows such a call only after Scan, and only when its list has at most 16 candidates or the function is one of at most 16 stored at the offset of the call's member (Scan adds cross-references to those only); this list also works before Scan and includes the other calls.
+- **Functions of a type** (unreleased): `--implements SPEC` lists every function whose kCFI hash is that of a struct member (`file_operations.unlocked_ioctl`, from BTF), a C type as the tool prints it, a hash, or a named function's own type, whether or not a call site checks it (`--with` adds the kernel's). In IDA, **CFIScope: Functions of this type** (no default key) lists the functions of the type of the function under the cursor (checked against fake IDA modules only, not checked in IDA). GKI 6.1: 136 functions for `file_operations.unlocked_ioctl`, and for `proto_ops.sendmsg` the 14 candidates of `sock_sendmsg+0xb4`; `bluetooth.ko`: its 3 `proto_ops.ioctl` and 4 `proto_ops.sendmsg` handlers, which no candidate list has. A member or C type needs BTF; a function's own hash counts when a check or BTF knows it or the word sits where a kCFI preamble's would (details: [HOW_IT_WORKS](docs/HOW_IT_WORKS.md#functions-of-a-type)).
 - **List kCFI call sites** (unreleased; no default key; Scan opens it at its end): a non-modal window of every call site, with columns Address, Function+off, Member (the struct member, see below), Type (the C prototype from BTF, else the hash), Candidates (a number column, `CHCOL_DEC`) and First candidates; Enter jumps to the call. The rows are those of `python3 -m cfiscope FILE --sites`, the names in the comment's order. Checked against fake IDA modules only: 21 rows on each Quick-try fixture and 13,897 on GKI 6.1, each equal to its `--sites` line, built in 0.15 s or less there.
 - **The struct member each call loads its pointer from (a BTF match)** (unreleased; aarch64 only): `sock_sendmsg+0xb4` is `blr x8`, and CFIScope says it calls through `proto_ops.sendmsg`. It walks back from the kCFI check to the `ldr` that loaded the called pointer and looks up the load's byte offset, with the call's type hash, among the function-pointer members in BTF (embedded and anonymous structs and unions included). One match names the member; several print `one of N members (...)`, rather than picking one. It shows on the command line (`--sites`, `--callers`, `--targets`, the summary, and `member` / `members` / `member_offset` in `--json`) and in the IDA comment, pseudocode comment, Candidates window title, Callers rows and a Member column of the call-site list (the IDA side checked against fake IDA modules only). On GKI 6.1, 9,764 of 13,897 calls are matched to a member and 8,937 to exactly one. GKI 6.6 gives 9,675 / 8,821 and GKI 6.12 9,984 / 9,284 ([VERIFICATION](docs/VERIFICATION.md#struct-members-aarch64)). The member is the only one BTF has of that type at that offset; that the call really goes through it is not proven.
 - **Candidates stored in a matching slot first** (unreleased; aarch64, with BTF and the input's symbols, so not with `--raw`): for a call with a struct member, the candidates that the image's static data stores at that member's offset in an object are listed first, then those found `by array stride` (at that offset modulo the size of a struct of more than 16 bytes with that member there, in an object that holds another candidate of the call at such an offset: weaker evidence), then the rest under `same type only`; no candidate is left out. A list that fits the limit names every candidate (`2 candidate(s): in a a_ops.send slot: send_x; same type only: send_y`); a longer one names the slot-backed ones and counts the rest (`11 candidate(s): in a proto_ops.sendmsg_locked slot: tcp_sendmsg_locked; same type only: 10 more`). It shows in `--sites`, `--callers` (tagged, see above), `--targets` (the groups in full), `--json` (`slot_backed`: `offset`, `stride` or false, per candidate), the IDA comment, pseudocode comment, Candidates window, Callers and call-site list, and lists of more than 16 get cross-references to their candidates stored at the member's offset when there are at most 16 (the IDA side checked against fake IDA modules only). On GKI 6.1, 5,345 calls have such a candidate (139 of them only by array stride), and 1,142 lists of more than 16 have 1 to 16 at the member's offset ([VERIFICATION](docs/VERIFICATION.md#candidates-stored-in-a-matching-slot)). A slot is evidence, not proof.
@@ -205,6 +222,7 @@ python3 -m cfiscope vmlinux                         # summary
 python3 -m cfiscope vmlinux --sites                 # every call site and its candidates
 python3 -m cfiscope vmlinux --callers tcp_sendmsg   # indirect calls that may reach a function (same kCFI type)
 python3 -m cfiscope vmlinux --targets 0xffffffc008cc55ac
+python3 -m cfiscope vmlinux --implements file_operations.unlocked_ioctl   # every function of that member's type
 python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
 python3 -m cfiscope vmlinux --sites --btf vmlinux   # name hashes by C type from BTF (automatic when the input has BTF)
 python3 -m cfiscope foo.ko --sites --with vmlinux --btf vmlinux   # a module: + the kernel's functions, + its types
@@ -235,7 +253,7 @@ Full description of each action: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#the
 
 **CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is in [docs/VERIFICATION.md](docs/VERIFICATION.md): the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
 
-Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (233 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules, and the picture above against its SVG; twelve are skipped unless you name the real files they need: one needs `CFISCOPE_KO_DIR`, the folder with the GKI modules of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), and eleven need `CFISCOPE_GKI_ELF`, the `gki.elf` of the walkthrough).
+Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (281 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules, and the picture above against its SVG; 19 are skipped unless you name the real files they need: three need `CFISCOPE_KO_DIR`, the folder with the GKI modules of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), and sixteen need `CFISCOPE_GKI_ELF`, the `gki.elf` of the walkthrough).
 
 CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
 
