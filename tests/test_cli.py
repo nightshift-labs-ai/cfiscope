@@ -656,5 +656,28 @@ class QuickTryFixtureBTF(unittest.TestCase):
             A.add_btf(out, btf)  # a second .BTF is refused
 
 
+class RunByPath(unittest.TestCase):
+    """Review s193 (judge #1): after hcli install there is no cfiscope package in the judge's folder, and
+    `python3 <plugin>/cfiscope FILE` failed: ImportError: attempted relative import with no known parent package
+    (cfiscope/__main__.py). The folder and its __main__.py now run by path, from any working directory."""
+
+    def test_by_path_from_another_folder(self):
+        pkg = os.path.join(HERE, "..", "cfiscope")
+        fixture = os.path.join(FIX, "x86_64-kernel.o")
+        for target in (pkg, os.path.join(pkg, "__main__.py")):
+            for isolated in ([], ["-I"]):
+                with self.subTest(target=os.path.basename(target), isolated=isolated), \
+                        tempfile.TemporaryDirectory() as tmp:
+                    r = subprocess.run([sys.executable] + isolated + [target, fixture, "--sites"], cwd=tmp,
+                                       capture_output=True, text=True)
+                    self.assertEqual((r.returncode, r.stderr), (0, ""))
+                    lines = r.stdout.splitlines()
+                    self.assertEqual(len(lines), 21, r.stdout)          # the 21 call sites of the Quick try
+                    self.assertIn("do_call_2+0x1a", r.stdout)
+                    r = subprocess.run([sys.executable] + isolated + [target, fixture], cwd=tmp,
+                                       capture_output=True, text=True)
+                    self.assertIn("call sites 21 (type hashes 21)", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

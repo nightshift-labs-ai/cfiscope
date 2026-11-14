@@ -111,35 +111,67 @@ hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/
 
 ## Try it
 
-The menu names below are under Edit > Plugins, with their default keys. Scan and the two lookups are also on the right-click menu (CFIScope submenu).
+The menu names below are under Edit > Plugins, with their default keys. Scan and the two lookups are also on the right-click menu (CFIScope submenu). After `hcli plugin install cfiscope` the plugin folder is `~/.idapro/plugins/cfiscope` on Linux and macOS and `%APPDATA%\Hex-Rays\IDA Pro\plugins\cfiscope` on Windows (`$IDAUSR/plugins/cfiscope` if you set `IDAUSR`). It holds the test objects (`tests/fixtures/`), the helper scripts (`tools/`) and the command-line tool (`cfiscope/`). The commands below use the Linux and macOS path.
 
-Quick try, no download (about a minute). The repository ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`.
+Quick try, no download (about a minute). The plugin ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`.
 
-1. Open `tests/fixtures/x86_64-kernel.o` (or `aarch64-kernel.o`) in IDA. After `hcli plugin install cfiscope` the fixtures are in `$IDAUSR/plugins/cfiscope/tests/fixtures/` (`~/.idapro/plugins/...` on Linux and macOS, `%APPDATA%\Hex-Rays\IDA Pro\plugins\...` on Windows).
-2. Choose **CFIScope: Scan kCFI calls** (`Alt-Shift-K`) and answer its question about creating functions (either answer works for these steps). The Output window should then say `Scan: 21 kCFI call sites (21 types, all named from the file's BTF); 21 with candidates (median 3); ...`: one call site per function-pointer type in `t.c`, each with candidates.
-3. Put the cursor on the call in `do_call_2` and choose **CFIScope: Candidates for this call** (`Alt-Shift-T`). It should list `impl_2_0`, `impl_2_1`, `impl_2_2`; the call's comment and the list title name the type, `long (short, int)`, from the BTF of `t.c` that these two fixtures carry.
-4. Put the cursor on `impl_2_1` and choose **CFIScope: Callers of this function** (`Alt-Shift-X`). It should list that call in `do_call_2`.
+1. Copy one out of the plugin folder first, so that IDA does not write its database into it (an upgrade replaces the folder): `cp ~/.idapro/plugins/cfiscope/tests/fixtures/x86_64-kernel.o ~/` (Windows: `copy "%APPDATA%\Hex-Rays\IDA Pro\plugins\cfiscope\tests\fixtures\x86_64-kernel.o" %USERPROFILE%\`). Open the copy in IDA (`aarch64-kernel.o` works the same way).
+2. Choose **CFIScope: Scan kCFI calls** (`Alt-Shift-K`) and answer its question about creating functions (either answer works for these steps). The Output window should then say `Scan: 21 kCFI call sites (21 types, all named from the file's BTF); 21 with candidates (median 3); ...` (checked against fake IDA modules): one call site per function-pointer type in `t.c`, each with candidates.
+3. Press `G`, type `do_call_2`, and put the cursor on its indirect call: the `jmp rax` after the `ud2`, at `do_call_2+0x1a` (in `aarch64-kernel.o` the `br x2` at `do_call_2+0x24`). Choose **CFIScope: Candidates for this call** (`Alt-Shift-T`). It should list `impl_2_0`, `impl_2_1`, `impl_2_2`; the call's comment and the list title name the type, `long (short, int)`, from the BTF of `t.c` that these two fixtures carry.
+4. Press `G`, type `impl_2_1` and choose **CFIScope: Callers of this function** (`Alt-Shift-X`). It should list that call in `do_call_2`.
 
-A real kernel:
+A real kernel (the public aarch64 Android kernel used for the output above and the [numbers](docs/VERIFICATION.md)):
 
-1. Download the public aarch64 Android kernel used for the output above and the [numbers](docs/VERIFICATION.md): [gki-certified-boot-android14-6.1-2024-01_r1.zip](https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip), unzip it (it holds `boot-6.1.img`), extract the kernel with `python3 tools/extract_bootimg.py boot-6.1.img Image` (no dependencies), and restore its symbols with [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf): `vmlinux-to-elf Image gki.elf`.
-2. Open the resulting ELF in IDA and let auto-analysis finish.
-3. Choose **CFIScope: Scan kCFI calls**.
-4. On any `blr` preceded by a kCFI check, choose **CFIScope: Candidates for this call** to list the functions it can reach. On a function, choose **CFIScope: Callers of this function** to list the indirect calls that can reach it.
+1. Download it, extract the kernel and restore its symbols, in your home folder:
+   ```
+   cd ~
+   curl -LO https://dl.google.com/android/gki/gki-certified-boot-android14-6.1-2024-01_r1.zip
+   unzip gki-certified-boot-android14-6.1-2024-01_r1.zip       # holds boot-6.1.img
+   python3 ~/.idapro/plugins/cfiscope/tools/extract_bootimg.py boot-6.1.img Image     # no dependencies
+   vmlinux-to-elf Image gki.elf
+   ```
+   Install [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf#readme) first, as its README says (snap, yay or `uv tool install vmlinux-to-elf`). `pip install vmlinux-to-elf` worked for us on Linux, where pip built its `minilzo` dependency with the C compiler.
+2. Open `gki.elf` in IDA. Auto-analysis of this 39 MB kernel (57,453 functions) takes a while, and you need not wait for it: Scan asks "Wait for auto-analysis to finish before scanning?", and No scans at once. The call sites and candidates are read from the code bytes, so they are the same; the order of each list (functions whose address is taken first) and, if you answer No to "Create functions", the cross-references depend on what IDA has analysed so far.
+3. Meanwhile, the same answers in about 2 seconds on the command line (2.3 s each here):
+   ```
+   cd ~/.idapro/plugins/cfiscope
+   python3 -m cfiscope ~/gki.elf --callers tcp_sendmsg
+   python3 -m cfiscope ~/gki.elf --targets 0xffffffc008cc55ac
+   ```
+4. Choose **CFIScope: Scan kCFI calls**. The Output window should say `Scan: 13,897 kCFI call sites (4,184 types, all named from the file's BTF); 11,960 with candidates (median 6), ...` (checked against fake IDA modules).
+5. Press `G`, type `0xffffffc008cc55ac` (the `blr x8` at `sock_sendmsg+0xb4`) and choose **CFIScope: Candidates for this call**: 14 functions, `tun_sendmsg` to `xsk_sendmsg`, as in the block above. Press `G`, type `tcp_sendmsg` and choose **CFIScope: Callers of this function**: 3 call sites.
+
+A real module (1.4 MB, no conversion): the GKI android14-6.1 `bluetooth.ko` of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), from the public AOSP prebuilts (gitiles serves a file as base64 with `?format=TEXT`).
+
+1. Fetch it:
+   ```
+   cd ~
+   curl -s 'https://android.googlesource.com/kernel/prebuilts/6.1/arm64/+/ad5f1ad22dd47c7b244ec697c5e61f90783a06c2/bluetooth.ko?format=TEXT' | base64 -d > bluetooth.ko
+   sha256sum bluetooth.ko      # d9beb2a2c000bebfb7cdec2a1374364f5339d5541e4bee182314d62299f3b0e9
+   ```
+2. Open `bluetooth.ko` in IDA and choose **CFIScope: Scan kCFI calls**. The Output window should say that the plugin does not read the module's split BTF, then `Scan: 253 kCFI call sites (48 type hashes); 234 with candidates (median 12), 19 with none in this file; ...` (checked against fake IDA modules).
+3. Press `G`, type `bt_sock_recvmsg` and put the cursor on its `blr` at `bt_sock_recvmsg+0x10c`: **Candidates for this call** lists `l2cap_skb_msg_name`. On `l2cap_security_cfm`, **Callers of this function** lists 4 call sites.
+4. The C types come from the command line with the kernel of the same build (`kernel-6.1`, 34.7 MB, same commit); `vmlinux-to-elf kernel-6.1 kernel-6.1.elf` and `--with ~/kernel-6.1.elf` add the kernel's own candidates:
+   ```
+   curl -s 'https://android.googlesource.com/kernel/prebuilts/6.1/arm64/+/ad5f1ad22dd47c7b244ec697c5e61f90783a06c2/kernel-6.1?format=TEXT' | base64 -d > kernel-6.1
+   cd ~/.idapro/plugins/cfiscope
+   python3 -m cfiscope ~/bluetooth.ko --sites --btf ~/kernel-6.1      # all 48 hashes named
+   ```
 
 ## Features
 
 - **Scan kCFI calls** (`Alt-Shift-K`): comments every kCFI call site with the type hash and candidate count. Adds cross-references when the list is short (at most 16) and offers to create functions at candidates IDA has not recognised. It asks first; Cancel writes nothing.
 - **Candidates for this call** (`Alt-Shift-T`): a jump list of every function the call under the cursor can reach. In pseudocode it takes the call on the cursor's line and asks which one if the line has several.
-- **Callers of this function** (`Alt-Shift-X`): every indirect call site that can reach this function (in pseudocode, the decompiled function), an answer the normal xrefs window cannot give.
+- **Callers of this function** (`Alt-Shift-X`): every indirect call site that can reach this function (in pseudocode, the decompiled function). IDA's own xrefs window shows such a call only after Scan, and only when its list has at most 16 candidates (Scan adds cross-references to short lists only); this list also works before Scan and includes the calls with longer lists.
 - **Remove annotations**: removes the comments and cross-references the scan added. Functions created when you answered Yes stay.
 - **Pseudocode comments** (with the Hex-Rays decompiler): the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2` (the type when the file has BTF). After you reopen a scanned database they come back without a new Scan (unreleased): the first decompiled function or lookup re-reads the code, read-only.
 - **kCFI hashes named by C function type** (0.1.22): when the kernel carries BTF (`CONFIG_DEBUG_INFO_BTF`), or with `--btf PATH`, each hash is shown as its type, e.g. `hash 0x4f4ccb9d (int (struct file *, int))` (CFIScope mangles every BTF prototype the way Clang does and hashes it: `cfiscope/kcfi_types.py`). Named: all 4,184 hashes on GKI 6.1, all 4,466 on GKI 6.6, 4,621 of 4,626 on the Rust-enabled GKI 6.12 (the 5 left are inside Rust code); details in [VERIFICATION](docs/VERIFICATION.md). The IDA layer does the same from the input file's BTF, checked only against fake IDA modules.
 - **Loadable modules (.ko)** (unreleased): a module is read as it is (no relocation touches a check or a hash). On the GKI android14-6.1 `bluetooth.ko` from the public prebuilts ([details](docs/VERIFICATION.md#loadable-modules-ko)): 253 call sites, 234 with candidates among the module's own functions. On the command line, `--with vmlinux` adds the kernel's functions of each call's type (23 sites have some, e.g. `compute_ecdh_secret` -> `ecdh_compute_value`) and `--btf` with the module's own kernel names all 48 hashes from the module's split BTF; 13 sites have no candidate in the module or the kernel (12 of them take a `struct hci_dev *`: callbacks that driver modules set, which were not scanned). In IDA, Scan on a `.ko` lists the module's functions only, without types (the plugin does not read split BTF; the Output window says so and gives the `--btf` command; checked only against fake IDA modules).
 - **Linux 5.x jump-table CFI** (aarch64, Android 12/13 GKI 5.10 and 5.15, since v0.1.17): reads each call's candidates from the compiler's jump table. See [docs/JTCFI.md](docs/JTCFI.md).
-- **Command line and headless**: the scanner is plain Python 3 with no dependencies; `tools/cfiscope_headless.py` adds the same comments and cross-references as Scan, headless with idalib (IDA 9.1 or newer). See [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#without-ida-scripts-other-tools-ci).
+- **Command line and headless**: the scanner is plain Python 3 with no dependencies; `tools/cfiscope_headless.py` adds the same comments and cross-references as Scan, headless with idalib (IDA 9.1 or newer). The command-line tool is the `cfiscope` folder inside the plugin folder: run `python3 -m cfiscope` there (`cd ~/.idapro/plugins/cfiscope`), or `python3 ~/.idapro/plugins/cfiscope/cfiscope FILE` from any folder. See [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#without-ida-scripts-other-tools-ci).
 
 ```
+cd ~/.idapro/plugins/cfiscope                       # the plugin folder, or a clone of this repository
 python3 -m cfiscope vmlinux                         # summary
 python3 -m cfiscope vmlinux --sites                 # every call site and its candidates
 python3 -m cfiscope vmlinux --callers tcp_sendmsg   # indirect calls that can reach a function
@@ -172,7 +204,7 @@ Full description of each action: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#the
 
 **CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is in [docs/VERIFICATION.md](docs/VERIFICATION.md): the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
 
-Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (163 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules; one, on the real GKI modules of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), is skipped unless `CFISCOPE_KO_DIR` names the folder that holds them).
+Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (164 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules; one, on the real GKI modules of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), is skipped unless `CFISCOPE_KO_DIR` names the folder that holds them).
 
 CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
 
