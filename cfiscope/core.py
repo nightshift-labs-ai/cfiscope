@@ -266,33 +266,30 @@ def preamble_index(ranges, arch, wanted, disps, text=None):
 
 
 # Where kCFI keeps a function's type hash when no check of the input says (Site.disp): aarch64 kCFI stores it in the word
-# before the function (GKI 6.1, 6.6, 6.12 and the fixtures all check at -4). x86-64 kernels differ (-4, -15, -20 with
-# patchable entries), so there an input with no check has no default.
+# before the function (GKI 6.1, 6.6 and 6.12 check at -4), unless the build puts patchable-entry NOPs between them
+# (aarch64-kernel.o: -36), which a kernel with no check cannot show. x86-64 kernels differ (-4, -15; -20 in
+# x86_64-kernel.o), so there an input with no check has no default.
 DEFAULT_DISPS = {"aarch64": [-4]}
 
 
-def preamble_hash(ranges, arch, ea, disps):
-    """The word stored where kCFI keeps the type hash of a function entry at ea, in find_preambles()'s form: at ea + disp
-    for the first disp in disps (Site.disp) that holds one (an aligned word on aarch64; the imm32 of a `mov r32, imm32`
-    on x86-64), in the same range, with ea looking like an entry (looks_like_entry()). None otherwise. A function with
-    no hash has some other word there (on aarch64, the last word of the code before it): see hash_evidence()."""
-    for base, mem in ranges:
-        if not base <= ea < base + len(mem):
-            continue
-        off = ea - base
-        if not looks_like_entry(mem, off, arch):
-            return None
-        for d in disps:
-            at = off + d
-            if at < 0 or at + 4 > len(mem):
-                continue
-            if arch == "aarch64" and at % 4:
-                continue
-            if arch == "x86_64" and (at < 1 or not 0xb8 <= mem[at - 1] <= 0xbf):
-                continue
-            return struct.unpack_from("<I", mem, at)[0]
+def _hash_at(mem, at, arch):
+    """The 32-bit word at mem[at] in find_preambles()'s form (aligned on aarch64; the imm32 of a `mov r32, imm32` on
+    x86-64), else None."""
+    if at < 0 or at + 4 > len(mem):
         return None
-    return None
+    if arch == "aarch64" and at % 4:
+        return None
+    if arch == "x86_64" and (at < 1 or not 0xb8 <= mem[at - 1] <= 0xbf):
+        return None
+    return struct.unpack_from("<I", mem, at)[0]
+
+
+def _nop_padding(mem, arch):
+    """Are these bytes (between a kCFI hash and its function) only the NOPs of a patchable function entry: 0x90 on
+    x86-64, nop or another hint (bti, paciasp) on aarch64? True for none."""
+    if arch == "x86_64":
+        return all(b == 0x90 for b in mem)
+    return len(mem) % 4 == 0 and all(w & 0xfffff01f == 0xd503201f for (w,) in struct.iter_unpack("<I", mem))
 
 
 def _a64_padding_or_end(w):
@@ -317,19 +314,32 @@ def _a64_padding_or_end(w):
     return None
 
 
-def hash_evidence(h, arch, checked=(), named=()):
-    """Why the word h in front of a function (preamble_hash()) is taken as its kCFI type hash: "checked" (a call site
-    checks it), "named" (BTF names it as a function type), "preamble" (its form: x86-64's `mov r32, imm32`, which
-    preamble_hash() requires; on aarch64 a word that is no instruction ending or padding a function), or None: then it
-    is most likely the end of the code before a function that has no hash (a static function whose address is never
-    taken)."""
-    if h in checked:
-        return "checked"
-    if h in named:
-        return "named"
-    if arch == "aarch64" and _a64_padding_or_end(h):
+def function_hash(ranges, arch, ea, disps, checked=(), named=(), form=True):
+    """(hash, why) for the function entry at ea (looks_like_entry()): the word where kCFI keeps its type hash, at ea +
+    disp for a disp in disps (Site.disp; the first that qualifies), in the same range, taken as the hash when a call site
+    checks it (why "checked", h in checked), BTF names it ("named", h in named), or, with form, its place has the form
+    of a kCFI preamble ("preamble": only patchable-entry NOPs between it and ea, and on aarch64 a word that is no
+    instruction ending or padding a function). None otherwise: a function with no hash (a static one whose address is
+    never taken) has some other word there, on aarch64 mostly the last instruction of the code before it."""
+    for base, mem in ranges:
+        if not base <= ea < base + len(mem):
+            continue
+        off = ea - base
+        if not looks_like_entry(mem, off, arch):
+            return None
+        for d in disps:
+            h = _hash_at(mem, off + d, arch)
+            if h is None:
+                continue
+            if h in checked:
+                return h, "checked"
+            if h in named:
+                return h, "named"
+            if (form and _nop_padding(mem[off + d + 4:off], arch)
+                    and not (arch == "aarch64" and _a64_padding_or_end(h))):
+                return h, "preamble"
         return None
-    return "preamble"
+    return None
 
 
 def implementations(ranges, arch, h, disps, sites=(), text=None):

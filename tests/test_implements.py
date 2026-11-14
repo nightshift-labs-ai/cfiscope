@@ -278,8 +278,8 @@ class NotKcfi(unittest.TestCase):
 
 
 class FunctionHash(unittest.TestCase):
-    """core.preamble_hash() and core.hash_evidence() on hand-made code: the word in front of a function is its kCFI
-    hash only when a check, BTF or its form says so (a function with none has the previous function's last word)."""
+    """core.function_hash() on hand-made code: the word in front of a function is its kCFI hash only when a check, BTF
+    or its place says so (a function with none has the previous function's last word there, or some other code)."""
 
     RET, NOP, BL = 0xd65f03c0, 0xd503201f, 0x94000010
 
@@ -288,22 +288,37 @@ class FunctionHash(unittest.TestCase):
 
     def test_aarch64(self):
         ranges = self.code(0x5a5aa5a5)
-        self.assertEqual(core.preamble_hash(ranges, "aarch64", 0x1008, [-4]), 0x5a5aa5a5)
-        self.assertIsNone(core.preamble_hash(ranges, "aarch64", 0x1009, [-4]))        # not aligned
-        self.assertIsNone(core.preamble_hash(ranges, "aarch64", 0x1000, [-4]))        # nothing in front
-        self.assertEqual(core.hash_evidence(0x5a5aa5a5, "aarch64"), "preamble")
+        self.assertEqual(core.function_hash(ranges, "aarch64", 0x1008, [-4]), (0x5a5aa5a5, "preamble"))
+        self.assertIsNone(core.function_hash(ranges, "aarch64", 0x1009, [-4]))        # not aligned
+        self.assertIsNone(core.function_hash(ranges, "aarch64", 0x1000, [-4]))        # nothing in front
+        self.assertIsNone(core.function_hash(ranges, "aarch64", 0x1008, [-4], form=False))
         for word in (self.RET, self.NOP, self.BL, 0, 0x14000003, 0xd4200020, 0xd61f0100):
-            with self.subTest(hex(word)):
-                self.assertIsNone(core.hash_evidence(word, "aarch64"))                # ret, nop, bl, udf, b, brk, br
-                self.assertEqual(core.hash_evidence(word, "aarch64", checked={word}), "checked")
-                self.assertEqual(core.hash_evidence(word, "aarch64", named={word}), "named")
+            with self.subTest(hex(word)):                                            # ret, nop, bl, udf, b, brk, br
+                ranges = self.code(word)
+                self.assertIsNone(core.function_hash(ranges, "aarch64", 0x1008, [-4]))
+                self.assertEqual(core.function_hash(ranges, "aarch64", 0x1008, [-4], checked={word}), (word, "checked"))
+                self.assertEqual(core.function_hash(ranges, "aarch64", 0x1008, [-4], named={word}), (word, "named"))
+
+    def test_patchable_entry(self):
+        # aarch64-kernel.o keeps its hashes 36 bytes before the function, 8 NOPs between: only NOPs may stand there
+        hashed = struct.pack("<11I", 0x12345678, *[self.NOP] * 8 + [0xd503233f, self.RET])
+        ranges = [(0x3000, hashed)]
+        self.assertEqual(core.function_hash(ranges, "aarch64", 0x3024, [-36]), (0x12345678, "preamble"))
+        code = [(0x3000, hashed[:28] + struct.pack("<I", 0xaa0003e2) + hashed[32:])]    # mov x2, x0 among them
+        self.assertIsNone(core.function_hash(code, "aarch64", 0x3024, [-36]))
+        self.assertEqual(core.function_hash(code, "aarch64", 0x3024, [-36], named={0x12345678}), (0x12345678, "named"))
 
     def test_x86_64(self):
         code = b"\xcc" * 4 + b"\x90" * 11 + b"\xb8" + struct.pack("<I", 0x1300e12b) + b"\x55\x48\x89\xe5\xc3"
         ranges = [(0x2000, code)]
-        self.assertEqual(core.preamble_hash(ranges, "x86_64", 0x2000 + 20, [-4]), 0x1300e12b)
-        self.assertIsNone(core.preamble_hash(ranges, "x86_64", 0x2000 + 16, [-4]))   # no mov r32, imm32 in front
-        self.assertEqual(core.hash_evidence(0xc3c3c3c3, "x86_64"), "preamble")       # its form was checked
+        self.assertEqual(core.function_hash(ranges, "x86_64", 0x2000 + 20, [-4]), (0x1300e12b, "preamble"))
+        self.assertIsNone(core.function_hash(ranges, "x86_64", 0x2000 + 16, [-4]))   # no mov r32, imm32 in front
+        padded = b"\x90" * 11 + b"\xb8" + struct.pack("<I", 0x1300e12b) + b"\x90" * 16 + b"\x55\x48\x89\xe5\xc3"
+        self.assertEqual(core.function_hash([(0, padded)], "x86_64", 32, [-20]), (0x1300e12b, "preamble"))
+        broken = padded[:20] + b"\xcc" + padded[21:]
+        self.assertIsNone(core.function_hash([(0, broken)], "x86_64", 32, [-20]))
+        self.assertEqual(core.function_hash([(0, broken)], "x86_64", 32, [-20], checked={0x1300e12b}),
+                         (0x1300e12b, "checked"))
 
     def test_implementations(self):
         mem = struct.pack("<8I", 0x11111111, 0xd503233f, self.RET, 0x22222222, 0xd503233f, 0x11111111, 0xd503233f,

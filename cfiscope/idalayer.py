@@ -726,7 +726,7 @@ def callers_title(sites, ea, rows):
 # ---- Functions of this type: every function with the kCFI hash of the function under the cursor ----
 
 def _window(ea, size=64):
-    """[(start, bytes)] of the code within size bytes of ea, in ea's segment: enough for core.preamble_hash()."""
+    """[(start, bytes)] of the code within size bytes of ea, in ea's segment: enough for core.function_hash()."""
     seg = ida_segment.getseg(ea)
     if seg is None:
         return []
@@ -771,7 +771,7 @@ def _after_preamble(func, disps):
 
 def type_entry(sites, ea):
     """(entry, kCFI hash) of the function at ea, for Functions of this type: the hash in front of the start of IDA's
-    function holding ea (or of ea, outside a function), when core.hash_evidence() takes the word there (a call site
+    function holding ea (or of ea, outside a function), when core.function_hash() takes the word there (a call site
     checks it, BTF names it, or its form); else, only when a call site checks it or BTF names it, the hash in front of
     ea itself, of a scanned candidate inside the function or, on x86-64, of the entry after a __cfi_ preamble that IDA
     made the function's start. None if there is none: a static function whose address is never taken has no hash."""
@@ -785,11 +785,10 @@ def type_entry(sites, ea):
         later += sorted({t for s in sites for t in s.targets if func.start_ea < t < func.end_ea})
         if arch == "x86_64":
             later += _after_preamble(func, disps)
-    for e, strong in [(first, False)] + [(e, True) for e in later]:
-        h = core.preamble_hash(_window(e), arch, e, disps)
-        why = core.hash_evidence(h, arch, checked, named) if h is not None else None
-        if why and (not strong or why in ("checked", "named")):
-            return e, h
+    for e, form in [(first, True)] + [(e, False) for e in later]:
+        got = core.function_hash(_window(e), arch, e, disps, checked, named, form)
+        if got is not None:
+            return e, got[0]
     return None
 
 

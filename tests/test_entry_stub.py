@@ -1,6 +1,6 @@
 """Loads cfiscope_entry.py on fake ida_* modules: scan cache, rescan after a rebase, menus, right-click hooks and
 the pseudocode comments. It proves the plugin wiring runs, not that IDA or Hex-Rays behave like the fakes."""
-import bisect, importlib, json, os, sys, types, unittest
+import bisect, importlib, json, os, struct, sys, types, unittest
 from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, ".."))
@@ -1257,12 +1257,16 @@ class FunctionsOfType(unittest.TestCase):
         self.assertIn("(hash 0x1300E12B, long (short, int)): 3", title)
 
     def test_no_hash(self):
-        # IDA has no function here and the word in front is code (the br of do_call_2's call): no list
+        # IDA has no function at the br of do_call_2's call: the word where this fixture keeps hashes (36 bytes before,
+        # as patchable-entry NOPs stand between) is code, and the word in front of it is the check's brk: no hash
+        # (core.function_hash()), so no list
         w, E, log, addr = self.open("aarch64-kernel", "ARM")
         site = next(s for s in E.scan_or_warn() if s.call_ea and s.call_ea - addr["do_call_2"] < 0x40
                     and s.call_ea > addr["do_call_2"])
+        word = struct.unpack("<I", sys.modules["ida_bytes"].get_bytes(site.call_ea - 4, 4))[0]
+        self.assertEqual(word & 0xffe0001f, 0xd4200000)                   # brk #imm
         sys.modules["ida_funcs"].get_func = lambda ea: None
-        rc, shown = self.show(E, log, site.call_ea + 4)
+        rc, shown = self.show(E, log, site.call_ea)
         self.assertEqual((rc, shown), (0, None))
         self.assertIn("WARN No kCFI type hash in front of this function: a function whose address is never taken "
                       "(a static one) has none.", log["msgs"])

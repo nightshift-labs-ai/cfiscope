@@ -516,8 +516,8 @@ def _spec_hashes(spec, names, ranges, arch, sites, disps, type_names):
     """(kind, member or function named by SPEC or None, [(kCFI hash, mangled name or None)]) for --implements, kind one
     of "hash", "type", "function", "member": one hash for a hash or a mangled type; for a C type or a struct member
     (from BTF), the plain and the integer-normalized mangling of each match (main() keeps those the input uses, then
-    _pick_hash() one); for a function, the hash in front of it (core.preamble_hash(), when core.hash_evidence() takes
-    it). InputError when SPEC names none."""
+    _pick_hash() one); for a function, the hash in front of it (core.function_hash()). InputError when SPEC names
+    none."""
     text = spec.strip()
     if _HASH_SPEC.match(text):
         if int(text, 16) >> 32:
@@ -538,9 +538,9 @@ def _spec_hashes(spec, names, ranges, arch, sites, disps, type_names):
         named = type_names.by_hash if type_names is not None else ()
         found = []
         for ea in names.by_name[text]:
-            h = core.preamble_hash(ranges, arch, ea, disps)
-            if h is not None and core.hash_evidence(h, arch, checked, named) and (h, None) not in found:
-                found.append((h, None))
+            got = core.function_hash(ranges, arch, ea, disps, checked, named)
+            if got is not None and (got[0], None) not in found:
+                found.append((got[0], None))
         if not found:
             raise InputError("--implements: no kCFI hash in front of %s (a function whose address is never taken, such "
                              "as a static one, has none)" % text)
