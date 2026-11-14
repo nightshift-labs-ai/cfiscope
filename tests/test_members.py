@@ -176,6 +176,29 @@ class MemberSlots(unittest.TestCase):
              (K.K_STRUCT, "S", 0, 16, [(1, 3, 0), (2, 2, 64)])]
         self.assertEqual(K.member_slots(FakeBTF(t, {1: "table", 2: "fn"}), {1: {7}}), {(7, 8): ["S.fn"]})
 
+    FP = [(0, "", 0, 0, None), (K.K_FUNC_PROTO, "", 0, 0, []), (K.K_PTR, "", 0, 1, None),
+          (K.K_INT, "long", 0, 8, None)]                 # 1: a prototype, 2: a pointer to it, 3: long
+
+    def test_array_of_function_pointers(self):
+        # struct S { long t; void (*fns[3])(void); }: element j at 8 + 8 * j
+        t = self.FP + [(K.K_ARRAY, "", 0, 0, (2, 3, 3)), (K.K_STRUCT, "S", 0, 32, [(1, 3, 0), (2, 4, 64)])]
+        self.assertEqual(K.member_slots(FakeBTF(t, {1: "t", 2: "fns"}), {1: {7}}),
+                         {(7, 8): ["S.fns"], (7, 16): ["S.fns"], (7, 24): ["S.fns"]})
+
+    def test_array_of_structs_uses_the_element_size(self):
+        # struct E { long pad; fn_t fn; long more; } (24 bytes); struct T { struct E es[3]; }: E.fn at 8, 32, 56
+        t = self.FP + [(K.K_STRUCT, "E", 0, 24, [(1, 3, 0), (2, 2, 64), (3, 3, 128)]),
+                       (K.K_ARRAY, "", 0, 0, (4, 3, 3)), (K.K_STRUCT, "T", 0, 72, [(4, 5, 0)])]
+        self.assertEqual(K.member_slots(FakeBTF(t, {1: "pad", 2: "fn", 3: "more", 4: "es"}), {1: {7}}),
+                         {(7, 8): ["E.fn"], (7, 32): ["E.fn"], (7, 56): ["E.fn"]})
+
+    def test_named_member_of_anonymous_type(self):
+        # struct S { long t; struct { fn_t fn; } ops; }: 'S.ops.fn' at 8 (an unnamed one would give 'S.fn')
+        t = self.FP + [(K.K_STRUCT, "", 0, 8, [(1, 2, 0)]), (K.K_STRUCT, "S", 0, 16, [(2, 3, 0), (3, 4, 64)])]
+        self.assertEqual(K.member_slots(FakeBTF(t, {1: "fn", 2: "t", 3: "ops"}), {1: {7}}), {(7, 8): ["S.ops.fn"]})
+        t[5] = (K.K_STRUCT, "S", 0, 16, [(2, 3, 0), (0, 4, 64)])
+        self.assertEqual(K.member_slots(FakeBTF(t, {0: "", 1: "fn", 2: "t"}), {1: {7}}), {(7, 8): ["S.fn"]})
+
 
 # ---- the command line on the fixture ----
 
