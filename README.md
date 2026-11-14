@@ -12,7 +12,7 @@ The scanner was scored on a real Android GKI kernel for each architecture ([numb
 
 ## Without CFIScope
 
-The call at `sock_sendmsg+0xb4` is `blr x8`: the target is loaded from `sock->ops` at run time, so the binary names no callee. The usual fallback is a name search. In the GKI 6.1 kernel below, 31 functions are named `*_sendmsg` (`nm gki.elf | grep -v __ksymtab | grep -c '_sendmsg$'`): 13 have this call's type, the other 18 (such as `tcp_sendmsg`, which takes a `struct sock *`) would fail its kCFI check, and the search misses `packet_sendmsg_spkt`. Source-level call-graph tools need the source and its LLVM IR, which vendor kernels and modules do not ship. CFIScope lists the call's 14 candidates, all of its type, from the binary alone, the 13 that the kernel's static data stores in a `proto_ops.sendmsg` slot first (next block; 3.2 to 3.4 s on the command line here, three runs).
+The call at `sock_sendmsg+0xb4` is `blr x8`: the target is loaded from `sock->ops` at run time, so the binary names no callee. The usual fallback is a name search. In the GKI 6.1 kernel below, 31 functions are named `*_sendmsg` (`nm gki.elf | grep -v __ksymtab | grep -c '_sendmsg$'`): 13 have this call's type, the other 18 (such as `tcp_sendmsg`, which takes a `struct sock *`) would fail its kCFI check, and the search misses `packet_sendmsg_spkt`. Source-level call-graph tools need the source and its LLVM IR, which vendor kernels and modules do not ship. CFIScope lists the call's 14 candidates, all of its type, from the binary alone, the 13 that the kernel's static data stores in a `proto_ops.sendmsg` slot first (next block; 3.1 to 3.2 s for that command here, three runs).
 
 ## What you will see (real output, not an IDA screenshot)
 
@@ -158,7 +158,7 @@ A real kernel (the public aarch64 Android kernel used for the output above and t
    ```
    Install [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf#readme) first, as its README says (snap, yay or `uv tool install vmlinux-to-elf`). `pip install vmlinux-to-elf` worked for us on Linux, where pip built its `minilzo` dependency with the C compiler.
 2. Open `gki.elf` in IDA. Auto-analysis of this 39 MB kernel (57,453 named functions) takes a while, and you need not wait for it: Scan asks "Wait for auto-analysis to finish before scanning?", and No scans at once. The call sites and candidates are read from the code bytes, so they are the same; the order of each list (functions whose address is taken first), the call-site list's Function+off column and, if you answer No to "Create functions", the cross-references depend on what IDA has analysed so far (run Scan again after analysis to refresh them).
-3. Meanwhile, the same answers in about 3 seconds on the command line (2.7 to 2.9 s each here):
+3. Meanwhile, the same answers in about 3 seconds on the command line (3.1 to 3.4 s each here, with the slot ranking):
    ```
    cd ~/.idapro/plugins/cfiscope
    python3 -m cfiscope ~/gki.elf --callers tcp_sendmsg
