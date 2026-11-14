@@ -12,17 +12,22 @@ It runs the command-line tool twice, as `python3 -m cfiscope` does (a subprocess
 and draws two panels: the indirect call at --site, with its kCFI hash and C type, fanning out to every candidate;
 and every indirect call that may reach --callee (a call of its kCFI type), converging on it.  Every name, address,
 member, hash, type and count in the picture is a field of that output, written as the text output writes it ("call
-proto_ops.sendmsg hash 0x1ebda935", "14 candidate(s)", "3 call site(s)").  The instruction (`blr x8`) is decoded
-from the 4 bytes at the call's address (aarch64 blr and br only).  The tool's own words are the two headings and
-the caption (HEADINGS, CAPTION; the caption names the input file).  A candidate is drawn blue when a call of the
-second panel is inside it, and that call's function name is blue too.
+proto_ops.sendmsg hash 0x1ebda935", "14 candidate(s), 13 in a proto_ops.sendmsg slot", "3 call site(s)").  The
+instruction (`blr x8`) is decoded from the 4 bytes at the call's address (aarch64 blr and br only).  The tool's own
+words are the two headings and the caption (HEADINGS, CAPTION; the caption names the input file).  A candidate is
+drawn blue when a call of the second panel is inside it, and that call's function name is blue too.
+When the call ranks its candidates by static slot (slot_backed in the JSON), the candidates stand under the group
+headers that `--targets` prints ("in a proto_ops.sendmsg slot:", "by array stride:", "same type only:"), and those
+of the same type only are grey, with a dashed box and arrow.  Each call of the second panel then carries the tag its
+`--callers` line ends with ("[tcp_sendmsg: same type only]"), and a call for which the callee is of the same type
+only gets a dashed grey arrow.
 
 Plain Python, standard library only.  The SVG uses the generic monospace and sans-serif fonts and has no external
 font, script, style sheet, image or link.  The same input gives the same bytes.  tests/test_draw_hero.py checks the
 picture against a fresh run of the command line (with CFISCOPE_GKI_ELF=path/to/gki.elf).
 
 --png OUT also rasterises the SVG at 1.5 times its size: with rsvg-convert if it is on PATH, else with Node and the
-`playwright` package (Chromium; found through NODE_PATH), then stores it with a 256-colour palette (palette_png)
+`playwright` package (Chromium; found through NODE_PATH), then stores it with a 128-colour palette (palette_png)
 to stay under 100 KB, with the SVG's name and sha256 in a tEXt chunk.  Without either converter it says so and writes
 the SVG only.
 """
@@ -49,6 +54,7 @@ HEADINGS = ("Which functions may this indirect call reach?",
 CAPTION = "Drawn from python3 -m cfiscope %s output, not an IDA screenshot"     # %s: the input file's name
 MAX_CANDIDATES, MAX_CALLERS = 16, 6
 SCALE = 1.5
+COLOURS = 128        # palette_png: 256 gave 105,587 bytes once the slot groups were drawn (review s197), 128 92,643
 
 # Runs the package as `python3 -m cfiscope` does, isolated (-I: no user site, no PYTHONPATH, no current directory).
 RUNNER = ("import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); "
@@ -61,7 +67,11 @@ FUNC_BOX = ("#ffffff", "#8c959f")
 BLUE_BOX = ("#e6efff", "#2f6fdd")
 CALLEE_BOX = ("#e9f7ec", "#2e8b57")
 PANEL_BOX = ("#f6f8fa", "#d0d7de")
+TYPE_ONLY_BOX = ("#eef0f2", "#8c959f")      # a candidate of the same type only: grey, dashed
 EDGE, BLUE_EDGE = "#8c959f", "#2f6fdd"
+SLOT_INK = "#1e7a46"                        # the --callers tag of a call whose member slot holds the callee
+DASH = "5 4"
+GROUP_GAP = 22                               # room for a group header above its first candidate
 
 FS, FS_NAME, FS_HEAD, FS_CAPTION = 13, 14, 17, 13
 CHAR = 0.62          # assumed advance of a monospace glyph, in em (DejaVu Sans Mono: 0.602; a little slack for others)
@@ -128,6 +138,34 @@ def count_text(n, what="candidate(s)"):
     return "%d %s" % (n, what)
 
 
+def slot_label(s):
+    """'in a proto_ops.sendmsg slot', as the command line writes the group (core.slot_label())."""
+    m = s.get("members") or []
+    return "in a %s slot" % m[0] if len(m) == 1 else "in a slot of one of %d members" % len(m)
+
+
+def group_label(s, kind):
+    """The --targets group header of a candidate: slot_backed 'offset', 'stride' or false (core.slot_groups())."""
+    return slot_label(s) if kind == "offset" else "by array stride" if kind == "stride" else "same type only"
+
+
+def site_count(s):
+    """'14 candidate(s), 13 in a proto_ops.sendmsg slot', as the head line of --targets writes it (core.slot_counts())."""
+    n, k = s.get("slot_backed_candidates", 0), s.get("slot_stride_candidates", 0)
+    parts = [count_text(s["candidates"])] + (["%d %s" % (n - k, slot_label(s))] if n > k else []) + (
+        ["%d by array stride" % k] if k else [])
+    return ", ".join(parts)
+
+
+def callee_tag(s, callee):
+    """'[tcp_sendmsg: same type only]', as a --callers line ends; None when the call ranks nothing."""
+    if not s.get("slot_backed_candidates"):
+        return None
+    kind = s.get("callee_slot_backed")
+    return "[%s: %s]" % (callee, slot_label(s) if kind == "offset" else "by array stride" if kind == "stride" else
+                         "same type only")
+
+
 def width(text, size):
     return len(text) * size * CHAR
 
@@ -153,17 +191,19 @@ class Svg:
                  % (cls, num(x), num(y), size, fill, ' font-weight="bold"' if bold else "",
                     ' font-family="%s"' % family if family else "", escape(s)))
 
-    def edge(self, x0, y0, x1, y1, colour, sw):
-        """A curve from (x0, y0) to an arrowhead whose tip is at (x1, y1)."""
+    def edge(self, x0, y0, x1, y1, colour, sw, dashed=False):
+        """A curve from (x0, y0) to an arrowhead whose tip is at (x1, y1); dashed: a same-type-only match."""
         mid = (x0 + x1) / 2
-        self.add('<g class="edge"><path d="M%s %s C%s %s %s %s %s %s" fill="none" stroke="%s" stroke-width="%s"/>'
+        self.add('<g class="edge%s"><path d="M%s %s C%s %s %s %s %s %s" fill="none" stroke="%s" stroke-width="%s"%s/>'
                  '<polygon points="%s,%s %s,%s %s,%s" fill="%s"/></g>'
-                 % (num(x0), num(y0), num(mid), num(y0), num(mid), num(y1), num(x1 - 7), num(y1), colour, num(sw),
+                 % (" type-only" if dashed else "", num(x0), num(y0), num(mid), num(y0), num(mid), num(y1),
+                    num(x1 - 7), num(y1), colour, num(sw), ' stroke-dasharray="%s"' % DASH if dashed else "",
                     num(x1 - 8), num(y1 - 4.5), num(x1), num(y1), num(x1 - 8), num(y1 + 4.5), colour))
 
 
-def call_lines(s, insn, with_count_line, member_limit=3):
-    """The rows of a call-site box: [(class, text, size, colour, bold), ...] per line."""
+def call_lines(s, insn, with_count_line, member_limit=3, tag=None):
+    """The rows of a call-site box: [(class, text, size, colour, bold), ...] per line. The first panel's box (with
+    its own count line) counts the slot groups as --targets does; tag: a --callers line's '[tcp_sendmsg: ...]'."""
     first = [("in", s["in"], FS_NAME, INK, True)]
     if insn:
         first.append(("insn", insn, FS, INSN_INK, False))
@@ -176,7 +216,9 @@ def call_lines(s, insn, with_count_line, member_limit=3):
     if s.get("type"):
         rows.append([("type", s["type"], FS, TYPE_INK, False)])
     if with_count_line:
-        rows.append([("count", count_text(s["candidates"]), FS, INK, False)])
+        rows.append([("count", site_count(s), FS, INK, False)])
+    if tag:
+        rows.append([("slot", tag, FS, GREY if tag.endswith(": same type only]") else SLOT_INK, False)])
     return rows
 
 
@@ -206,17 +248,23 @@ def draw(site, callers_doc, callee, insns, source="gki.elf"):
     input file's name, for the caption."""
     callers = callers_doc["sites"]
     cands = [t["name"] for t in site["targets"]]
+    kinds = [t.get("slot_backed", False) for t in site["targets"]]
+    ranked = any(kinds)                  # the call ranks its candidates by static slot: draw the groups
+    headers = [group_label(site, k) + ":" if ranked and (i == 0 or k != kinds[i - 1]) else None
+               for i, k in enumerate(kinds)]
     caller_funcs = {c["in"].partition("+")[0] for c in callers}
     blue = [n in caller_funcs for n in cands]
+    tags = [callee_tag(c, callee) for c in callers]
+    type_only = [bool(t) and t.endswith(": same type only]") for t in tags]
 
     srows = call_lines(site, insns.get(site["call"]), True, None)       # from --targets: every member
     sw, sh = box_size(srows)
-    crows = [call_lines(c, insns.get(c["call"]), False) for c in callers]
+    crows = [call_lines(c, insns.get(c["call"]), False, tag=t) for c, t in zip(callers, tags)]
     cw = max(box_size(r)[0] for r in crows)
     ch = max(box_size(r)[1] for r in crows)
     left = max(sw, cw)
     col_x = PAD + INNER + left + GAP
-    cand_w = math.ceil(20 + max(width(n, FS) for n in cands))
+    cand_w = math.ceil(20 + max([width(n, FS) for n in cands] + [width(h, FS) - 20 for h in headers if h]))
     callee_w = math.ceil(24 + width(callee, FS_NAME + 1))
     panel_w = math.ceil(INNER + left + GAP + INNER +
                         max(cand_w, callee_w, width(count_text(len(callers), "call site(s)"), FS)))
@@ -229,7 +277,12 @@ def draw(site, callers_doc, callee, insns, source="gki.elf"):
     # Panel 1: the call and its candidates.
     p1y = PAD
     top = p1y + 50
-    col_h = len(cands) * 28 - 4
+    offsets, at = [], 0              # each candidate box's y below the column's top, after any group header
+    for h in headers:
+        at += GROUP_GAP if h else 0
+        offsets.append(at)
+        at += 28
+    col_h = at - 4
     body = max(col_h, sh)
     mid = top + body / 2
     p1h = 50 + body + INNER
@@ -250,14 +303,20 @@ def draw(site, callers_doc, callee, insns, source="gki.elf"):
     g.rect(PAD, p1y, panel_w, p1h, PANEL_BOX, rx=8)
     g.text("heading", PAD + INNER, p1y + 30, HEADINGS[0], FS_HEAD, INK, True, "sans-serif")
     sx, sy = PAD + INNER, mid - sh / 2
-    ys = [top + body / 2 - col_h / 2 + 28 * i for i in range(len(cands))]
+    ys = [top + body / 2 - col_h / 2 + o for o in offsets]
+    lone = [ranked and not k for k in kinds]             # of the same type only: grey, dashed
     for i, yi in enumerate(ys):
-        g.edge(sx + sw, mid, col_x, yi + 12, BLUE_EDGE if blue[i] else EDGE, 1.6 if blue[i] else 1.1)
+        g.edge(sx + sw, mid, col_x, yi + 12, BLUE_EDGE if blue[i] else EDGE, 1.6 if blue[i] else 1.1, lone[i])
     draw_call(g, "site", sx, sy, srows, sw, sh)
-    for n, yi, b in zip(cands, ys, blue):
-        g.add('<g class="candidate%s">' % (" also-caller" if b else ""))
-        g.rect(col_x, yi, cand_w, 24, BLUE_BOX if b else FUNC_BOX, rx=4)
-        g.text("name", col_x + 10, yi + 16.5, n, FS, BLUE_INK if b else INK, b)
+    for n, yi, b, h, t in zip(cands, ys, blue, headers, lone):
+        if h:       # the group header, as --targets prints it above its candidates
+            g.add('<g class="group">')
+            g.text("label", col_x, yi - 7, h, FS, GREY)
+            g.add("</g>")
+        g.add('<g class="candidate%s%s">' % (" also-caller" if b else "", " type-only" if t else ""))
+        g.rect(col_x, yi, cand_w, 24, BLUE_BOX if b else TYPE_ONLY_BOX if t else FUNC_BOX, rx=4,
+               extra=' stroke-dasharray="%s"' % DASH if t else "")
+        g.text("name", col_x + 10, yi + 16.5, n, FS, BLUE_INK if b else GREY if t else INK, b)
         g.add("</g>")
     g.add("</g>")
 
@@ -269,7 +328,7 @@ def draw(site, callers_doc, callee, insns, source="gki.elf"):
     for i in range(len(callers)):
         cy = top2 + pitch * i + ch / 2
         spread = (i - (len(callers) - 1) / 2) * 7
-        g.edge(PAD + INNER + cw, cy, col_x, ty + spread, EDGE, 1.3)
+        g.edge(PAD + INNER + cw, cy, col_x, ty + spread, EDGE, 1.3, type_only[i])
     for i, (c, rows) in enumerate(zip(callers, crows)):
         draw_call(g, "caller", PAD + INNER, top2 + pitch * i, rows, cw, ch, c["in"].partition("+")[0] in cands)
     g.add('<g class="callee">')
@@ -322,8 +381,8 @@ def source_text(svg_path):
 
 
 def palette_png(path, svg_path=None):
-    """Rewrite an 8-bit RGB or RGBA PNG as a 256-colour palette PNG (alpha dropped: the picture is opaque): the 256
-    most frequent colours, every other colour mapped to the nearest of them (anti-aliased text edges).  About a third
+    """Rewrite an 8-bit RGB or RGBA PNG as a COLOURS-colour palette PNG (alpha dropped: the picture is opaque): the
+    COLOURS most frequent colours, every other colour mapped to the nearest of them (anti-aliased text edges).  About a third
     of Chromium's size; the same input gives the same bytes.  With svg_path, a tEXt chunk names the SVG and its
     sha256 (source_text), so a test can tell a PNG left over from an older SVG.  False (file unchanged) for any other
     PNG."""
@@ -359,7 +418,7 @@ def palette_png(path, svg_path=None):
                 line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
         pixels.append([bytes(line[i:i + 3]) for i in range(0, stride, bpp)])
         prev = line
-    palette = [c for c, _n in collections.Counter(p for row in pixels for p in row).most_common(256)]
+    palette = [c for c, _n in collections.Counter(p for row in pixels for p in row).most_common(COLOURS)]
     index = {c: i for i, c in enumerate(palette)}
 
     def nearest(c):
@@ -412,7 +471,7 @@ def main(argv=None):
         if how is None:
             print("no PNG: neither rsvg-convert nor Node with the playwright package was found", file=sys.stderr)
         elif palette_png(a.png, a.output):
-            print("wrote %s with %s, 256 colours: %d bytes" % (a.png, how, os.path.getsize(a.png)))
+            print("wrote %s with %s, %d colours: %d bytes" % (a.png, how, COLOURS, os.path.getsize(a.png)))
         else:
             print("wrote %s with %s, kept as rendered (not an 8-bit non-interlaced RGB or RGBA PNG): %d bytes"
                   % (a.png, how, os.path.getsize(a.png)))

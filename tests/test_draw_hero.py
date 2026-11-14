@@ -6,7 +6,9 @@ agree with the texts, and the PNG is this SVG rasterised (its tEXt chunk carries
 rectangle of the SVG its pixels have the rectangle's colour).  tools/draw_hero.py on the small aarch64 test fixture:
 the caption names the input file, and a bad offset or a PNG it cannot palettise gives a plain message.
 With CFISCOPE_GKI_ELF=path/to/gki.elf (the README walkthrough's kernel): every other text equals a field of a fresh
-`python3 -m cfiscope` run, and tools/draw_hero.py redraws the SVG byte for byte.
+`python3 -m cfiscope` run, the candidates stand under the group headers `--targets` prints (review s197: the slot
+groups), each caller carries the tag its `--callers` line ends with, and tools/draw_hero.py redraws the SVG byte for
+byte.
 """
 import contextlib, hashlib, importlib.util, io, json, os, re, struct, subprocess, sys, tempfile, unittest, zlib
 import xml.etree.ElementTree as ET
@@ -29,9 +31,11 @@ HEADINGS = ("Which functions may this indirect call reach?",
 CAPTION = "Drawn from python3 -m cfiscope gki.elf output, not an IDA screenshot"
 
 CALL_FIELDS = {"site": ["in", "insn", "call", "hash", "type", "count"],
-               "caller": ["in", "insn", "call", "hash", "count", "type"]}
+               "caller": ["in", "insn", "call", "hash", "count", "type", "slot"]}
 BLUE_BOX, CALL_BOX, FUNC_BOX = ("#e6efff", "#2f6fdd"), ("#fff4e5", "#d4761c"), ("#ffffff", "#8c959f")
+TYPE_ONLY_BOX, GREY = ("#eef0f2", "#8c959f"), "#59636e"
 BLUE_INK, BLUE_EDGE = "#0b4fc4", "#2f6fdd"
+TYPE_ONLY_TAG = ": same type only]"
 RUNNER = ("import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); "
           "runpy.run_module('cfiscope', run_name='__main__', alter_sys=True)")
 
@@ -144,11 +148,14 @@ class Picture(unittest.TestCase):
         self.assertGreater(float(kids(self.root, "text")[0].get("y")), bottom)
         for p in (p1, p2):
             head = kids(p, "text", "heading")[0]
-            self.assertLess(float(head.get("y")), min(box(g)[1] for g in p if tag(g) == "g" and "edge" not in cls(g)))
+            self.assertLess(float(head.get("y")), min(box(g)[1] for g in p if tag(g) == "g" and "edge" not in cls(g)
+                                                      and "group" not in cls(g)))
+            for g in kids(p, "g", "group"):         # a group header too sits under the heading
+                self.assertLess(float(head.get("y")), float(kids(g, "text")[0].get("y")) - 13)
         everything = [t.text for t in self.root.iter(NS + "text")]
         self.assertEqual(sorted(t for t in everything if t in HEADINGS + (CAPTION,)), sorted(HEADINGS + (CAPTION,)))
         # Every other text is in a box (or the callers count) of a panel, with a class the fresh-run test checks.
-        for p, groups in ((p1, {"site", "candidate", "edge"}), (p2, {"caller", "callee", "edge"})):
+        for p, groups in ((p1, {"site", "candidate", "edge", "group"}), (p2, {"caller", "callee", "edge"})):
             self.assertEqual({cls(g)[0] for g in kids(p, "g")}, groups)
             self.assertEqual([cls(t)[0] for t in kids(p, "text")], ["heading"] + (["count"] if p is p2 else []))
 
@@ -158,7 +165,28 @@ class Picture(unittest.TestCase):
         self.assertEqual([c for c, _t in texts(site)], CALL_FIELDS["site"])
         cands = kids(p1, "g", "candidate")
         count = dict(texts(site))["count"]
-        self.assertEqual(count, "%d candidate(s)" % len(cands))
+        self.assertTrue(count.startswith("%d candidate(s), " % len(cands)), count)     # and the slot groups counted
+        # review s197: the slot groups. A group header stands right above the first candidate of its group, the first
+        # one above the first candidate; a candidate of the same type only is grey, dashed, under 'same type only:'.
+        order = [g for g in kids(p1, "g") if cls(g)[0] in ("group", "candidate")]
+        self.assertEqual(cls(order[0])[0], "group")
+        header = None
+        for i, g in enumerate(order):
+            if cls(g)[0] == "group":
+                (k, header), = texts(g)
+                self.assertEqual(k, "label")
+                nxt = box(order[i + 1])
+                label_y = float(kids(g, "text")[0].get("y"))
+                self.assertTrue(nxt[1] - 12 < label_y < nxt[1], (header, label_y, nxt))
+                continue
+            lone = header == "same type only:"
+            self.assertEqual("type-only" in cls(g), lone, texts(g))
+            if lone:
+                self.assertEqual(box(g)[4], TYPE_ONLY_BOX)
+                self.assertEqual(kids(g, "rect")[0].get("stroke-dasharray"), "5 4")
+                self.assertEqual(kids(g, "text")[0].get("fill"), GREY)
+        self.assertEqual([texts(g)[0][1] for g in order if cls(g)[0] == "group"],
+                         ["in a proto_ops.sendmsg slot:", "same type only:"])
         callers, (callee,) = kids(p2, "g", "caller"), kids(p2, "g", "callee")
         self.assertEqual(kids(p2, "text", "count")[0].text, "%d call site(s)" % len(callers))
         caller_funcs = [dict(texts(c))["in"].partition("+")[0] for c in callers]
@@ -172,9 +200,11 @@ class Picture(unittest.TestCase):
             self.assertEqual(k, "name")
             blue = name in caller_funcs
             self.assertEqual("also-caller" in cls(c), blue, name)
-            self.assertEqual(colours, BLUE_BOX if blue else FUNC_BOX, name)
+            self.assertEqual(colours, BLUE_BOX if blue else TYPE_ONLY_BOX if "type-only" in cls(c) else FUNC_BOX, name)
             self.assertEqual(kids(c, "text")[0].get("fill") == BLUE_INK, blue, name)
             self.assertEqual(kids(e, "path")[0].get("stroke") == BLUE_EDGE, blue, name)
+            self.assertEqual(kids(e, "path")[0].get("stroke-dasharray") == "5 4", "type-only" in cls(c), name)
+            self.assertEqual("type-only" in cls(e), "type-only" in cls(c), name)
             self.assertEqual(tip(e), (sx + sw, sy + sh / 2, x, y + h / 2))
         self.assertTrue(any("also-caller" in cls(c) for c in cands))
         self.assertEqual(len(kids(p2, "g", "edge")), len(callers))
@@ -183,6 +213,8 @@ class Picture(unittest.TestCase):
             x, y, w, h, colours = box(c)
             self.assertEqual(colours, CALL_BOX)
             self.assertEqual([k for k, _t in texts(c)], CALL_FIELDS["caller"])
+            lone = dict(texts(c))["slot"].endswith(TYPE_ONLY_TAG)        # the callee is of the same type only here
+            self.assertEqual(kids(e, "path")[0].get("stroke-dasharray") == "5 4", lone)
             name_ink = [t for t in kids(c, "text") if cls(t) == ["in"]][0].get("fill")
             self.assertEqual(name_ink == BLUE_INK, dict(texts(c))["in"].partition("+")[0] in names)
             x0, y0, x1, y1 = tip(e)
@@ -190,7 +222,7 @@ class Picture(unittest.TestCase):
             self.assertTrue(ty < y1 < ty + th)
         # Each text sits inside its box, at the widest monospace glyph assumed by draw_hero.py (0.62 em).
         for g in kids(p1, "g") + kids(p2, "g"):
-            if "edge" in cls(g):
+            if "edge" in cls(g) or "group" in cls(g):
                 continue
             x, y, w, h, _ = box(g)
             for t in kids(g, "text"):
@@ -260,6 +292,11 @@ class Picture(unittest.TestCase):
         callee = texts(kids(p2, "g", "callee")[0])[0][1]
         self.assertIn("the %d indirect calls that may reach `%s` (same kCFI type" % (n_callers, callee), snippet)
         self.assertIn("In blue, %s:" % " and ".join("`%s`" % b for b in blue), snippet)
+        # review s197: the groups and the callers' tags, in the caption and the alt text
+        lone = [texts(c)[0][1] for c in kids(p1, "g", "candidate") if "type-only" in cls(c)]
+        headers = [texts(g)[0][1] for g in kids(p1, "g", "group")]
+        self.assertIn("the %d stored in a `%s` slot" % (n_cands - len(lone), site["hash"].split()[1]), snippet)
+        self.assertIn("%s (same type only" % ", ".join("`%s`" % n for n in lone), snippet)
         # The alt text: every name, hash and type of the picture, and the counts (in words).
         alt = re.search(r'alt="([^"]+)"', snippet).group(1)
         self.assertIn("%d candidates: %s." % (n_cands, ", ".join(texts(c)[0][1] for c in kids(p1, "g", "candidate"))),
@@ -272,6 +309,10 @@ class Picture(unittest.TestCase):
                          callers[0]["count"].replace("(s)", "s")), alt)
         for c in callers:     # "each with": the same type and count for every caller
             self.assertEqual((c["type"], c["count"]), (callers[0]["type"], callers[0]["count"]))
+        for h in headers:     # the group headers and each caller's tag, as the picture writes them
+            self.assertIn(h, alt)
+        for c in callers:
+            self.assertIn("%s for %s" % (c["slot"], c["in"]), alt)
 
 
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "aarch64-kernel.o")
@@ -345,9 +386,9 @@ class Tool(unittest.TestCase):
         self.assertIsNone(svg)
 
     def test_png_message_says_what_palette_png_did(self):
-        """main() says '256 colours' only when palette_png rewrote the PNG; a 16-bit PNG is kept as rendered."""
+        """main() says '128 colours' only when palette_png rewrote the PNG; a 16-bit PNG is kept as rendered."""
         draw_hero = tool_module()
-        for depth, said, ctype in ((8, "256 colours", 3), (16, "kept as rendered", 2)):
+        for depth, said, ctype in ((8, "128 colours", 3), (16, "kept as rendered", 2)):
             with tempfile.TemporaryDirectory() as tmp:
                 svg, png = os.path.join(tmp, "x.svg"), os.path.join(tmp, "x.png")
                 out = io.StringIO()
@@ -356,7 +397,7 @@ class Tool(unittest.TestCase):
                         contextlib.redirect_stdout(out):
                     self.assertEqual(draw_hero.main([FIXTURE, "-o", svg, "--png", png] + FIXTURE_ARGS), 0)
                 self.assertIn("wrote %s with a test converter, %s" % (png, said), out.getvalue())
-                self.assertNotIn("256 colours" if depth == 16 else "kept as rendered", out.getvalue())
+                self.assertNotIn("128 colours" if depth == 16 else "kept as rendered", out.getvalue())
                 with open(png, "rb") as fh:
                     self.assertEqual(fh.read(26)[25], ctype)       # IHDR colour type: 3 = palette, 2 = RGB unchanged
                 if depth == 8:      # main() passes its SVG: the tEXt chunk names x.svg and its sha256
@@ -396,6 +437,15 @@ class FreshRun(unittest.TestCase):
                 "hash": "%s %shash %s" % ("jump" if s["tail_call"] else "call", member + " " if member else "",
                                           s["hash"]),
                 "type": s["type"], "count": "%d candidate(s)" % s["candidates"]}
+        if member_limit is None:      # the first panel's count line: as the head line of --targets counts the groups
+            k = s["slot_backed_candidates"] - s["slot_stride_candidates"]
+            want["count"] += ", %d in a %s slot" % (k, ms[0]) if k else ""
+            self.assertEqual(s["slot_stride_candidates"], 0)
+        else:                         # a caller: the tag its --callers line ends with
+            want["slot"] = re.search(r"  (\[[^\]]+\])$", line).group(1)
+            kind = s["callee_slot_backed"]
+            self.assertEqual(want["slot"], "[%s: %s]" % (CALLEE, "in a %s slot" % ms[0] if kind == "offset"
+                                                         else "same type only"))
         self.assertEqual(got, [(k, want[k]) for k, _t in got])
         self.assertEqual(sorted(k for k, _t in got), sorted(want))
         # The pieces of the CLI's own text line for this site, as that line writes them.
@@ -417,6 +467,12 @@ class FreshRun(unittest.TestCase):
         # candidate lines (4 spaces), under 'in a ... slot:' and 'same type only:' when some are slot-backed
         self.assertEqual([ln.split() for ln in self.targets_text[2:] if ln.startswith("    ")],
                          [[t["ea"], t["name"]] for t in self.targets["targets"]])
+        # the picture's group headers and candidates, in order, are those lines (review s197)
+        self.assertEqual([t for g in kids(p1, "g") if cls(g)[0] in ("group", "candidate") for _k, t in texts(g)],
+                         [ln.strip() if ln.startswith("  ") and not ln.startswith("    ") else ln.split()[1]
+                          for ln in self.targets_text[2:]])
+        self.assertEqual(["type-only" in cls(c) for c in kids(p1, "g", "candidate")],
+                         [not t["slot_backed"] for t in self.targets["targets"]])
         caller_funcs = {s["in"].partition("+")[0] for s in self.callers["sites"]}
         self.assertEqual([texts(c)[0][1] for c in kids(p1, "g", "candidate") if "also-caller" in cls(c)],
                          [n for n in want if n in caller_funcs])
