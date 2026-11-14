@@ -316,13 +316,14 @@ def _relocatable(a, data):
     return not a.raw and data[:4] == b"\x7fELF" and len(data) >= 18 and struct.unpack_from("<H", data, 16)[0] == 1
 
 
-def _type_names(a, data):
+def _type_names(a, data, sites=True):
     """kcfi_types.TypeNames from --btf, else from the input's own BTF; None if there is none.  A module's own split
-    BTF is read on top of --btf (its kernel's BTF), which it continues."""
+    BTF is read on top of --btf (its kernel's BTF), which it continues, when there is a call site to name (review
+    s189 NIT 7: no split-BTF warning on a module with none)."""
     if a.btf:
         with open(a.btf, "rb") as fh:
             btf_data = fh.read()
-        if _relocatable(a, data) and not a.no_btf:
+        if sites and _relocatable(a, data) and not a.no_btf:
             try:
                 names = kcfi_types.load_split_type_names(data, btf_data)
             except (kcfi_types.BTFError, struct.error) as e:
@@ -394,7 +395,7 @@ def main(argv=None):
         if stats.get("scheme") == "jump-table CFI":
             stats["named_checks"] = name_jt_types(sites, every)
         # review s176 N3: the input's own BTF is read only when there is a kCFI call to name (--btf is always read)
-        type_names = (_type_names(a, data) if stats.get("scheme") != "jump-table CFI" and (a.btf or sites)
+        type_names = (_type_names(a, data, bool(sites)) if stats.get("scheme") != "jump-table CFI" and (a.btf or sites)
                       else None)
         if a.btf and stats.get("scheme") == "jump-table CFI":  # review s176 N2: say so instead of ignoring it silently
             print("cfiscope: --btf is for kCFI type hashes; ignored for this jump-table CFI kernel", file=sys.stderr)

@@ -597,6 +597,30 @@ class ModuleSplitBTF(unittest.TestCase):
             self.assertEqual(out, alone)
 
 
+    def test_no_split_warning_without_call_sites(self):
+        # review s189 NIT 7: a module with no call site (GKI zram.ko) and --btf of another build printed the
+        # split-BTF refusal although there was nothing to name.
+        sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+        try:
+            import add_btf_section as A
+        finally:
+            sys.path.pop(0)
+        from test_kcfi_types import split_btf
+        from cfiscope import kcfi_types
+        with open(os.path.join(FIX, "kcfi_types_btf.o"), "rb") as fh:
+            _, split = split_btf(kcfi_types.find_btf(fh.read()), 29)
+        with open(os.path.join(FIX, "kcfi_quirks_a64.o"), "rb") as fh:
+            obj = A.add_btf(fh.read(), split)
+        with tempfile.TemporaryDirectory() as tmp:
+            module = os.path.join(tmp, "z.ko")
+            with open(module, "wb") as fh:
+                fh.write(obj)
+            rc, out, err = run(module, "--btf", os.path.join(FIX, "kcfi_quirks_btf.o"))
+            self.assertEqual(rc, 0)
+            self.assertIn("call sites 0", out)
+            self.assertEqual(err, "")
+
+
 class QuickTryFixtureBTF(unittest.TestCase):
     """s176: the Quick-try fixtures carry the BTF of t.c (tools/add_btf_section.py), so the first try names types."""
 
