@@ -423,8 +423,8 @@ class FixtureIDA(unittest.TestCase):
         sites, stats, out = self.scan_output()
         s = next(x for x in sites if x.call_ea == self.by_fn["call_net"].call_ea)
         self.assertEqual(([self.il.target_name(t) for t in self.il.ranked(s)], stats.get("slot_calls", 0)), (ALL, 0))
-        self.assertEqual(out, "Output window: [CFIScope] slot ranking skipped: the input file is not at %s; the "
-                              "candidate lists keep their order\n" % self.w.input_path)
+        # the BTF comes from the input file too, so there is no member to rank by either (README Limitations)
+        self.assertEqual((s.members, "kcfi_hashes_named" in stats, out), ([], False, ""))
 
     def test_no_slots_when_the_database_differs_from_the_file(self):
         # the database's bytes at the start of a code range of the file differ (rebased, or laid out elsewhere): no order

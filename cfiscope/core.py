@@ -45,8 +45,10 @@ class Site:
     member_offset: int = None
     members: list = field(default_factory=list)
     # ... and the candidates stored in a slot of that member in the image's static data (kcfi_types.rank_slots()):
-    # listed first (slot_first()), never instead of the others
+    # listed first (slot_first()), never instead of the others; slot_stride: those of them found only by array stride
+    # (at the member's offset modulo the struct size), listed after the ones at the member's offset
     slot_backed: set = field(default_factory=set)
+    slot_stride: set = field(default_factory=set)
 
 
 def _s8(v):
@@ -1141,10 +1143,10 @@ def member_label(site, limit=3):
 
 
 def object_offsets(stored, symbols):
-    """{function address: {byte offset of the slot in the object that holds it}} of stored (slot address, function
-    address) pairs. symbols: (address, size, is an object) of the image's function and data symbols, sorted; a slot
-    belongs to the nearest symbol at or below it when that one is an object (STT_OBJECT; kallsyms d, D, r, R, b, B)
-    and the slot lies inside it (when its size is known: not 0)."""
+    """{function address: {(object address, byte offset of the slot in it)}} of stored (slot address, function address)
+    pairs. symbols: (address, size, is an object) of the image's function and data symbols, sorted; a slot belongs to
+    the nearest symbol at or below it when that one is an object (STT_OBJECT; kallsyms d, D, r, R, b, B) and the slot
+    lies inside it (when its size is known: not 0)."""
     eas = [s[0] for s in symbols]
     out = defaultdict(set)
     for ea, value in stored:
@@ -1153,18 +1155,36 @@ def object_offsets(stored, symbols):
             continue
         start, size, is_object = symbols[i]
         if is_object and (not size or ea < start + size):
-            out[value].add(ea - start)
+            out[value].add((start, ea - start))
     return dict(out)
 
 
-def slot_first(site, targets=None):
-    """targets (default: the site's) with the candidates stored in a slot of the call's member first, each group in
-    the order given. Nothing is left out."""
-    targets = site.targets if targets is None else targets
+SAME_TYPE_ONLY = "same type only"
+BY_STRIDE = "by array stride"
+_SLOT_RANK = {"offset": 0, "stride": 1}
+
+
+def slot_kind(site, target):
+    """'offset' when the image stores target at the offset of the call's struct member in some object, 'stride' when
+    only at that offset modulo the struct's size in an array of them (kcfi_types.rank_slots()), else None."""
     slot = getattr(site, "slot_backed", None)
-    if not slot:
+    if not slot or target not in slot:
+        return None
+    return "stride" if target in (getattr(site, "slot_stride", None) or ()) else "offset"
+
+
+def slot_rank(site, target):
+    """0 for a candidate stored at the member's offset, 1 by array stride only, 2 for the others (slot_kind())."""
+    return _SLOT_RANK.get(slot_kind(site, target), 2)
+
+
+def slot_first(site, targets=None):
+    """targets (default: the site's) with the candidates stored in a slot of the call's member first, those at its
+    offset before those by array stride only, each group in the order given. Nothing is left out."""
+    targets = site.targets if targets is None else targets
+    if not getattr(site, "slot_backed", None):
         return list(targets)
-    return [t for t in targets if t in slot] + [t for t in targets if t not in slot]
+    return sorted(targets, key=lambda t: slot_rank(site, t))      # a stable sort: each group keeps its order
 
 
 def slot_label(site):
@@ -1174,16 +1194,66 @@ def slot_label(site):
     return "in a %s slot" % m[0] if len(m) == 1 else "in a slot of one of %d members" % len(m)
 
 
-def slot_text(site, shown, slot_count, total, more=", +%d more"):
-    """'in a proto_ops.sendmsg_locked slot: tcp_sendmsg_locked; same type only: 10 more'. shown: the names of the first
-    slot-backed candidates (at least one); slot_count: how many there are (the rest of them get `more`); total: the
-    whole list's length (the candidates of the same type only are counted, not named)."""
-    text = "%s: %s" % (slot_label(site), ", ".join(shown))
-    if slot_count > len(shown):
-        text += more % (slot_count - len(shown))
-    if total > slot_count:
-        text += "; same type only: %d more" % (total - slot_count)
-    return text
+def slot_note(site, kind):
+    """A candidate's note in IDA's lists (the Candidates window, and Callers for the function asked about):
+    'stored in a proto_ops.sendmsg slot', 'by array stride', 'same type only' (kind: slot_kind(), None)."""
+    return "stored " + slot_label(site) if kind == "offset" else BY_STRIDE if kind == "stride" else SAME_TYPE_ONLY
+
+
+def slot_groups(site, ordered):
+    """[(label, [candidates])] of the non-empty groups of ordered (slot_first() order): slot_label(), BY_STRIDE,
+    SAME_TYPE_ONLY."""
+    groups = ((slot_label(site), []), (BY_STRIDE, []), (SAME_TYPE_ONLY, []))
+    for t in ordered:
+        groups[slot_rank(site, t)][1].append(t)
+    return [g for g in groups if g[1]]
+
+
+def slot_counts(site):
+    """'3 in a net_ops.xmit slot, 1 by array stride' (the head line of --targets)."""
+    n, k = len(site.slot_backed), len(getattr(site, "slot_stride", None) or ())
+    parts = ["%d %s" % (n - k, slot_label(site))] if n > k else []
+    return ", ".join(parts + (["%d %s" % (k, BY_STRIDE)] if k else []))
+
+
+def slot_text(site, ordered, name, limit, more=", +%d more"):
+    """'in a proto_ops.sendmsg_locked slot: tcp_sendmsg_locked; same type only: 10 more'. ordered: every candidate, the
+    slot-backed ones first (slot_first(), or the IDA layer's ranked()); name: address -> name. A list of at most limit
+    names every candidate, in its group ('...; same type only: sock_no_sendmsg'); a longer one names up to limit of the
+    slot-backed ones, those at the member's offset first (the rest of a group gets `more`), and counts the others
+    ('same type only: 10 more')."""
+    fits, budget, parts = len(ordered) <= limit, limit, []
+    for label, group in slot_groups(site, ordered):
+        shown = group if fits else [] if label == SAME_TYPE_ONLY else group[:max(budget, 0)]
+        budget -= len(shown)
+        if shown:
+            parts.append("%s: %s%s" % (label, ", ".join(name(t) for t in shown),
+                                       more % (len(group) - len(shown)) if len(group) > len(shown) else ""))
+        else:
+            parts.append("%s: %d more" % (label, len(group)))
+    return "; ".join(parts)
+
+
+def callee_slot(site, is_target):
+    """(kind, candidate) for a call that may reach a function (is_target() matches its address, as for callers()):
+    kind 'offset' or 'stride' when the call's member slot holds such a candidate (slot_kind(); the better one when
+    several match), 'type' when the call ranks other candidates first but none of these; (None, None) when the call
+    ranks nothing (no slot-backed candidate) or none of its candidates matches."""
+    if not getattr(site, "slot_backed", None):
+        return None, None
+    best = None
+    for t in site.targets:
+        if is_target(t) and (best is None or slot_rank(site, t) < slot_rank(site, best)):
+            best = t
+    if best is None:
+        return None, None
+    return slot_kind(site, best) or "type", best
+
+
+def slot_callers_first(calls, is_target):
+    """calls (callers()) with those whose member slot holds the function first (callee_slot(): at the member's offset,
+    then by array stride), each group in its order."""
+    return sorted(calls, key=lambda s: _SLOT_RANK.get(callee_slot(s, is_target)[0], 2))
 
 
 # ---- type names (jump-table CFI) ----

@@ -767,38 +767,50 @@ def name_members(sites, ranges, arch, names):
 
 
 def rank_slots(sites, offsets, names):
-    """Set slot_backed (core.Site) of each kCFI site with a struct member (name_members()): its candidates that the
-    image's static data stores at the member's offset inside an object, or at that offset modulo the size of a struct
-    that has the member there (an array of such structs; not for a struct of 8 bytes, which every 8-aligned slot
-    would match). offsets: {function address: {offset in the object holding
-    it}} (core.object_offsets()); names: the TypeNames that named the members (member_sizes). The candidate lists are
-    not changed: core.slot_first() puts these first. A slot is evidence, not proof: a function stored there may be
-    called through another table, and a pointer set at run time or in a module's table is in no slot here.
+    """Set slot_backed and slot_stride (core.Site) of each kCFI site with a struct member (name_members()). Slot-backed:
+    the candidates that the image's static data stores at the member's offset inside an object, and, by array stride
+    (slot_stride, listed after those), those stored at that offset modulo the size of a struct that has the member there
+    in an object that holds another candidate of the call at such an offset (an array of such structs has several
+    elements; one word proves nothing, as kallsyms gives no object size, so a word is charged to whatever object lies
+    below it; a struct of 8 bytes is not used, as every 8-aligned slot would match it). offsets: {function address:
+    {(object address, offset in it)}} (core.object_offsets()); names: the TypeNames that named the members
+    (member_sizes). The candidate lists are not changed: core.slot_first() puts these first. A slot is evidence, not
+    proof: a function stored there may be called through another table, and a pointer set at run time or in a module's
+    table is in no slot here.
     Returns {"slot_calls": sites with at least one, "slot_calls_shorter": those that also have candidates of the same
-    type only, "stored_candidates": distinct kCFI candidates stored in some object, "distinct_candidates": all}."""
+    type only, "slot_calls_stride_only": those whose slot-backed candidates are all by array stride, "stored_candidates":
+    distinct kCFI candidates stored in some object, "distinct_candidates": all}."""
     sizes_of = getattr(names, "member_sizes", None) or {}
-    out = {"slot_calls": 0, "slot_calls_shorter": 0}
+    out = {"slot_calls": 0, "slot_calls_shorter": 0, "slot_calls_stride_only": 0}
     every = set()
     for s in sites:
-        s.slot_backed = set()
+        s.slot_backed, s.slot_stride = set(), set()
         if getattr(s, "kind", "kcfi") != "kcfi":
             continue
         every.update(s.targets)
         off = s.member_offset
         if not s.members or off is None:
             continue
-        # modulo a struct's size: an array of such structs; not an 8-byte one (every aligned slot would match)
         sizes = [z for z in sizes_of.get((s.hash, off), ()) if z > max(off, 8)]
-        hit = set()
+        exact, held = set(), defaultdict(set)       # held: object -> {(offset, candidate)} of this call's candidates
         for t in s.targets:
-            for o in offsets.get(t, ()):
-                if o == off or any(o % z == off for z in sizes):
-                    hit.add(t)
-                    break
-        s.slot_backed = hit
-        if hit:
+            for obj, o in offsets.get(t, ()):
+                if o == off:
+                    exact.add(t)
+                if sizes:
+                    held[obj].add((o, t))
+        stride = set()
+        for pairs in held.values():
+            for z in sizes:
+                hits = [(o, t) for o, t in pairs if o % z == off]
+                if len({o for o, _t in hits}) >= 2:         # two elements of an array of such structs, at least
+                    stride.update(t for o, t in hits if o != off)
+        s.slot_stride = stride - exact
+        s.slot_backed = exact | s.slot_stride
+        if s.slot_backed:
             out["slot_calls"] += 1
-            out["slot_calls_shorter"] += len(hit) < len(s.targets)
+            out["slot_calls_shorter"] += len(s.slot_backed) < len(s.targets)
+            out["slot_calls_stride_only"] += not exact
     out["stored_candidates"] = sum(1 for t in every if t in offsets)
     out["distinct_candidates"] = len(every)
     return out
@@ -806,10 +818,11 @@ def rank_slots(sites, offsets, names):
 
 def slot_summary(st):
     """Summary line of rank_slots()'s counts."""
-    return ("kCFI calls with a candidate stored in a slot of their struct member: %d, those candidates listed first (%d "
-            "of the %d lists also hold candidates of the same type only); kCFI candidates stored in a static object: "
-            "%d of %d" % (st["slot_calls"], st["slot_calls_shorter"], st["slot_calls"], st["stored_candidates"],
-                          st["distinct_candidates"]))
+    return ("kCFI calls with a candidate stored in a slot of their struct member: %d (by array stride only: %d), those "
+            "candidates listed first (%d of the %d lists also hold candidates of the same type only); kCFI candidates "
+            "stored in a static object: %d of %d" % (st["slot_calls"], st["slot_calls_stride_only"],
+                                                      st["slot_calls_shorter"], st["slot_calls"],
+                                                      st["stored_candidates"], st["distinct_candidates"]))
 
 
 def member_summary(st):

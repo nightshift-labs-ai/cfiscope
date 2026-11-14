@@ -313,7 +313,9 @@ def runtime_test(names, ranges):
     return in_runtime
 
 
-def _site_dict(s, names, limit, type_names=None, kernel=None):
+def _site_dict(s, names, limit, type_names=None, kernel=None, slots=False, callee=None):
+    """slots: did the slot ranking run (kcfi_types.rank_slots(); not with --raw, which has no symbols)? callee: with
+    --callers, a test of the function's addresses (callee_slot_backed)."""
     ordered = core.slot_first(s)        # the candidates stored in a slot of the call's member first (kCFI with BTF)
     out = {
         "call": "0x%x" % s.call_ea if s.call_ea else None,
@@ -337,10 +339,14 @@ def _site_dict(s, names, limit, type_names=None, kernel=None):
         out["member"] = s.members[0] if len(s.members) == 1 else None
         out["members"] = list(s.members)
         out["member_offset"] = s.member_offset
-        # each candidate: is it stored in a slot of that member in the image's static data (listed first)?
-        out["slot_backed_candidates"] = len(s.slot_backed)
-        for t in out["targets"]:
-            t["slot_backed"] = int(t["ea"], 16) in s.slot_backed
+        if slots:   # each candidate: stored in a slot of that member in the image's static data (listed first)?
+            out["slot_backed_candidates"] = len(s.slot_backed)          # 'offset' or 'stride' below
+            out["slot_stride_candidates"] = len(s.slot_stride)          # 'stride': only by array stride
+            for t in out["targets"]:
+                t["slot_backed"] = core.slot_kind(s, int(t["ea"], 16)) or False
+            if callee is not None:      # --callers: is the function itself slot-backed for this call?
+                kind = core.callee_slot(s, callee)[0]
+                out["callee_slot_backed"] = kind if kind in ("offset", "stride") else False
     if s.kind != "kcfi":     # jump-table CFI: the hash is the 64-bit type id
         out["hash"] = "0x%016x" % s.type_id if s.type_id is not None else None
         out.update(_jt_dict(s))
@@ -367,7 +373,10 @@ def _jt_dict(s):
 OLD_CFI_MARKERS = (b".cfi_jt", b"__cfi_check", b"CFI failure (target:")
 
 
-def _site_line(s, names, limit, kernel=None, member_limit=3):
+def _site_line(s, names, limit, kernel=None, member_limit=3, callee=None):
+    """One line of --sites or --callers (limit: names shown; 0, as for the head line of --targets, counts the slot
+    groups instead). callee: with --callers, a test of the function's addresses: the line ends with whether a slot of the
+    call's member holds it ('  [tcp_sendmsg: same type only]'), when the call ranks some candidates first."""
     where = "0x%x" % (s.call_ea or s.check_ea)
     shown = ", ".join(names(t) for t in s.targets[:limit])
     more = " ..." if len(s.targets) > limit else ""
@@ -386,13 +395,11 @@ def _site_line(s, names, limit, kernel=None, member_limit=3):
     if member:
         kind += " " + member
     count = "%d candidate(s)" % len(s.targets)
-    if s.slot_backed:       # stored in a slot of that member: named first, the candidates of the same type only counted
-        k = len(s.slot_backed)
+    if s.slot_backed:       # stored in a slot of that member: named first; the rest named too when the list fits
         if limit:
-            first = [names(t) for t in core.slot_first(s)[:min(k, limit)]]
-            shown, more = core.slot_text(s, first, k, len(s.targets)), ""
+            shown, more = core.slot_text(s, core.slot_first(s), names, limit), ""
         else:
-            count += ", %d %s" % (k, core.slot_label(s))
+            count += ", " + core.slot_counts(s)
     line = "%s  %-40s %s hash 0x%08x%s  %s%s%s" % (
         where, names(s.call_ea or s.check_ea), kind, s.hash, typed, count,
         ": " if shown else "", shown + more)
@@ -401,6 +408,11 @@ def _site_line(s, names, limit, kernel=None, member_limit=3):
         shown = ", ".join(kernel.names(t) for t in kt[:limit])
         line += "; in %s %d%s%s" % (kernel.label, len(kt), ": " if shown else "",
                                     shown + (" ..." if len(kt) > limit else ""))
+    if callee is not None:
+        kind, t = core.callee_slot(s, callee)
+        if kind:
+            line += "  [%s: %s]" % (names(t), core.slot_label(s) if kind == "offset" else core.BY_STRIDE
+                                    if kind == "stride" else core.SAME_TYPE_ONLY)
     return line
 
 
@@ -475,7 +487,9 @@ def main(argv=None):
                            "module's)")
     mode.add_argument("--targets", metavar="ADDR", help="candidates for the call or check at ADDR")
     ap.add_argument("--max-list", type=int, default=None,
-                    help="candidates shown per site (default: 8 in text, all with --json)")
+                    help="names shown per site (default: 8 in text, all with --json); a list that has candidates "
+                         "stored in a slot of the call's member names every candidate when it fits, else up to this "
+                         "many of those and counts the rest (--targets lists every candidate)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--btf", metavar="PATH",
                     help="name kCFI hashes by C function type from this BTF: an ELF with a .BTF section, a raw "
@@ -553,6 +567,7 @@ def main(argv=None):
         # Call sites first; then type checks whose call was not linked (not counted); the CFI runtime's own checks
         # (in __cfi_check: they guard no call) are left out.
         calls, checks = core.callers(sites, want.__contains__, runtime_test(names, ranges))
+        calls = core.slot_callers_first(calls, want.__contains__)   # those whose member slot holds the function first
         chosen = calls + checks
         label = a.callers if len(want) > 1 else names(min(want))
         if len(want) > 1:
@@ -580,7 +595,9 @@ def main(argv=None):
                 out["callers"]["target_in"] = "kernel" if kwant is not None else "module"
         if chosen is not None:
             limit = 1 << 30 if a.targets or a.max_list is None else a.max_list
-            out["sites"] = [_site_dict(s, names, limit, type_names, kernel) for s in chosen]
+            callee = want.__contains__ if a.callers and kwant is None else None
+            out["sites"] = [_site_dict(s, names, limit, type_names, kernel, "slot_calls" in stats, callee)
+                            for s in chosen]
         json.dump(out, sys.stdout, indent=1)
         print()
         return 0
@@ -601,6 +618,8 @@ def main(argv=None):
             print(kcfi_types.member_summary(st))
         if "slot_calls" in st and st["sites"]:
             print(kcfi_types.slot_summary(st))
+        elif a.raw and any(s.members for s in sites):     # review s197: say what turns the slot ranking on
+            print("slot ranking: needs the input's OBJECT symbols (an ELF such as vmlinux-to-elf output); not with --raw")
         if "outside_text" in st and st["sites"]:
             print("candidates outside kernel code left out: %d (between the _etext and _sinittext symbols, outside "
                   "the code areas named there)" % st["outside_text"])
@@ -628,16 +647,18 @@ def main(argv=None):
     if a.targets:
         for s in chosen:
             print(_site_line(s, names, 0, member_limit=None).rstrip(" ."))
-            k = len(s.slot_backed)
-            for n, t in enumerate(core.slot_first(s)):      # every candidate; those stored in a member slot first
-                if k and n in (0, k):
-                    print("  %s:" % (core.slot_label(s) if n == 0 else "same type only"))
-                print("    0x%x  %s" % (t, names(t)))
+            groups = core.slot_groups(s, core.slot_first(s)) if s.slot_backed else [(None, s.targets)]
+            for label, group in groups:     # every candidate; those stored in a member slot first, under their group
+                if label:
+                    print("  %s:" % label)
+                for t in group:
+                    print("    0x%x  %s" % (t, names(t)))
             if kernel is not None:
                 print("  in %s (%d):" % (kernel.label, len(kernel.targets(s))))
                 for t in kernel.targets(s):
                     print("    0x%x  %s" % (t, kernel.names(t)))
         return 0
+    callee = want.__contains__ if a.callers and kwant is None else None
     for s in chosen:
-        print(_site_line(s, names, 8 if a.max_list is None else a.max_list, kernel))
+        print(_site_line(s, names, 8 if a.max_list is None else a.max_list, kernel, callee=callee))
     return 0

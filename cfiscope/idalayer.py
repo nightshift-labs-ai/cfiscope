@@ -141,24 +141,28 @@ def input_has_split_btf():
 
 
 def input_slot_offsets(ranges, sites):
-    """cli.slot_offsets() of the input file for the candidates of sites (kcfi_types.rank_slots()), if the file is still
-    where it was loaded from, is an ELF and the database has its layout: each of the file's code ranges, as the command
-    line lays them out, starts with the same bytes at the same address here (not rebased; a relocatable file that IDA
-    laid out elsewhere fails this); else {} (the lists keep their order)."""
+    """(cli.slot_offsets() of the input file for the candidates of sites (kcfi_types.rank_slots()), None) if the file is
+    still where it was loaded from, is an ELF and the database has its layout: each of the file's code ranges, as the
+    command line lays them out, starts with the same bytes at the same address here (not rebased; a relocatable file
+    that IDA laid out elsewhere fails this). Else ({}, why not), and the lists keep their order."""
+    path = ida_nalt.get_input_file_path()
     try:
         from . import cli
-        path = ida_nalt.get_input_file_path()
-        if path and os.path.isfile(path):
-            with open(path, "rb") as fh:
-                data = fh.read()
-            if data[:4] == b"\x7fELF":
-                _, file_ranges, _ = cli.load_elf(data)
-                if file_ranges and all(_bytes_at(ranges, b) is not None and _bytes_at(ranges, b) == _bytes_at([(b, m)], b)
-                                       for b, m in file_ranges):
-                    return cli.slot_offsets(data, {t for s in sites for t in s.targets})
-    except Exception:  # noqa: BLE001  the order is a bonus, as names are
-        pass
-    return {}
+        if not path or not os.path.isfile(path):
+            return {}, "the input file is not at %s" % (path or "a known path")
+        with open(path, "rb") as fh:
+            data = fh.read()
+        if data[:4] != b"\x7fELF":
+            return {}, ("the input file %s is not an ELF (the ranking needs its OBJECT symbols: open an ELF such as "
+                        "vmlinux-to-elf output)" % path)
+        _, file_ranges, _ = cli.load_elf(data)
+        if not file_ranges or not all(_bytes_at(ranges, b) is not None and _bytes_at(ranges, b) == _bytes_at([(b, m)], b)
+                                      for b, m in file_ranges):
+            return {}, ("the database does not have the layout of %s (rebased, or its sections laid out elsewhere)"
+                        % path)
+        return cli.slot_offsets(data, {t for s in sites for t in s.targets}), None
+    except Exception as e:  # noqa: BLE001  the order is a bonus, as names are
+        return {}, "%s could not be read (%s)" % (path, e)
 
 
 def typeid_names(elf=False):
@@ -241,7 +245,11 @@ def scan():
             if arch == "aarch64":  # and the struct member each call loads its pointer from (as the command line does)
                 stats.update(kcfi_types.name_members(sites, ranges, arch, names))
                 if any(s.members for s in sites):    # its candidates stored in a slot of that member come first
-                    stats.update(kcfi_types.rank_slots(sites, input_slot_offsets(ranges, sites), names))
+                    offsets, why = input_slot_offsets(ranges, sites)
+                    if why:     # review s197: say so, once per scan, rather than show plain lists with no word
+                        ida_kernwin.msg("[CFIScope] slot ranking skipped: %s; the candidate lists keep their order\n"
+                                        % why)
+                    stats.update(kcfi_types.rank_slots(sites, offsets, names))
         elif input_has_split_btf():  # review s189 NIT 6: say why a module's hashes are not named, once per scan
             ida_kernwin.msg("[CFIScope] this module's BTF is split BTF (it continues its kernel's BTF), which the IDA "
                             "plugin does not read: kCFI hashes are not named by C type here; the command line names "
@@ -291,30 +299,29 @@ def target_name(ea):
 
 
 def ranked(site, taken=None):
-    """The candidates stored in a slot of the call's struct member first (Site.slot_backed, kcfi_types.rank_slots()),
-    then address-taken candidates: only they can really be stored in a pointer. Every candidate is kept. taken: a dict
-    that keeps each candidate's pointer_taken() answer across the sites of one pass (the call-site list), so it is
-    asked once."""
-    slot = getattr(site, "slot_backed", None) or ()
+    """The candidates stored in a slot of the call's struct member first (Site.slot_backed, kcfi_types.rank_slots()):
+    at its offset, then by array stride only (core.slot_rank()); then address-taken candidates: only they can really be
+    stored in a pointer. Every candidate is kept. taken: a dict that keeps each candidate's pointer_taken() answer
+    across the sites of one pass (the call-site list), so it is asked once."""
+    rank = core.slot_rank
     if taken is None:
-        return sorted(site.targets, key=lambda t: (t not in slot, not pointer_taken(site, t), t))
+        return sorted(site.targets, key=lambda t: (rank(site, t), not pointer_taken(site, t), t))
     jt = getattr(site, "kind", "kcfi") != "kcfi"      # pointer_taken() depends on the target and, for these, its entry
 
     def key(t):
         known = taken.get((jt, t))
         if known is None:
             known = taken[(jt, t)] = pointer_taken(site, t)
-        return (t not in slot, not known, t)
+        return (rank(site, t), not known, t)
     return sorted(site.targets, key=key)
 
 
 def candidate_names(site, targets):
     """The candidates part of describe(): the first 6 names of targets (ranked()), ', +N more', or why there are none.
     With candidates stored in a slot of the call's member: 'in a proto_ops.sendmsg_locked slot: tcp_sendmsg_locked;
-    same type only: 10 more' (the first 6 of those named, the others counted)."""
-    slot = len(getattr(site, "slot_backed", None) or ())
-    if targets and slot:
-        return core.slot_text(site, [target_name(t) for t in targets[:min(slot, 6)]], slot, len(targets))
+    same type only: 10 more' (core.slot_text(): every name when there are 6 or fewer, else up to 6 of those)."""
+    if targets and getattr(site, "slot_backed", None):
+        return core.slot_text(site, targets, target_name, 6)
     if targets:
         names = ", ".join(target_name(t) for t in targets[:6])
         if len(targets) > 6:
@@ -384,10 +391,8 @@ def pseudocode_text(site, limit=5):
     member = member + ", " if member else ""
     if not targets:
         return "CFIScope: %s0 candidates in this image%s" % (member, of)
-    slot = len(getattr(site, "slot_backed", None) or ())
-    if slot:        # stored in a slot of the call's member: named first, the others counted (as in the comment)
-        names = core.slot_text(site, [target_name(t) for t in targets[:min(slot, limit)]], slot, len(targets),
-                               " and %d more")
+    if getattr(site, "slot_backed", None):    # stored in a slot of the call's member: named first (as in the comment)
+        names = core.slot_text(site, targets, target_name, limit, " and %d more")
     else:
         names = ", ".join(target_name(t) for t in targets[:limit])
         if len(targets) > limit:
@@ -438,14 +443,14 @@ def target_check():
 
 def xref_targets(site, xref_limit=DEFAULT_XREF_LIMIT):
     """The candidates of a call that Scan gives cross-references: all of a list of at most xref_limit; of a longer
-    list, those stored in a slot of the call's member (Site.slot_backed) when there are at most xref_limit of them;
-    else none."""
+    list, those stored at the offset of the call's member (core.slot_kind() 'offset'; not those by array stride only,
+    weaker evidence) when there are at most xref_limit of them; else none."""
     if not site.call_ea or not site.targets:
         return []
     if len(site.targets) <= xref_limit:
         return site.targets
-    slot = getattr(site, "slot_backed", None) or ()
-    return [t for t in site.targets if t in slot] if len(slot) <= xref_limit else []
+    at = [t for t in site.targets if core.slot_kind(site, t) == "offset"]
+    return at if len(at) <= xref_limit else []
 
 
 def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT, create_functions=True):
@@ -456,8 +461,8 @@ def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT, create_functions=True):
     for which xref.hpp notes no such effect (ida.hpp AF_PROCPTR is for data xrefs from data; that it makes no function
     is assumed, not checked in IDA), and a candidate with no function gets none (counted in xrefs_skipped_no_function).
     A call and candidate pair keeps one xref: an earlier Scan's xref of the other kind is replaced. The candidates are
-    those of xref_targets(): a list longer than xref_limit gets xrefs to its slot-backed candidates when at most
-    xref_limit of them (counted in slot_only_lists)."""
+    those of xref_targets(): a list longer than xref_limit gets xrefs to its candidates stored at the member's offset
+    when at most xref_limit of them (counted in slot_only_lists)."""
     res = {"comments": 0, "xrefs": 0, "kept_user_comments": 0, "runtime_comments": 0, "xrefs_skipped_not_code": 0,
            "data_xrefs_inside_function": 0, "xrefs_skipped_no_function": 0, "slot_only_lists": 0}
     ok = target_check()
@@ -522,9 +527,9 @@ def data_refs_from(ea):
 def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
     """Remove our comments and the call and data xrefs to the candidates. Returns the number of xrefs that existed
     and were deleted (del_cref's own return value says whether the target instruction will be deleted,
-    not whether a reference was removed, so it is not used for the count). Lists longer than xref_limit are looked at
-    too: Scan may have given their slot-backed candidates xrefs (xref_targets()), and the scan this runs on may not
-    know those (the input file gone since)."""
+    not whether a reference was removed, so it is not used for the count). Of a list longer than xref_limit, only the
+    xrefs to the candidates Scan gives them (xref_targets()) are deleted, so a cross-reference you added to another
+    candidate stays; those Scan added stay too when this scan cannot read the slots (the input file gone since)."""
     removed = 0
     for ea in runtime_calls(sites):
         old = ida_bytes.get_cmt(ea, False)
@@ -535,9 +540,10 @@ def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
         old = ida_bytes.get_cmt(ea, False)
         if old and old.startswith(OWN_TAGS):
             ida_bytes.set_cmt(ea, "", False)
-        if s.call_ea and s.targets:
+        chosen = s.targets if len(s.targets) <= xref_limit else xref_targets(s, xref_limit)
+        if s.call_ea and chosen:
             existing, data = far_crefs_from(s.call_ea), data_refs_from(s.call_ea)
-            for t in s.targets:
+            for t in chosen:
                 if t in existing:
                     ida_xref.del_cref(s.call_ea, t, False)
                     removed += 1
@@ -645,11 +651,14 @@ def targets_title(site):
 
 
 def targets_rows(site):
-    """(address, name, note) of every candidate, in ranked() order; note: 'stored in a proto_ops.sendmsg slot' for the
-    slot-backed ones, else 'address taken' or nothing."""
-    slot = getattr(site, "slot_backed", None) or ()
-    return [(t, target_name(t), "stored " + core.slot_label(site) if t in slot else
-             "address taken" if pointer_taken(site, t) else "") for t in ranked(site)]
+    """(address, name, note) of every candidate, in ranked() order; note: 'stored in a proto_ops.sendmsg slot' or 'by
+    array stride' for the slot-backed ones (core.slot_note()), else 'address taken' or nothing."""
+    rows = []
+    for t in ranked(site):
+        kind = core.slot_kind(site, t)
+        rows.append((t, target_name(t), core.slot_note(site, kind) if kind else
+                     "address taken" if pointer_taken(site, t) else ""))
+    return rows
 
 
 def in_cfi_runtime(ea):
@@ -683,10 +692,17 @@ def callers_rows(sites, ea):
     # The kCFI target may sit inside IDA's function (e.g. after a __cfi_ preamble IDA merged in),
     # so accept the cursor address, the function start, or any target inside the function.
     lo, hi = (func.start_ea, func.end_ea) if func is not None else (ea, ea + 1)
-    calls, checks = core.callers(sites, lambda t: t == ea or lo <= t < hi, in_cfi_runtime)
-    # a kCFI check whose call was not recognised still counts as a call site: list it at its check address
-    rows = [(s.call_ea or s.check_ea, target_name(s.call_ea or s.check_ea),
-             (site_member(s) + ", " if site_member(s) else "") + "%d candidate(s)" % len(s.targets)) for s in calls]
+    hit = lambda t: t == ea or lo <= t < hi       # noqa: E731
+    calls, checks = core.callers(sites, hit, in_cfi_runtime)
+    # review s197: the calls whose member slot holds the function first, and the note says so ('same type only' for
+    # the others, when the call ranks some candidates first)
+    calls = core.slot_callers_first(calls, hit)
+    rows = []
+    for s in calls:     # a kCFI check whose call was not recognised still counts as a call site: listed at its check
+        kind = core.callee_slot(s, hit)[0]
+        note = (site_member(s) + ", " if site_member(s) else "") + "%d candidate(s)" % len(s.targets)
+        rows.append((s.call_ea or s.check_ea, target_name(s.call_ea or s.check_ea),
+                     note + (", " + core.slot_note(s, None if kind == "type" else kind) if kind else "")))
     rows += [(s.check_ea, target_name(s.check_ea), "%s, %d candidate(s)" % (core.UNLINKED, len(s.targets)))
              for s in checks]
     return rows
