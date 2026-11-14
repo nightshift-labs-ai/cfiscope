@@ -963,7 +963,8 @@ class ScanMessage(unittest.TestCase):
 class SiteList(unittest.TestCase):
     """Judge s193 #2: after Scan the result was counts in the Output window only, and the call sites had to be found by
     hand. Scan now ends by opening a non-modal list of every call site (also the action CFIScope: List kCFI call sites
-    and the right-click submenu): Address, Function+off, Type, Candidates (a number column), First candidates."""
+    and the right-click submenu): Address, Function+off, Member (mem194: the struct member the call loads its pointer
+    from), Type, Candidates (a number column), First candidates."""
 
     def scan(self, name="x86_64-kernel", proc="metapc", create=1, ext=".o"):
         w, E, log = load_entry(name, proc, ext=ext)
@@ -980,21 +981,23 @@ class SiteList(unittest.TestCase):
                 self.assertEqual((title, modal), ("CFIScope: 21 kCFI call sites", False))     # non-modal
                 il, C = E.idalayer, sys.modules["ida_kernwin"].Choose
                 self.assertEqual([c[0] for c in il.SITES_COLUMNS],
-                                 ["Address", "Function+off", "Type", "Candidates", "First candidates"])
-                self.assertEqual(il.SITES_COLUMNS[3][1] & C.CHCOL_FORMAT, C.CHCOL_DEC)   # sorts as a number
+                                 ["Address", "Function+off", "Member", "Type", "Candidates", "First candidates"])
+                self.assertEqual(il.SITES_COLUMNS[4][1] & C.CHCOL_FORMAT, C.CHCOL_DEC)   # sorts as a number
                 self.assertEqual(il.SITES_COLUMNS[0][1] & C.CHCOL_FORMAT, C.CHCOL_HEX)
                 self.assertEqual(chooser.OnGetSize(), 21)
                 sites = E.STATE["sites"]
                 lines = [chooser.OnGetLine(n) for n in range(21)]
                 self.assertEqual([int(l[0], 16) for l in lines], [s.call_ea or s.check_ea for s in sites])
-                for (ea, place, typ, count, first), s in zip(lines, sites):
-                    # the same names and count as the comment Scan wrote at the call (describe())
+                for (ea, place, member, typ, count, first), s in zip(lines, sites):
+                    # the same names and count as the comment Scan wrote at the call (describe()); these calls go
+                    # through a parameter, not a struct member: no member
+                    self.assertEqual(member, "")
                     self.assertEqual(w.cmts[int(ea, 16)], "kCFI 0x%08X %s: %s candidate(s): %s"
                                      % (s.hash, typ, count, first))
                     self.assertEqual(int(count), len(s.targets))
-                do_call_2 = [l for l in lines if l[2] == "long (short, int)"]
+                do_call_2 = [l for l in lines if l[3] == "long (short, int)"]
                 self.assertEqual(len(do_call_2), 1)
-                self.assertEqual(do_call_2[0][3], "3")
+                self.assertEqual(do_call_2[0][4], "3")
                 n = lines.index(do_call_2[0])
                 self.assertEqual(chooser.OnSelectLine(n), (C.NOTHING_CHANGED,))      # Enter jumps to the call
                 self.assertEqual(log["jumped"], [int(do_call_2[0][0], 16)])
@@ -1004,7 +1007,7 @@ class SiteList(unittest.TestCase):
         w.input_path = None
         self.assertEqual(E.ScanAction().activate(None), 1)
         chooser = log["shown"][-1][2]
-        self.assertEqual([chooser.OnGetLine(n)[2] for n in range(3)],
+        self.assertEqual([chooser.OnGetLine(n)[3] for n in range(3)],
                          ["hash 0x%08X" % s.hash for s in E.STATE["sites"][:3]])
 
     def test_order_as_in_the_comment(self):
@@ -1018,7 +1021,7 @@ class SiteList(unittest.TestCase):
         sites = E.STATE["sites"]
         chooser = log["shown"][-1][2]
         k = [x.check_ea for x in sites].index(s.check_ea)
-        first = chooser.OnGetLine(k)[4]
+        first = chooser.OnGetLine(k)[5]
         self.assertTrue(first.startswith("f_%x, " % s.targets[-1]), first)
         self.assertTrue(w.cmts[sites[k].call_ea or sites[k].check_ea].endswith(": " + first))
 
@@ -1089,10 +1092,10 @@ class JumpTableCfi(unittest.TestCase):
         call = self.shift(hs["call"])
         title, rows = shown[0]                  # the call-site list Scan opens
         self.assertEqual((title, len(rows)), ("CFIScope: 11 jump-table CFI call sites", 11))
-        self.assertIn((call, "0x%x" % call, "int (file*, int)", 3, "f_a, f_b, f_c"), rows)
+        self.assertIn((call, "0x%x" % call, "", "int (file*, int)", 3, "f_a, f_b, f_c"), rows)   # no member: not kCFI
         slow = next(r for r in rows if r[0] == self.shift(self.truth["sites"][5]["call"]))
-        self.assertEqual(slow[3], 0)
-        self.assertTrue(slow[4].startswith("no candidate in this image ("), slow)
+        self.assertEqual(slow[4], 0)
+        self.assertTrue(slow[5].startswith("no candidate in this image ("), slow)
         cf = FakeCfunc(["int f(void)", "{", "  return fp(file, 0);", "}"], {call: ["c"]}, {"c": (2, 2)})
         self.E.STATE["hx"].func_printed(cf)
         self.assertEqual(cf.text()[2], "  return fp(file, 0);\x01\x04  // CFIScope: 3 candidates of int (file*, int): "

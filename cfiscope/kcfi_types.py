@@ -550,7 +550,10 @@ class TypeNames:
     """hash -> [(mangled, readable type, [example names])] from every FUNC_PROTO of a BTF blob.
 
     Example names are the functions (BTF FUNC) of that prototype, else 'struct.member' for function
-    pointers in structs and unions, else the typedef that names the pointer type."""
+    pointers in structs and unions, else the typedef that names the pointer type.
+
+    members: {(kCFI hash, byte offset): ['struct.member', ...]} of every function-pointer member (member_slots()), for
+    naming the member a call loads its pointer from (name_members())."""
 
     def __init__(self, btf, examples=3):
         self.by_hash = defaultdict(dict)
@@ -571,6 +574,7 @@ class TypeNames:
                 if proto:
                     others[proto].append(name)
         seen = {}                          # mangled -> ([function names], [other names])
+        proto_mangled = defaultdict(set)   # FUNC_PROTO id -> its mangled names as a C type (no K&R variant)
         for tid, (kind, _name, _kf, _st, _extra) in enumerate(btf.types):
             if kind != K_FUNC_PROTO:
                 continue
@@ -600,16 +604,21 @@ class TypeNames:
                 for mangled in (plain, mangle(v, normalize=True)):   # plain and integer-normalized kCFI
                     if mangled != plain:
                         self.plain_of[mangled].add(plain)
+                    if with_names:
+                        proto_mangled[tid].add(mangled)
                     fs, os_ = seen.setdefault(mangled, ([], []))
                     if with_names:
                         fs.extend(n for n in funcs.get(tid, ()) if len(fs) < examples)
                         os_.extend(n for n in others.get(tid, ()) if len(os_) < examples)
+        hash_of = {}
         for mangled, (fs, os_) in seen.items():
             names = []
             for n in fs + os_:                 # functions first, then struct members and typedefs
                 if n not in names and len(names) < examples:
                     names.append(n)
-            self.by_hash[kcfi_hash(mangled)][mangled] = names
+            h = hash_of[mangled] = kcfi_hash(mangled)
+            self.by_hash[h][mangled] = names
+        self.members = member_slots(btf, {tid: {hash_of[m] for m in ms} for tid, ms in proto_mangled.items()})
 
     def lookup(self, h):
         """[(mangled, readable, examples)] for a 32-bit hash, [] if no prototype gives it."""
@@ -626,6 +635,135 @@ class TypeNames:
         """Readable C type(s) of a hash ('int (struct file *, int)'), ' | ' between collisions; None if unknown."""
         names = [r for _m, r, _e in self.lookup(h)]
         return " | ".join(names) if names else None
+
+
+MAX_MEMBER_ENTRIES = 1 << 21   # member_slots() gives up (returns {}) beyond this many entries: crafted BTF, not a kernel
+MAX_MEMBER_ARRAY = 64      # array members of up to this many elements are indexed element by element
+
+
+class _TooMany(Exception):
+    pass
+
+
+def member_slots(btf, hashes):
+    """{(kCFI hash, byte offset): sorted ['struct.member', ...]} for every function-pointer member of every named
+    struct or union in BTF (and every one a typedef names), at its byte offset from the start of that struct. Members
+    of embedded struct and union members (by value, anonymous or not, at any depth) and of arrays (of up to
+    MAX_MEMBER_ARRAY elements) are entered at their offset in the outer struct too, under the name of the struct that
+    declares them: 'proto_ops.sendmsg' wherever a struct proto_ops is embedded; an anonymous struct or union takes
+    the name of the nearest named one around it. hashes: {FUNC_PROTO id: its kCFI hashes} (TypeNames).
+    {} when BTF nests a struct in itself or the entries would pass MAX_MEMBER_ENTRIES (crafted BTF, not a kernel): no
+    member is named then, rather than some of them."""
+    types = btf.types
+    link = btf.linkage_names()
+    memo = {}                     # (type id, label of an anonymous one) -> [(offset, hash, 'struct.member')]
+    busy = set()                  # the structs being expanded: one inside itself means crafted BTF
+    count = [0]
+
+    def strip(t):
+        n = 0
+        while n < 16 and 0 < t < len(types) and types[t][0] in (K_TYPEDEF, K_CONST, K_VOLATILE, K_RESTRICT, K_TYPE_TAG):
+            t, n = types[t][3], n + 1
+        return t
+
+    def entries(tid, label):
+        key = (tid, label)
+        got = memo.get(key)
+        if got is not None:
+            return got
+        if tid in busy:
+            raise _TooMany()
+        busy.add(tid)
+        out = []
+        _kind, _name, kflag, _size, extra = types[tid]
+        for name_off, mtid, moff in extra:
+            off = ((moff & 0xffffff) if kflag else moff) // 8
+            mname = btf.name(name_off)
+            reps, mt = (0,), mtid
+            t = strip(mt)
+            if 0 < t < len(types) and types[t][0] == K_ARRAY:   # T m[N]: element j at m + j * sizeof(T)
+                elem, _index, n = types[t][4]
+                size = _type_size(btf, elem)
+                if not 0 < n <= MAX_MEMBER_ARRAY or not size:
+                    continue
+                reps, mt = tuple(j * size for j in range(n)), elem
+                t = strip(mt)
+            if not 0 < t < len(types):
+                continue
+            before = len(out)
+            if types[t][0] in (K_STRUCT, K_UNION):
+                inner = types[t][1] or link.get(t)
+                sub = entries(t, inner or label + ("." + mname if mname else ""))
+                out.extend((off + r + o, h, n_) for r in reps for o, h, n_ in sub)
+            elif types[t][0] == K_PTR:                  # a function pointer: one pointer level, not iw_handler *
+                proto = strip(types[t][3])
+                if 0 < proto < len(types) and types[proto][0] == K_FUNC_PROTO:
+                    text = "%s.%s" % (label, mname)
+                    out.extend((off + r, h, text) for r in reps for h in hashes.get(proto, ()))
+            count[0] += len(out) - before
+            if count[0] > MAX_MEMBER_ENTRIES:
+                raise _TooMany()
+        busy.discard(tid)
+        memo[key] = out
+        return out
+
+    slots = defaultdict(set)
+    try:
+        for tid, (kind, name, _kf, _st, extra) in enumerate(types):
+            if kind in (K_STRUCT, K_UNION) and extra and (name or link.get(tid)):
+                for off, h, label in entries(tid, name or link[tid]):
+                    slots[(h, off)].add(label)
+    except (_TooMany, RecursionError):
+        return {}
+    return {k: sorted(v) for k, v in slots.items()}
+
+
+def _type_size(btf, tid, depth=0):
+    """Byte size of a BTF type (through typedefs, qualifiers and arrays); 0 if unknown."""
+    while depth < 16 and 0 < tid < len(btf.types):
+        kind, _n, _kf, st, extra = btf.types[tid]
+        if kind in (K_INT, K_STRUCT, K_UNION, K_ENUM, K_ENUM64, K_FLOAT):
+            return st
+        if kind == K_PTR:
+            return 8
+        if kind == K_ARRAY:
+            return extra[2] * _type_size(btf, extra[0], depth + 1)
+        if kind not in (K_TYPEDEF, K_CONST, K_VOLATILE, K_RESTRICT, K_TYPE_TAG):
+            return 0
+        tid, depth = st, depth + 1
+    return 0
+
+
+def name_members(sites, ranges, arch, names):
+    """Set member_offset and members (core.Site) of the aarch64 kCFI sites: the byte offset of the load that fetched the
+    called pointer (core.member_offsets()) and the struct members of names (a TypeNames) that have the call's type
+    hash at that offset. Returns {"member_offsets": sites with an offset, "members_named": sites with at least one
+    member, "members_unique": sites with exactly one}. Other architectures: x86-64 is not read (all zero)."""
+    out = {"member_offsets": 0, "members_named": 0, "members_unique": 0}
+    if arch != "aarch64":
+        return out
+    from .core import member_offsets
+    slots = getattr(names, "members", None) or {}
+    for s in sites:
+        if getattr(s, "kind", "kcfi") == "kcfi":
+            s.member_offset, s.members = None, []
+    found = member_offsets(ranges, sites)
+    for s in sites:
+        off = found.get(s.check_ea) if getattr(s, "kind", "kcfi") == "kcfi" else None
+        if off is None:
+            continue
+        s.member_offset = off
+        s.members = list(slots.get((s.hash, off), ()))
+        out["member_offsets"] += 1
+        out["members_named"] += bool(s.members)
+        out["members_unique"] += len(s.members) == 1
+    return out
+
+
+def member_summary(st):
+    """Summary line of name_members()'s counts."""
+    return ("kCFI calls through a struct member: load offset decoded at %d, a BTF member of the call's type at that "
+            "offset for %d (exactly one for %d)" % (st["member_offsets"], st["members_named"], st["members_unique"]))
 
 
 def _proto_behind(btf, tid, depth=0):

@@ -245,6 +245,11 @@ def _site_dict(s, names, limit, type_names=None, kernel=None):
         out["type"] = s.type_name
         out["type_mangled"] = s.type_mangled
         out["type_examples"] = sorted({e for _m, _r, ex in type_names.lookup(s.hash) for e in ex})
+        # the struct member the call loads its pointer from (aarch64): named only when BTF has exactly one of the
+        # call's type at that offset; members lists every one, member_offset is the load's byte offset (null: none)
+        out["member"] = s.members[0] if len(s.members) == 1 else None
+        out["members"] = list(s.members)
+        out["member_offset"] = s.member_offset
     if s.kind != "kcfi":     # jump-table CFI: the hash is the 64-bit type id
         out["hash"] = "0x%016x" % s.type_id if s.type_id is not None else None
         out.update(_jt_dict(s))
@@ -271,7 +276,7 @@ def _jt_dict(s):
 OLD_CFI_MARKERS = (b".cfi_jt", b"__cfi_check", b"CFI failure (target:")
 
 
-def _site_line(s, names, limit, kernel=None):
+def _site_line(s, names, limit, kernel=None, member_limit=3):
     where = "0x%x" % (s.call_ea or s.check_ea)
     shown = ", ".join(names(t) for t in s.targets[:limit])
     more = " ..." if len(s.targets) > limit else ""
@@ -286,6 +291,9 @@ def _site_line(s, names, limit, kernel=None):
             where, names(s.call_ea or s.check_ea), kind, type_label(s) or "type unknown", count,
             ": " if shown else "", shown + more)
     typed = " (%s)" % s.type_name if s.type_name else ""
+    member = core.member_label(s, member_limit)     # the struct member it calls through (aarch64, with BTF)
+    if member:
+        kind += " " + member
     line = "%s  %-40s %s hash 0x%08x%s  %d candidate(s)%s%s" % (
         where, names(s.call_ea or s.check_ea), kind, s.hash, typed, len(s.targets),
         ": " if shown else "", shown + more)
@@ -402,6 +410,8 @@ def main(argv=None):
         if type_names is not None:
             stats["kcfi_hashes_named"], _ = kcfi_types.name_sites(sites, type_names)
             stats["btf_prototypes"] = type_names.protos
+            if arch == "aarch64":      # the struct member each call loads its pointer from (x86-64: not read)
+                stats.update(kcfi_types.name_members(sites, ranges, arch, type_names))
         kernel = None
         if a.with_kernel and stats.get("scheme") == "jump-table CFI":
             print("cfiscope: --with is for kCFI type hashes; ignored for this jump-table CFI kernel", file=sys.stderr)
@@ -485,6 +495,8 @@ def main(argv=None):
         if "kcfi_hashes_named" in st and st["sites"]:
             print(kcfi_types.named_summary(st["kcfi_hashes_named"], st["hashes"])
                   + " from %d BTF function prototypes" % st["btf_prototypes"])
+        if "member_offsets" in st and st["sites"]:
+            print(kcfi_types.member_summary(st))
         if "outside_text" in st and st["sites"]:
             print("candidates outside kernel code left out: %d (between the _etext and _sinittext symbols, outside "
                   "the code areas named there)" % st["outside_text"])
@@ -511,7 +523,7 @@ def main(argv=None):
         print(header)
     if a.targets:
         for s in chosen:
-            print(_site_line(s, names, 0).rstrip(" ."))
+            print(_site_line(s, names, 0, member_limit=None).rstrip(" ."))
             for t in s.targets:
                 print("    0x%x  %s" % (t, names(t)))
             if kernel is not None:

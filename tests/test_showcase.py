@@ -68,8 +68,8 @@ class Showcase(unittest.TestCase):
                     names = [t["name"] for t in c["targets"]]
                     first = ", ".join(names[:6]) + (", +%d more" % (len(names) - 6) if len(names) > 6 else "")
                     self.assertEqual(chooser.OnGetLine(n), ["0x%x" % int(c["call"] or c["check"], 16), c["in"],
-                                                            c["type"], str(c["candidates"]), first])
-                self.assertIn(["long (short, int)", "3", "impl_2_0, impl_2_1, impl_2_2"],
+                                                            c["member"] or "", c["type"], str(c["candidates"]), first])
+                self.assertIn(["", "long (short, int)", "3", "impl_2_0, impl_2_1, impl_2_2"],
                               [chooser.OnGetLine(n)[2:] for n in range(21)])
 
     def test_list_flag(self):
@@ -77,8 +77,8 @@ class Showcase(unittest.TestCase):
                               "do_call_2+0x1a", "impl_2_1", "--list"], capture_output=True, text=True, check=True).stdout
         self.assertRegex(out, r"Call-site list \(opens after Scan; CFIScope: List kCFI call sites\): window 'CFIScope: 21 "
                               r"kCFI call sites', 21 rows, built in \d+\.\d\d s\n")
-        self.assertIn("  columns: Address | Function+off | Type | Candidates | First candidates\n"
-                      "  row 2:  0x11e03a | do_call_2+0x1a | long (short, int) | 3 | impl_2_0, impl_2_1, impl_2_2\n"
+        self.assertIn("  columns: Address | Function+off | Member | Type | Candidates | First candidates\n"
+                      "  row 2:  0x11e03a | do_call_2+0x1a |  | long (short, int) | 3 | impl_2_0, impl_2_1, impl_2_2\n"
                       "  command line --sites:  0x11e03a  do_call_2+0x1a                           jump hash 0x1300e12b "
                       "(long (short, int))  3 candidate(s): impl_2_0, impl_2_1, impl_2_2\n", out)
 
