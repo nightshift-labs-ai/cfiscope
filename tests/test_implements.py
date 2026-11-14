@@ -120,7 +120,8 @@ class Members(unittest.TestCase):
     def test_members(self):
         want = {"a_ops.send": ["send_x", "send_y"], "b_ops.send": ["send_x", "send_y"],
                 "b_ops.recv": ["send_x", "send_y"], "c_ops.poll": ["poll_x", "poll_y"],
-                "d_ops.poll": ["poll_x", "poll_y"], "a_ops.open": ["msg_open"], "a_ops.close": ["msg_close"],
+                "d_ops.poll": ["poll_x", "poll_y"], "a_ops.close": ["msg_close"],
+                "a_ops.open": ["call_global", "msg_open"],        # int (struct msg *): call_global has that type too
                 "inner_ops.notify": ["notify_x"], "outer.in.notify": ["notify_x"], "anon_holder.u_cb": ["u_cb_x"]}
         for spec, fns in sorted(want.items()):
             with self.subTest(spec):
@@ -198,6 +199,28 @@ def strip_btf(obj):
     return obj[:i] + b".XTF\0" + obj[i + 5:]
 
 
+class WithKernel(unittest.TestCase):
+    """--with VMLINUX: the kernel's functions of the type too, as --targets lists them (test_cli.module_and_kernel: a
+    module whose impl_2_* lost their hash, and a kernel ELF of the same code with k_ names)."""
+
+    def test_with(self):
+        from test_cli import module_and_kernel
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = module_and_kernel(tmp)
+            rc, out, err = run(module, "--implements", "0x1300e12b", "--with", kernel)
+            self.assertEqual(rc, 0, err)
+            lines = out.splitlines()
+            self.assertEqual(lines[:2], ["0 function(s) with kCFI hash 0x1300e12b", "  in kernel.elf (3):"])
+            self.assertEqual([x.split()[1] for x in lines[2:]], ["k_impl_2_0", "k_impl_2_1", "k_impl_2_2"])
+            rc, out, _ = run(module, "--implements", "0x1300e12b", "--with", kernel, "--max-list", "1")
+            self.assertEqual(out.splitlines()[2:], [out.splitlines()[2], "    ... 2 more"])
+            doc = implements(module, "0x36b1c5a6", "--with", kernel)       # int (void): impl_1_* in both
+            self.assertEqual(names_of(doc), ["impl_1_%d" % k for k in range(6)])
+            self.assertEqual((doc["kernel_functions"], [t["name"] for t in doc["kernel_targets"]]),
+                             (6, ["k_impl_1_%d" % k for k in range(6)]))
+            self.assertNotIn("kernel_functions", implements(module, "0x36b1c5a6"))
+
+
 class NotKcfi(unittest.TestCase):
     def test_jump_table_cfi(self):
         rc, out, err = run(os.path.join(FIX, "aarch64-jtcfi.elf"), "--implements", "0x1ebda935")
@@ -213,14 +236,25 @@ class NotKcfi(unittest.TestCase):
             self.assertEqual((rc, out), (2, ""))
             self.assertIn("no kCFI check", err)
 
-    def test_no_check_aarch64_nothing_found(self):
+    def test_no_check_aarch64(self):
+        # indirect calls (blr x8) that no kCFI check guards: not a kCFI build. No indirect call at all: it cannot be
+        # told (a kCFI module may make none), so the word before each function is read, and here none has the hash.
         with tempfile.TemporaryDirectory() as tmp:
             raw = os.path.join(tmp, "Image")
-            with open(raw, "wb") as fh:
-                fh.write(b"\x1f\x20\x03\xd5" * 1024)
-            rc, out, err = run(raw, "--raw", "--arch", "aarch64", "--base", "0x1000", "--implements", "0x1ebda935")
-            self.assertEqual((rc, out), (2, ""))
-            self.assertIn("may not be built with kCFI", err)
+            for code, blr in ((b"\x1f\x20\x03\xd5" * 1023 + b"\x00\x01\x3f\xd6", True),
+                              (b"\x1f\x20\x03\xd5" * 1024, False)):
+                with self.subTest(blr=blr):
+                    with open(raw, "wb") as fh:
+                        fh.write(code)
+                    rc, out, err = run(raw, "--raw", "--arch", "aarch64", "--base", "0x1000", "--implements",
+                                       "0x1ebda935")
+                    if blr:
+                        self.assertEqual((rc, out), (2, ""))
+                        self.assertIn("1 indirect calls (blr) and no kCFI check guards them: it is not built with kCFI",
+                                      err)
+                    else:
+                        self.assertEqual((rc, out), (0, "0 function(s) with kCFI hash 0x1ebda935\n"))
+                        self.assertIn("whether it is built with kCFI cannot be told", err)
 
     def test_no_check_aarch64_module(self):
         # kCFI code that makes no indirect call (as GKI zram.ko): the hashes are still in front of its functions,
@@ -265,7 +299,7 @@ class FunctionHash(unittest.TestCase):
                 self.assertEqual(core.hash_evidence(word, "aarch64", named={word}), "named")
 
     def test_x86_64(self):
-        code = b"\xcc" * 4 + b"\x90" * 11 + b"\xb8" + struct.pack("<I", 0x1300e12b) + b"\x55\x48"
+        code = b"\xcc" * 4 + b"\x90" * 11 + b"\xb8" + struct.pack("<I", 0x1300e12b) + b"\x55\x48\x89\xe5\xc3"
         ranges = [(0x2000, code)]
         self.assertEqual(core.preamble_hash(ranges, "x86_64", 0x2000 + 20, [-4]), 0x1300e12b)
         self.assertIsNone(core.preamble_hash(ranges, "x86_64", 0x2000 + 16, [-4]))   # no mov r32, imm32 in front
