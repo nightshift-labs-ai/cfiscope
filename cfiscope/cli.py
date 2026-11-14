@@ -21,6 +21,7 @@ with each call's type hash (by the kernel ELF's symbols), since a module
 mostly calls through tables that the kernel or other modules fill.
 """
 import argparse
+import array
 import bisect
 import json
 import os
@@ -33,8 +34,9 @@ from .core import name_jt_types, resolve, type_label
 EM_X86_64, EM_AARCH64 = 62, 183
 ARCH_BY_MACHINE = {EM_X86_64: "x86_64", EM_AARCH64: "aarch64"}
 PT_LOAD, PF_X = 1, 1
-SHT_SYMTAB, SHF_EXECINSTR = 2, 4
-STT_FUNC = 2
+SHT_SYMTAB, SHT_RELA, SHT_NOBITS, SHF_ALLOC, SHF_EXECINSTR = 2, 4, 8, 2, 4
+STT_OBJECT, STT_FUNC = 1, 2
+R_ABS64 = {EM_X86_64: 1, EM_AARCH64: 257}      # R_X86_64_64, R_AARCH64_ABS64: a 64-bit absolute address
 
 
 class InputError(Exception):
@@ -109,12 +111,9 @@ def load_elf(d, every=None, bounds=None):
         secs = []
     ranges = []
     if e_type == 1:  # relocatable (.o / .ko): lay executable sections out one after another
-        bases, base = {}, 0x100000
-        for i, s in enumerate(secs):
-            if s[2] & SHF_EXECINSTR and s[5] and s[1] != 8:  # skip NOBITS
-                bases[i] = base
-                ranges.append((base, d[s[4]:s[4] + s[5]]))
-                base += (s[5] + 0x1fff) & ~0xfff
+        bases = _code_bases(secs)
+        for i, base in bases.items():
+            ranges.append((base, d[secs[i][4]:secs[i][4] + secs[i][5]]))
 
         def place(shndx, value):
             return bases[shndx] + value if shndx in bases else None
@@ -137,6 +136,93 @@ def load_elf(d, every=None, bounds=None):
     if not ranges:
         raise InputError("no executable code found in the ELF")
     return arch, ranges, _function_symbols(d, secs, place, every, bounds)
+
+
+def _code_bases(secs):
+    """{section index: address} of the executable sections of a relocatable ELF, laid out one after another from
+    0x100000 (load_elf())."""
+    bases, base = {}, 0x100000
+    for i, s in enumerate(secs):
+        if s[2] & SHF_EXECINSTR and s[5] and s[1] != SHT_NOBITS:
+            bases[i] = base
+            base += (s[5] + 0x1fff) & ~0xfff
+    return bases
+
+
+def _symbols(d, secs):
+    """(section index, value, size, type) of the STT_FUNC and STT_OBJECT symbols."""
+    out = []
+    for s in secs:
+        if s[1] != SHT_SYMTAB:
+            continue
+        for off in range(s[4], min(s[4] + s[5], len(d) - 23), 24):
+            _nm, info, _other, shndx, value, size = struct.unpack_from("<IBBHQQ", d, off)
+            if info & 15 in (STT_OBJECT, STT_FUNC):
+                out.append((shndx, value, size, info & 15))
+    return out
+
+
+def slot_offsets(d, wanted):
+    """{function address in wanted: {byte offset of each 8-byte slot holding it inside a static object}}, from an ELF
+    (kcfi_types.rank_slots()). A linked image (a vmlinux, vmlinux-to-elf output): every 8-aligned word of its loaded
+    segments, each slot in the nearest STT_FUNC or STT_OBJECT symbol at or below it, kept when that one is an object.
+    A relocatable one (.o, .ko): the 64-bit absolute relocations into its allocated sections that are not code, which
+    point at a function where load_elf() lays the code out, each in the object of its section that holds it. {} for
+    anything else (a raw image: no symbols)."""
+    if len(d) < 64 or d[:4] != b"\x7fELF" or d[4] != 2 or d[5] != 1 or not wanted:
+        return {}
+    e_type, machine = struct.unpack_from("<HH", d, 0x10)
+    try:
+        secs = _sections(d)
+    except InputError:
+        return {}
+    stored, symbols = [], []
+    if e_type == 1:
+        code = _code_bases(secs)
+        data, base = {}, 1 << 40        # data sections: far from the code and from each other
+        for i, s in enumerate(secs):
+            if s[2] & SHF_ALLOC and i not in code:
+                data[i] = base
+                symbols.append((base, 0, False))        # a section start ends the objects of the one before
+                base += (s[5] + 0xffff) & ~0xfff
+        symbols += [(data[n] + v, z, t == STT_OBJECT) for n, v, z, t in _symbols(d, secs) if n in data]
+        abs64 = R_ABS64.get(machine)
+        for s in secs:
+            if s[1] != SHT_RELA or s[7] not in data or s[6] >= len(secs):
+                continue
+            symtab = secs[s[6]]
+            for off in range(s[4], min(s[4] + s[5], len(d) - 23), 24):
+                r_offset, r_info, addend = struct.unpack_from("<QQq", d, off)
+                if r_info & 0xffffffff != abs64:
+                    continue
+                at = symtab[4] + 24 * (r_info >> 32)
+                if at + 24 > len(d):
+                    continue
+                shndx, value = struct.unpack_from("<HQ", d, at + 6)
+                if shndx in code and code[shndx] + value + addend in wanted:
+                    stored.append((data[s[7]] + r_offset, code[shndx] + value + addend))
+    else:
+        symbols = [(v, z, t == STT_OBJECT) for _n, v, z, t in _symbols(d, secs) if v]
+        phoff = struct.unpack_from("<Q", d, 0x20)[0]
+        phentsize, phnum = struct.unpack_from("<HH", d, 0x36)
+        if not phoff or phentsize != 56 or phoff + 56 * phnum > len(d):
+            return {}
+        for i in range(phnum):
+            p_type, _fl, p_offset, p_vaddr, _pa, p_filesz, _memsz, _al = struct.unpack_from("<IIQQQQQQ", d, phoff + 56 * i)
+            if p_type != PT_LOAD or not p_filesz:
+                continue
+            skip = -p_vaddr % 8
+            start, end = p_offset + skip, min(p_offset + p_filesz, len(d))
+            if end - start < 8:
+                continue
+            words = memoryview(d)[start:start + (end - start) // 8 * 8].cast("Q")
+            if sys.byteorder != "little":
+                words = array.array("Q", words)
+                words.byteswap()
+            base = p_vaddr + skip
+            stored += [(base + 8 * k, v) for k, v in enumerate(words) if v in wanted]
+    symbols.sort()
+    return core.object_offsets(stored, symbols)
 
 
 class Names:
@@ -228,6 +314,7 @@ def runtime_test(names, ranges):
 
 
 def _site_dict(s, names, limit, type_names=None, kernel=None):
+    ordered = core.slot_first(s)        # the candidates stored in a slot of the call's member first (kCFI with BTF)
     out = {
         "call": "0x%x" % s.call_ea if s.call_ea else None,
         "check": "0x%x" % s.check_ea,
@@ -235,7 +322,7 @@ def _site_dict(s, names, limit, type_names=None, kernel=None):
         "hash": "0x%08x" % s.hash,
         "tail_call": s.is_tail,
         "candidates": len(s.targets),
-        "targets": [{"ea": "0x%x" % t, "name": names(t)} for t in s.targets[:limit]],
+        "targets": [{"ea": "0x%x" % t, "name": names(t)} for t in ordered[:limit]],
     }
     if kernel is not None:      # only with --with
         kt = kernel.targets(s)
@@ -250,6 +337,10 @@ def _site_dict(s, names, limit, type_names=None, kernel=None):
         out["member"] = s.members[0] if len(s.members) == 1 else None
         out["members"] = list(s.members)
         out["member_offset"] = s.member_offset
+        # each candidate: is it stored in a slot of that member in the image's static data (listed first)?
+        out["slot_backed_candidates"] = len(s.slot_backed)
+        for t in out["targets"]:
+            t["slot_backed"] = int(t["ea"], 16) in s.slot_backed
     if s.kind != "kcfi":     # jump-table CFI: the hash is the 64-bit type id
         out["hash"] = "0x%016x" % s.type_id if s.type_id is not None else None
         out.update(_jt_dict(s))
@@ -294,8 +385,16 @@ def _site_line(s, names, limit, kernel=None, member_limit=3):
     member = core.member_label(s, member_limit)     # the struct member it calls through (aarch64, with BTF)
     if member:
         kind += " " + member
-    line = "%s  %-40s %s hash 0x%08x%s  %d candidate(s)%s%s" % (
-        where, names(s.call_ea or s.check_ea), kind, s.hash, typed, len(s.targets),
+    count = "%d candidate(s)" % len(s.targets)
+    if s.slot_backed:       # stored in a slot of that member: named first, the candidates of the same type only counted
+        k = len(s.slot_backed)
+        if limit:
+            first = [names(t) for t in core.slot_first(s)[:min(k, limit)]]
+            shown, more = core.slot_text(s, first, k, len(s.targets)), ""
+        else:
+            count += ", %d %s" % (k, core.slot_label(s))
+    line = "%s  %-40s %s hash 0x%08x%s  %s%s%s" % (
+        where, names(s.call_ea or s.check_ea), kind, s.hash, typed, count,
         ": " if shown else "", shown + more)
     if kernel is not None:      # --with: the kernel's functions of this type
         kt = kernel.targets(s)
@@ -412,6 +511,9 @@ def main(argv=None):
             stats["btf_prototypes"] = type_names.protos
             if arch == "aarch64":      # the struct member each call loads its pointer from (x86-64: not read)
                 stats.update(kcfi_types.name_members(sites, ranges, arch, type_names))
+                if not a.raw and any(s.members for s in sites):   # its candidates stored in a slot of that member first
+                    wanted = {t for s in sites if s.kind == "kcfi" for t in s.targets}
+                    stats.update(kcfi_types.rank_slots(sites, slot_offsets(data, wanted), type_names))
         kernel = None
         if a.with_kernel and stats.get("scheme") == "jump-table CFI":
             print("cfiscope: --with is for kCFI type hashes; ignored for this jump-table CFI kernel", file=sys.stderr)
@@ -497,6 +599,8 @@ def main(argv=None):
                   + " from %d BTF function prototypes" % st["btf_prototypes"])
         if "member_offsets" in st and st["sites"]:
             print(kcfi_types.member_summary(st))
+        if "slot_calls" in st and st["sites"]:
+            print(kcfi_types.slot_summary(st))
         if "outside_text" in st and st["sites"]:
             print("candidates outside kernel code left out: %d (between the _etext and _sinittext symbols, outside "
                   "the code areas named there)" % st["outside_text"])
@@ -524,7 +628,10 @@ def main(argv=None):
     if a.targets:
         for s in chosen:
             print(_site_line(s, names, 0, member_limit=None).rstrip(" ."))
-            for t in s.targets:
+            k = len(s.slot_backed)
+            for n, t in enumerate(core.slot_first(s)):      # every candidate; those stored in a member slot first
+                if k and n in (0, k):
+                    print("  %s:" % (core.slot_label(s) if n == 0 else "same type only"))
                 print("    0x%x  %s" % (t, names(t)))
             if kernel is not None:
                 print("  in %s (%d):" % (kernel.label, len(kernel.targets(s))))

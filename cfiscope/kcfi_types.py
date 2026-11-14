@@ -618,7 +618,9 @@ class TypeNames:
                     names.append(n)
             h = hash_of[mangled] = kcfi_hash(mangled)
             self.by_hash[h][mangled] = names
-        self.members = member_slots(btf, {tid: {hash_of[m] for m in ms} for tid, ms in proto_mangled.items()})
+        self.member_sizes = {}               # (hash, offset) -> sizes of the structs with such a member there
+        self.members = member_slots(btf, {tid: {hash_of[m] for m in ms} for tid, ms in proto_mangled.items()},
+                                    self.member_sizes)
 
     def lookup(self, h):
         """[(mangled, readable, examples)] for a 32-bit hash, [] if no prototype gives it."""
@@ -645,7 +647,7 @@ class _TooMany(Exception):
     pass
 
 
-def member_slots(btf, hashes):
+def member_slots(btf, hashes, sizes=None):
     """{(kCFI hash, byte offset): sorted ['struct.member', ...]} for every function-pointer member of every named
     struct or union in BTF (and every one a typedef names), at its byte offset from the start of that struct. Members
     of embedded struct and union members (by value, anonymous or not, at any depth) and of arrays (of up to
@@ -653,7 +655,8 @@ def member_slots(btf, hashes):
     declares them: 'proto_ops.sendmsg' wherever a struct proto_ops is embedded; an anonymous struct or union takes
     the name of the nearest named one around it. hashes: {FUNC_PROTO id: its kCFI hashes} (TypeNames).
     {} when BTF nests a struct in itself or the entries would pass MAX_MEMBER_ENTRIES (crafted BTF, not a kernel): no
-    member is named then, rather than some of them."""
+    member is named then, rather than some of them. sizes, if a dict, receives {(hash, offset): {byte size of each
+    struct or union that has such a member at that offset, embedded ones included}} (rank_slots(): arrays of them)."""
     types = btf.types
     link = btf.linkage_names()
     memo = {}                     # (type id, label of an anonymous one) -> [(offset, hash, 'struct.member')]
@@ -707,14 +710,17 @@ def member_slots(btf, hashes):
         memo[key] = out
         return out
 
-    slots = defaultdict(set)
+    slots, by_size = defaultdict(set), defaultdict(set)
     try:
-        for tid, (kind, name, _kf, _st, extra) in enumerate(types):
+        for tid, (kind, name, _kf, size, extra) in enumerate(types):
             if kind in (K_STRUCT, K_UNION) and extra and (name or link.get(tid)):
                 for off, h, label in entries(tid, name or link[tid]):
                     slots[(h, off)].add(label)
+                    by_size[(h, off)].add(size)
     except (_TooMany, RecursionError):
         return {}
+    if sizes is not None:
+        sizes.update(by_size)
     return {k: sorted(v) for k, v in slots.items()}
 
 
@@ -758,6 +764,50 @@ def name_members(sites, ranges, arch, names):
         out["members_named"] += bool(s.members)
         out["members_unique"] += len(s.members) == 1
     return out
+
+
+def rank_slots(sites, offsets, names):
+    """Set slot_backed (core.Site) of each kCFI site with a struct member (name_members()): its candidates that the
+    image's static data stores at the member's offset inside an object, or at that offset modulo the size of a struct
+    that has the member there (an array of such structs). offsets: {function address: {offset in the object holding
+    it}} (core.object_offsets()); names: the TypeNames that named the members (member_sizes). The candidate lists are
+    not changed: core.slot_first() puts these first. A slot is evidence, not proof: a function stored there may be
+    called through another table, and a pointer set at run time or in a module's table is in no slot here.
+    Returns {"slot_calls": sites with at least one, "slot_calls_shorter": those that also have candidates of the same
+    type only, "stored_candidates": distinct kCFI candidates stored in some object, "distinct_candidates": all}."""
+    sizes_of = getattr(names, "member_sizes", None) or {}
+    out = {"slot_calls": 0, "slot_calls_shorter": 0}
+    every = set()
+    for s in sites:
+        s.slot_backed = set()
+        if getattr(s, "kind", "kcfi") != "kcfi":
+            continue
+        every.update(s.targets)
+        off = s.member_offset
+        if not s.members or off is None:
+            continue
+        sizes = [z for z in sizes_of.get((s.hash, off), ()) if z > off]
+        hit = set()
+        for t in s.targets:
+            for o in offsets.get(t, ()):
+                if o == off or any(o % z == off for z in sizes):
+                    hit.add(t)
+                    break
+        s.slot_backed = hit
+        if hit:
+            out["slot_calls"] += 1
+            out["slot_calls_shorter"] += len(hit) < len(s.targets)
+    out["stored_candidates"] = sum(1 for t in every if t in offsets)
+    out["distinct_candidates"] = len(every)
+    return out
+
+
+def slot_summary(st):
+    """Summary line of rank_slots()'s counts."""
+    return ("kCFI calls with a candidate stored in a slot of their struct member: %d, those candidates listed first (%d "
+            "of the %d lists also hold candidates of the same type only); kCFI candidates stored in a static object: "
+            "%d of %d" % (st["slot_calls"], st["slot_calls_shorter"], st["slot_calls"], st["stored_candidates"],
+                          st["distinct_candidates"]))
 
 
 def member_summary(st):

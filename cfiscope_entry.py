@@ -227,7 +227,10 @@ def scan_sentence(stats, res):
         notes.append("none to %s IDA holds as data or outside the code segments"
                      % _count(res["xrefs_skipped_not_code"], "candidate"))
     if stats.get("max_candidates", 0) > idalayer.DEFAULT_XREF_LIMIT:
-        notes.append("none for lists of more than %d" % idalayer.DEFAULT_XREF_LIMIT)
+        slot_only = res.get("slot_only_lists", 0)    # long lists whose slot-backed candidates got them (xref_targets())
+        notes.append("none for lists of more than %d" % idalayer.DEFAULT_XREF_LIMIT + (
+            ", except to their candidates stored in a slot of the call's member in %s of them" % format(slot_only, ",")
+            if slot_only else ""))
     if res["kept_user_comments"]:
         notes.append("%s kept" % _count(res["kept_user_comments"], "comment of your own", "comments of your own"))
     if notes:

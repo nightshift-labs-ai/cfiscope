@@ -140,6 +140,27 @@ def input_has_split_btf():
     return False
 
 
+def input_slot_offsets(ranges, sites):
+    """cli.slot_offsets() of the input file for the candidates of sites (kcfi_types.rank_slots()), if the file is still
+    where it was loaded from, is an ELF and the database has its layout: each of the file's code ranges, as the command
+    line lays them out, starts with the same bytes at the same address here (not rebased; a relocatable file that IDA
+    laid out elsewhere fails this); else {} (the lists keep their order)."""
+    try:
+        from . import cli
+        path = ida_nalt.get_input_file_path()
+        if path and os.path.isfile(path):
+            with open(path, "rb") as fh:
+                data = fh.read()
+            if data[:4] == b"\x7fELF":
+                _, file_ranges, _ = cli.load_elf(data)
+                if file_ranges and all(_bytes_at(ranges, b) is not None and _bytes_at(ranges, b) == _bytes_at([(b, m)], b)
+                                       for b, m in file_ranges):
+                    return cli.slot_offsets(data, {t for s in sites for t in s.targets})
+    except Exception:  # noqa: BLE001  the order is a bonus, as names are
+        pass
+    return {}
+
+
 def typeid_names(elf=False):
     """(address, name) of the __typeid_<type>_global_addr names (kallsyms keeps them).
 
@@ -219,6 +240,8 @@ def scan():
             stats = dict(stats, kcfi_hashes_named=named, btf_prototypes=names.protos)
             if arch == "aarch64":  # and the struct member each call loads its pointer from (as the command line does)
                 stats.update(kcfi_types.name_members(sites, ranges, arch, names))
+                if any(s.members for s in sites):    # its candidates stored in a slot of that member come first
+                    stats.update(kcfi_types.rank_slots(sites, input_slot_offsets(ranges, sites), names))
         elif input_has_split_btf():  # review s189 NIT 6: say why a module's hashes are not named, once per scan
             ida_kernwin.msg("[CFIScope] this module's BTF is split BTF (it continues its kernel's BTF), which the IDA "
                             "plugin does not read: kCFI hashes are not named by C type here; the command line names "
@@ -268,22 +291,30 @@ def target_name(ea):
 
 
 def ranked(site, taken=None):
-    """Address-taken candidates first: only they can really be stored in a pointer. taken: a dict that keeps each
-    candidate's pointer_taken() answer across the sites of one pass (the call-site list), so it is asked once."""
+    """The candidates stored in a slot of the call's struct member first (Site.slot_backed, kcfi_types.rank_slots()),
+    then address-taken candidates: only they can really be stored in a pointer. Every candidate is kept. taken: a dict
+    that keeps each candidate's pointer_taken() answer across the sites of one pass (the call-site list), so it is
+    asked once."""
+    slot = getattr(site, "slot_backed", None) or ()
     if taken is None:
-        return sorted(site.targets, key=lambda t: (not pointer_taken(site, t), t))
+        return sorted(site.targets, key=lambda t: (t not in slot, not pointer_taken(site, t), t))
     jt = getattr(site, "kind", "kcfi") != "kcfi"      # pointer_taken() depends on the target and, for these, its entry
 
     def key(t):
         known = taken.get((jt, t))
         if known is None:
             known = taken[(jt, t)] = pointer_taken(site, t)
-        return (not known, t)
+        return (t not in slot, not known, t)
     return sorted(site.targets, key=key)
 
 
 def candidate_names(site, targets):
-    """The candidates part of describe(): the first 6 names of targets (ranked()), ', +N more', or why there are none."""
+    """The candidates part of describe(): the first 6 names of targets (ranked()), ', +N more', or why there are none.
+    With candidates stored in a slot of the call's member: 'in a proto_ops.sendmsg_locked slot: tcp_sendmsg_locked;
+    same type only: 10 more' (the first 6 of those named, the others counted)."""
+    slot = len(getattr(site, "slot_backed", None) or ())
+    if targets and slot:
+        return core.slot_text(site, [target_name(t) for t in targets[:min(slot, 6)]], slot, len(targets))
     if targets:
         names = ", ".join(target_name(t) for t in targets[:6])
         if len(targets) > 6:
@@ -353,9 +384,14 @@ def pseudocode_text(site, limit=5):
     member = member + ", " if member else ""
     if not targets:
         return "CFIScope: %s0 candidates in this image%s" % (member, of)
-    names = ", ".join(target_name(t) for t in targets[:limit])
-    if len(targets) > limit:
-        names += " and %d more" % (len(targets) - limit)
+    slot = len(getattr(site, "slot_backed", None) or ())
+    if slot:        # stored in a slot of the call's member: named first, the others counted (as in the comment)
+        names = core.slot_text(site, [target_name(t) for t in targets[:min(slot, limit)]], slot, len(targets),
+                               " and %d more")
+    else:
+        names = ", ".join(target_name(t) for t in targets[:limit])
+        if len(targets) > limit:
+            names += " and %d more" % (len(targets) - limit)
     return "CFIScope: %s%d candidate%s%s: %s" % (member, len(targets), "" if len(targets) == 1 else "s", of, names)
 
 
@@ -400,6 +436,18 @@ def target_check():
     return ok
 
 
+def xref_targets(site, xref_limit=DEFAULT_XREF_LIMIT):
+    """The candidates of a call that Scan gives cross-references: all of a list of at most xref_limit; of a longer
+    list, those stored in a slot of the call's member (Site.slot_backed) when there are at most xref_limit of them;
+    else none."""
+    if not site.call_ea or not site.targets:
+        return []
+    if len(site.targets) <= xref_limit:
+        return site.targets
+    slot = getattr(site, "slot_backed", None) or ()
+    return [t for t in site.targets if t in slot] if len(slot) <= xref_limit else []
+
+
 def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT, create_functions=True):
     """Comment every check; add user xrefs where the candidate list is short, never to a candidate target_check() rejects
     (counted in xrefs_skipped_not_code). A call xref (fl_CN) makes IDA create a function at its target (xref.hpp), so
@@ -407,9 +455,11 @@ def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT, create_functions=True):
     candidate inside a function IDA has gets a user data xref (dr_O) instead (counted in data_xrefs_inside_function),
     for which xref.hpp notes no such effect (ida.hpp AF_PROCPTR is for data xrefs from data; that it makes no function
     is assumed, not checked in IDA), and a candidate with no function gets none (counted in xrefs_skipped_no_function).
-    A call and candidate pair keeps one xref: an earlier Scan's xref of the other kind is replaced."""
+    A call and candidate pair keeps one xref: an earlier Scan's xref of the other kind is replaced. The candidates are
+    those of xref_targets(): a list longer than xref_limit gets xrefs to its slot-backed candidates when at most
+    xref_limit of them (counted in slot_only_lists)."""
     res = {"comments": 0, "xrefs": 0, "kept_user_comments": 0, "runtime_comments": 0, "xrefs_skipped_not_code": 0,
-           "data_xrefs_inside_function": 0, "xrefs_skipped_no_function": 0}
+           "data_xrefs_inside_function": 0, "xrefs_skipped_no_function": 0, "slot_only_lists": 0}
     ok = target_check()
     for ea, x in runtime_calls(sites).items():
         old = ida_bytes.get_cmt(ea, False)
@@ -426,10 +476,12 @@ def annotate(sites, xref_limit=DEFAULT_XREF_LIMIT, create_functions=True):
         else:
             ida_bytes.set_cmt(ea, describe(s), False)
             res["comments"] += 1
-        if s.call_ea and 0 < len(s.targets) <= xref_limit:
+        chosen = xref_targets(s, xref_limit)
+        if chosen:
+            res["slot_only_lists"] += len(chosen) < len(s.targets)
             drefs = data_refs_from(s.call_ea)
             # Call-type even for tail calls: a jump xref could fold a target into the caller as a chunk.
-            for t in s.targets:
+            for t in chosen:
                 if not ok(t):
                     res["xrefs_skipped_not_code"] += 1
                     continue
@@ -470,7 +522,9 @@ def data_refs_from(ea):
 def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
     """Remove our comments and the call and data xrefs to the candidates. Returns the number of xrefs that existed
     and were deleted (del_cref's own return value says whether the target instruction will be deleted,
-    not whether a reference was removed, so it is not used for the count)."""
+    not whether a reference was removed, so it is not used for the count). Lists longer than xref_limit are looked at
+    too: Scan may have given their slot-backed candidates xrefs (xref_targets()), and the scan this runs on may not
+    know those (the input file gone since)."""
     removed = 0
     for ea in runtime_calls(sites):
         old = ida_bytes.get_cmt(ea, False)
@@ -481,7 +535,7 @@ def remove_annotations(sites, xref_limit=DEFAULT_XREF_LIMIT):
         old = ida_bytes.get_cmt(ea, False)
         if old and old.startswith(OWN_TAGS):
             ida_bytes.set_cmt(ea, "", False)
-        if s.call_ea and 0 < len(s.targets) <= xref_limit:
+        if s.call_ea and s.targets:
             existing, data = far_crefs_from(s.call_ea), data_refs_from(s.call_ea)
             for t in s.targets:
                 if t in existing:
@@ -591,8 +645,11 @@ def targets_title(site):
 
 
 def targets_rows(site):
-    return [(t, target_name(t), "address taken" if pointer_taken(site, t) else "")
-            for t in ranked(site)]
+    """(address, name, note) of every candidate, in ranked() order; note: 'stored in a proto_ops.sendmsg slot' for the
+    slot-backed ones, else 'address taken' or nothing."""
+    slot = getattr(site, "slot_backed", None) or ()
+    return [(t, target_name(t), "stored " + core.slot_label(site) if t in slot else
+             "address taken" if pointer_taken(site, t) else "") for t in ranked(site)]
 
 
 def in_cfi_runtime(ea):

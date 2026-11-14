@@ -382,7 +382,7 @@ class GKIKnownAnswers(unittest.TestCase):
         rc, out = run([GKI, "--targets", "0xffffffc008cc55ac"])
         self.assertEqual(rc, 0)
         self.assertIn("sock_sendmsg+0xb4                        call proto_ops.sendmsg hash 0x1ebda935 (int (struct "
-                      "socket *, struct msghdr *, unsigned long))  14 candidate(s)\n", out)
+                      "socket *, struct msghdr *, unsigned long))  14 candidate(s), 13 in a proto_ops.sendmsg slot\n", out)
         rc, out = run([GKI, "--targets", "0xffffffc008045884"])
         self.assertEqual(out.splitlines()[1], OLD_GKI_TARGETS[0xffffffc008045884])
 

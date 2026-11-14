@@ -44,6 +44,9 @@ class Site:
     # (member_offsets()), and the struct members BTF has of the call's type at that offset ('proto_ops.sendmsg').
     member_offset: int = None
     members: list = field(default_factory=list)
+    # ... and the candidates stored in a slot of that member in the image's static data (kcfi_types.rank_slots()):
+    # listed first (slot_first()), never instead of the others
+    slot_backed: set = field(default_factory=set)
 
 
 def _s8(v):
@@ -1135,6 +1138,52 @@ def member_label(site, limit=3):
     shown = m if limit is None else m[:limit]
     more = ", +%d more" % (len(m) - len(shown)) if len(m) > len(shown) else ""
     return "one of %d members (%s%s)" % (len(m), ", ".join(shown), more)
+
+
+def object_offsets(stored, symbols):
+    """{function address: {byte offset of the slot in the object that holds it}} of stored (slot address, function
+    address) pairs. symbols: (address, size, is an object) of the image's function and data symbols, sorted; a slot
+    belongs to the nearest symbol at or below it when that one is an object (STT_OBJECT; kallsyms d, D, r, R, b, B)
+    and the slot lies inside it (when its size is known: not 0)."""
+    eas = [s[0] for s in symbols]
+    out = defaultdict(set)
+    for ea, value in stored:
+        i = bisect.bisect_right(eas, ea) - 1
+        if i < 0:
+            continue
+        start, size, is_object = symbols[i]
+        if is_object and (not size or ea < start + size):
+            out[value].add(ea - start)
+    return dict(out)
+
+
+def slot_first(site, targets=None):
+    """targets (default: the site's) with the candidates stored in a slot of the call's member first, each group in
+    the order given. Nothing is left out."""
+    targets = site.targets if targets is None else targets
+    slot = getattr(site, "slot_backed", None)
+    if not slot:
+        return list(targets)
+    return [t for t in targets if t in slot] + [t for t in targets if t not in slot]
+
+
+def slot_label(site):
+    """'in a proto_ops.sendmsg_locked slot', or 'in a slot of one of 2 members' when BTF has several members of the
+    call's type at the loaded offset."""
+    m = getattr(site, "members", None) or ()
+    return "in a %s slot" % m[0] if len(m) == 1 else "in a slot of one of %d members" % len(m)
+
+
+def slot_text(site, shown, slot_count, total, more=", +%d more"):
+    """'in a proto_ops.sendmsg_locked slot: tcp_sendmsg_locked; same type only: 10 more'. shown: the names of the first
+    slot-backed candidates (at least one); slot_count: how many there are (the rest of them get `more`); total: the
+    whole list's length (the candidates of the same type only are counted, not named)."""
+    text = "%s: %s" % (slot_label(site), ", ".join(shown))
+    if slot_count > len(shown):
+        text += more % (slot_count - len(shown))
+    if total > slot_count:
+        text += "; same type only: %d more" % (total - slot_count)
+    return text
 
 
 # ---- type names (jump-table CFI) ----
