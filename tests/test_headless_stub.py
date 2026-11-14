@@ -16,7 +16,7 @@ def scan():
     calls.append(("scan",))
     if isinstance(result["sites"], Exception):
         raise result["sites"]
-    return result["sites"], {"sites": len(result["sites"])}
+    return result["sites"], dict({"sites": len(result["sites"])}, **result.get("stats", {}))
 layer.scan = scan
 layer.annotate = lambda s, create_functions: calls.append(("annotate", len(s), create_functions)) or \
     {"comments": len(s), "xrefs": 2, "kept_user_comments": 0}
@@ -43,7 +43,17 @@ with tempfile.NamedTemporaryFile() as f:
     del calls[:]; assert h.main([f.name, "--remove", "--no-analysis"]) == 0
     assert calls == [("open", False), ("scan",), ("remove", 1), ("marker", None), ("close", True)], calls
     result["sites"] = []; del calls[:]
-    assert h.main([f.name]) == 0 and calls == [("open", True), ("scan",), ("marker", None), ("close", True)], calls
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert h.main([f.name]) == 0 and calls == [("open", True), ("scan",), ("marker", None), ("close", True)], calls
+    assert "may not be built with -fsanitize=kcfi" in out.getvalue(), out.getvalue()
+    # ko189: an aarch64 database with no blr at all (a kCFI module that makes no indirect call) is not called non-kCFI.
+    result["stats"] = {"blr_instructions": 0}; del calls[:]; out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert h.main([f.name]) == 0 and calls == [("open", True), ("scan",), ("marker", None), ("close", True)], calls
+    assert "the code makes no indirect call (no blr instruction)" in out.getvalue(), out.getvalue()
+    assert "may not be built" not in out.getvalue(), out.getvalue()
+    del result["stats"]
     result["sites"] = RuntimeError("CFIScope supports 64-bit x86 and AArch64 databases only."); del calls[:]
     assert h.main([f.name]) == 3 and calls == [("open", True), ("scan",), ("close", True)], calls
     idapro.open_database = lambda path, analysis: 1; del calls[:]

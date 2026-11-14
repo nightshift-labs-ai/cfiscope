@@ -56,6 +56,10 @@ def main(argv=None):
             return 0
         if not sites:
             idalayer.clear_marker()
+            if stats.get("blr_instructions") == 0:
+                print("[CFIScope] no kCFI checks found: the code makes no indirect call (no blr instruction), so kCFI has "
+                      "nothing to check here; this does not tell whether it was built with kCFI")
+                return 0
             print("[CFIScope] no kCFI checks found, and no aarch64 jump-table CFI either: this binary may not be built with "
                   "-fsanitize=kcfi (Linux 6.1+ CONFIG_CFI_CLANG) or with the jump-table CFI of Linux 5.x (aarch64 only)")
             return 0

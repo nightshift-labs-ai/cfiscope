@@ -16,10 +16,14 @@ scan itself reads code bytes alone.  Add --json for machine output.
 kCFI hashes are named by their C function type when BTF is available: from
 --btf (an ELF with a .BTF section, a raw kernel image, or a raw BTF file), or
 else from the input itself when it carries BTF (--no-btf turns that off).
+For a loadable module (.ko), --with VMLINUX also lists the kernel's functions
+with each call's type hash (by the kernel ELF's symbols), since a module
+mostly calls through tables that the kernel or other modules fill.
 """
 import argparse
 import bisect
 import json
+import os
 import struct
 import sys
 
@@ -161,6 +165,41 @@ class Names:
         return "0x%x" % ea
 
 
+class Kernel:
+    """--with: the functions of a kernel ELF (a vmlinux, or vmlinux-to-elf output) that carry the type hash of each
+    kCFI call site of the input (a module), found as resolve() finds them, with the kernel's own text bounds."""
+
+    def __init__(self, path, arch, sites):
+        with open(path, "rb") as fh:
+            data = fh.read()
+        bounds = {}
+        if data[:4] != b"\x7fELF":
+            raise InputError("--with %s: not an ELF file; give the kernel as an ELF with symbols (a vmlinux, or the "
+                             "output of vmlinux-to-elf)" % path)
+        try:
+            karch, kranges, symbols = load_elf(data, None, bounds)
+        except (InputError, struct.error) as e:
+            raise InputError("--with %s: %s" % (path, e))
+        del data
+        if karch != arch:
+            raise InputError("--with %s: an %s file, the input is %s" % (path, karch, arch))
+        self.label = os.path.basename(path)
+        self.names = Names(symbols)
+        by_hash, _ = core.preamble_index(kranges, arch, {s.hash for s in sites}, sorted({s.disp for s in sites}),
+                                         core.kernel_text(bounds))
+        self.by_check = {s.check_ea: sorted(by_hash.get(s.hash, ())) for s in sites}
+
+    def targets(self, site):
+        return self.by_check.get(site.check_ea, [])
+
+    def stats(self, sites):
+        k = [self.targets(s) for s in sites]
+        return {"file": self.label, "named_functions": len(self.names.by_ea),
+                "sites_with_kernel_candidates": sum(1 for t in k if t),
+                "sites_only_in_kernel": sum(1 for s, t in zip(sites, k) if t and not s.targets),
+                "sites_in_neither": sum(1 for s, t in zip(sites, k) if not t and not s.targets)}
+
+
 def parse_target(text, names):
     """A set of addresses: one for a number, every function of that name for a name."""
     try:
@@ -188,7 +227,7 @@ def runtime_test(names, ranges):
     return in_runtime
 
 
-def _site_dict(s, names, limit, type_names=None):
+def _site_dict(s, names, limit, type_names=None, kernel=None):
     out = {
         "call": "0x%x" % s.call_ea if s.call_ea else None,
         "check": "0x%x" % s.check_ea,
@@ -198,6 +237,10 @@ def _site_dict(s, names, limit, type_names=None):
         "candidates": len(s.targets),
         "targets": [{"ea": "0x%x" % t, "name": names(t)} for t in s.targets[:limit]],
     }
+    if kernel is not None:      # only with --with
+        kt = kernel.targets(s)
+        out["kernel_candidates"] = len(kt)
+        out["kernel_targets"] = [{"ea": "0x%x" % t, "name": kernel.names(t)} for t in kt[:limit]]
     if s.kind == "kcfi" and type_names is not None:     # only with BTF: output is unchanged without it
         out["type"] = s.type_name
         out["type_mangled"] = s.type_mangled
@@ -228,7 +271,7 @@ def _jt_dict(s):
 OLD_CFI_MARKERS = (b".cfi_jt", b"__cfi_check", b"CFI failure (target:")
 
 
-def _site_line(s, names, limit):
+def _site_line(s, names, limit, kernel=None):
     where = "0x%x" % (s.call_ea or s.check_ea)
     shown = ", ".join(names(t) for t in s.targets[:limit])
     more = " ..." if len(s.targets) > limit else ""
@@ -243,9 +286,15 @@ def _site_line(s, names, limit):
             where, names(s.call_ea or s.check_ea), kind, type_label(s) or "type unknown", count,
             ": " if shown else "", shown + more)
     typed = " (%s)" % s.type_name if s.type_name else ""
-    return "%s  %-40s %s hash 0x%08x%s  %d candidate(s)%s%s" % (
+    line = "%s  %-40s %s hash 0x%08x%s  %d candidate(s)%s%s" % (
         where, names(s.call_ea or s.check_ea), kind, s.hash, typed, len(s.targets),
         ": " if shown else "", shown + more)
+    if kernel is not None:      # --with: the kernel's functions of this type
+        kt = kernel.targets(s)
+        shown = ", ".join(kernel.names(t) for t in kt[:limit])
+        line += "; in %s %d%s%s" % (kernel.label, len(kt), ": " if shown else "",
+                                    shown + (" ..." if len(kt) > limit else ""))
+    return line
 
 
 def _print_jt_summary(st):
@@ -262,11 +311,27 @@ def _print_jt_summary(st):
           % (st["median_candidates_resolved"], st["median_candidates"], st["max_candidates"]))
 
 
-def _type_names(a, data):
-    """kcfi_types.TypeNames from --btf, else from the input's own BTF; None if there is none."""
+def _relocatable(a, data):
+    """Is the input a relocatable ELF (.o, .ko), the only kind that carries split BTF?"""
+    return not a.raw and data[:4] == b"\x7fELF" and len(data) >= 18 and struct.unpack_from("<H", data, 16)[0] == 1
+
+
+def _type_names(a, data, sites=True):
+    """kcfi_types.TypeNames from --btf, else from the input's own BTF; None if there is none.  A module's own split
+    BTF is read on top of --btf (its kernel's BTF), which it continues, when there is a call site to name (review
+    s189 NIT 7: no split-BTF warning on a module with none)."""
     if a.btf:
         with open(a.btf, "rb") as fh:
             btf_data = fh.read()
+        if sites and _relocatable(a, data) and not a.no_btf:
+            try:
+                names = kcfi_types.load_split_type_names(data, btf_data)
+            except (kcfi_types.BTFError, struct.error) as e:
+                print("cfiscope: the module's BTF was not read (%s); kCFI hashes named from %s alone"
+                      % (e, a.btf), file=sys.stderr)
+                names = None
+            if names is not None:
+                return names
         try:
             names = kcfi_types.load_type_names(btf_data)
         except (kcfi_types.BTFError, struct.error) as e:
@@ -275,6 +340,10 @@ def _type_names(a, data):
             raise InputError("%s: no BTF found (no .BTF section, BTF header or raw BTF)" % a.btf)
         return names
     if a.no_btf:
+        return None
+    if _relocatable(a, data) and kcfi_types.has_split_btf(data):
+        print("cfiscope: this module's BTF is split BTF (it continues its kernel's BTF): add --btf with its kernel "
+              "(a vmlinux or raw Image of the same build) to name kCFI hashes by C type", file=sys.stderr)
         return None
     try:
         return kcfi_types.load_type_names(data)
@@ -293,7 +362,10 @@ def main(argv=None):
     ap.add_argument("--base", type=lambda v: int(v, 0), help="load address for --raw, e.g. 0xffffffc008000000")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--sites", action="store_true", help="list every call site with its candidates")
-    mode.add_argument("--callers", metavar="FUNC", help="call sites that can reach FUNC (name or address)")
+    mode.add_argument("--callers", metavar="FUNC",
+                      help="call sites that can reach FUNC (name or address); with --with, a name that is not the "
+                           "module's is looked up in the kernel (the module's own symbol wins; an address is the "
+                           "module's)")
     mode.add_argument("--targets", metavar="ADDR", help="candidates for the call or check at ADDR")
     ap.add_argument("--max-list", type=int, default=None,
                     help="candidates shown per site (default: 8 in text, all with --json)")
@@ -302,6 +374,9 @@ def main(argv=None):
                     help="name kCFI hashes by C function type from this BTF: an ELF with a .BTF section, a raw "
                          "kernel image, or a raw BTF file (default: the input's own BTF, if it has any)")
     ap.add_argument("--no-btf", action="store_true", help="do not look for BTF in the input")
+    ap.add_argument("--with", dest="with_kernel", metavar="VMLINUX",
+                    help="for a module (.ko): also list, for each call site, the functions of this kernel ELF (a "
+                         "vmlinux or vmlinux-to-elf output, the module's own kernel build) with the call's type hash")
     a = ap.parse_args(argv)
 
     try:
@@ -320,20 +395,49 @@ def main(argv=None):
         if stats.get("scheme") == "jump-table CFI":
             stats["named_checks"] = name_jt_types(sites, every)
         # review s176 N3: the input's own BTF is read only when there is a kCFI call to name (--btf is always read)
-        type_names = (_type_names(a, data) if stats.get("scheme") != "jump-table CFI" and (a.btf or sites)
+        type_names = (_type_names(a, data, bool(sites)) if stats.get("scheme") != "jump-table CFI" and (a.btf or sites)
                       else None)
         if a.btf and stats.get("scheme") == "jump-table CFI":  # review s176 N2: say so instead of ignoring it silently
             print("cfiscope: --btf is for kCFI type hashes; ignored for this jump-table CFI kernel", file=sys.stderr)
         if type_names is not None:
             stats["kcfi_hashes_named"], _ = kcfi_types.name_sites(sites, type_names)
             stats["btf_prototypes"] = type_names.protos
+        kernel = None
+        if a.with_kernel and stats.get("scheme") == "jump-table CFI":
+            print("cfiscope: --with is for kCFI type hashes; ignored for this jump-table CFI kernel", file=sys.stderr)
+        elif a.with_kernel and sites:
+            kernel = Kernel(a.with_kernel, arch, sites)
+            stats["kernel"] = kernel.stats(sites)
+        elif a.with_kernel:      # review s189 NIT 4: say so instead of ignoring it silently (the file is not read)
+            print("cfiscope: --with ignored: this input has no kCFI call site (%s not read)" % a.with_kernel,
+                  file=sys.stderr)
+        kwant = None      # --callers of a kernel function (--with): its addresses in the kernel
         if a.callers or a.targets:
-            want = parse_target(a.callers or a.targets, names)
+            try:
+                want = parse_target(a.callers or a.targets, names)
+            except InputError:
+                if a.callers and kernel is not None:
+                    try:
+                        kwant, want = parse_target(a.callers, kernel.names), set()
+                    except InputError:
+                        raise InputError("unknown function %r (not in this module nor in %s; give an address "
+                                         "instead)" % (a.callers, kernel.label))
+                elif a.callers and not a.with_kernel and _relocatable(a, data):  # review s189 MINOR 2
+                    raise InputError("unknown function %r (no such symbol in this module; a kernel function? add "
+                                     "--with VMLINUX, its kernel ELF; or give an address)" % a.callers)
+                else:
+                    raise
     except (OSError, InputError, ValueError, OverflowError, struct.error) as e:
         print("cfiscope: %s" % e, file=sys.stderr)
         return 2
 
-    if a.callers:
+    if a.callers and kwant is not None:
+        calls, checks = [s for s in sites if kwant.intersection(kernel.targets(s))], []
+        chosen = calls
+        label = "%s (in %s%s)" % (a.callers, kernel.label,
+                                  ", %d functions of that name" % len(kwant) if len(kwant) > 1 else "")
+        header = core.callers_header(len(calls), 0, label)
+    elif a.callers:
         # Call sites first; then type checks whose call was not linked (not counted); the CFI runtime's own checks
         # (in __cfi_check: they guard no call) are left out.
         calls, checks = core.callers(sites, want.__contains__, runtime_test(names, ranges))
@@ -341,6 +445,8 @@ def main(argv=None):
         label = a.callers if len(want) > 1 else names(min(want))
         if len(want) > 1:
             label += " (%d functions of that name)" % len(want)
+        if kernel is not None and a.callers in kernel.names.by_name:  # review s189 MINOR 3: the module's name wins
+            label += " (in this module; %s also has a function of that name, not searched)" % kernel.label
         header = core.callers_header(len(calls), len(checks), label)
     elif a.targets:
         chosen = [s for s in sites if want & {s.call_ea, s.check_ea}]
@@ -358,9 +464,11 @@ def main(argv=None):
         out = {"stats": stats}
         if a.callers:
             out["callers"] = {"call_sites": len(calls), "unlinked_checks": len(checks)}
+            if kernel is not None:   # --with: where the name was found (the module's own symbol wins)
+                out["callers"]["target_in"] = "kernel" if kwant is not None else "module"
         if chosen is not None:
             limit = 1 << 30 if a.targets or a.max_list is None else a.max_list
-            out["sites"] = [_site_dict(s, names, limit, type_names) for s in chosen]
+            out["sites"] = [_site_dict(s, names, limit, type_names, kernel) for s in chosen]
         json.dump(out, sys.stdout, indent=1)
         print()
         return 0
@@ -380,11 +488,19 @@ def main(argv=None):
         if "outside_text" in st and st["sites"]:
             print("candidates outside kernel code left out: %d (between the _etext and _sinittext symbols, outside "
                   "the code areas named there)" % st["outside_text"])
+        if "kernel" in st:
+            print("with --with %(file)s (%(named_functions)d named functions): sites with candidates in the kernel "
+                  "%(sites_with_kernel_candidates)d; with none in this file but some in the kernel "
+                  "%(sites_only_in_kernel)d; in neither %(sites_in_neither)d" % st["kernel"])
         if not st["sites"] and any(m in data for m in OLD_CFI_MARKERS):
             print("no kCFI checks found: this kernel uses the older jump-table Clang CFI of Linux 5.x "
                   "(it contains .cfi_jt / __cfi_check), but CFIScope found no aarch64 jump table of 8-byte "
                   "`bti c; b` entries with checks that use it; it reads that form (as in Android 13 GKI 5.15), "
                   "not x86-64 or jump tables without BTI")
+        elif not st["sites"] and st.get("blr_instructions") == 0:
+            print("no kCFI checks found, and the code makes no indirect call (no blr instruction): kCFI has nothing "
+                  "to check here, so this does not tell whether it was built with kCFI (a loadable module may "
+                  "simply make no indirect call)" + (", or --arch/--base is wrong" if a.raw else ""))
         elif not st["sites"]:
             print("no kCFI checks found: this kernel was probably built without Clang kCFI "
                   "(CONFIG_CFI_CLANG on Linux 6.1 or later), for example by GCC; no aarch64 jump-table CFI "
@@ -398,7 +514,11 @@ def main(argv=None):
             print(_site_line(s, names, 0).rstrip(" ."))
             for t in s.targets:
                 print("    0x%x  %s" % (t, names(t)))
+            if kernel is not None:
+                print("  in %s (%d):" % (kernel.label, len(kernel.targets(s))))
+                for t in kernel.targets(s):
+                    print("    0x%x  %s" % (t, kernel.names(t)))
         return 0
     for s in chosen:
-        print(_site_line(s, names, 8 if a.max_list is None else a.max_list))
+        print(_site_line(s, names, 8 if a.max_list is None else a.max_list, kernel))
     return 0

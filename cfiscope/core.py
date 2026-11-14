@@ -230,15 +230,16 @@ def resolve(ranges, arch, text=None):
         old = resolve_jump_table_cfi(ranges)
         if old is not None:
             return old
+        # No check and no jump-table CFI: say whether the code makes an indirect call at all (a kCFI module may make
+        # none, GKI zram.ko). Counted only here, so a jump-table CFI kernel does not pay for it (review s189 NIT 5).
+        stats["blr_instructions"] = sum(count_blr(mem) for _base, mem in ranges)
     return sites, stats
 
 
-def _resolve_kcfi(ranges, arch, text=None):
-    sites = []
-    for base, mem in ranges:
-        sites.extend(scan_sites(mem, base, arch))
-    wanted = {s.hash for s in sites}
-    disps = sorted({s.disp for s in sites})
+def preamble_index(ranges, arch, wanted, disps, text=None):
+    """({hash: set of function addresses}, set of addresses left out) for the type hashes in wanted stored in front
+    of a function in ranges, at each offset in disps (Site.disp).  text: as for resolve().  Also used on a kernel for
+    the call sites of a module (the command line's --with)."""
     by_hash = defaultdict(set)
     outside = set()
     inside = _in_ranges(text) if text is not None else None
@@ -251,6 +252,16 @@ def _resolve_kcfi(ranges, arch, text=None):
                         outside.add(t)
                         continue
                     by_hash[h].add(t)
+    return by_hash, outside
+
+
+def _resolve_kcfi(ranges, arch, text=None):
+    sites = []
+    for base, mem in ranges:
+        sites.extend(scan_sites(mem, base, arch))
+    wanted = {s.hash for s in sites}
+    disps = sorted({s.disp for s in sites})
+    by_hash, outside = preamble_index(ranges, arch, wanted, disps, text)
     for s in sites:
         s.targets = sorted(by_hash.get(s.hash, ()))
     counts = sorted(len(s.targets) for s in sites)
@@ -1190,6 +1201,21 @@ def type_label(site):
 # ---- callers of a function ----
 
 RUNTIME_CHECK_FUNCTION = "__cfi_check"   # jump-table CFI: the runtime's check function (kernel and each module)
+
+
+_BLR = re.compile(rb"..\x3f[\xd6\xd7]", re.DOTALL)   # blr xN and the PAuth blraa(z) / blrab(z), checked by _is_blr
+
+
+def _is_blr(w):
+    """blr xN, blraaz / blrabz xN, or blraa / blrab xN, xM."""
+    return (w & 0xfffffc1f == 0xd63f0000 or w & 0xfffff81f == 0xd63f081f or w & 0xfffff800 == 0xd73f0800)
+
+
+def count_blr(mem):
+    """Number of blr instructions (4-byte aligned; blr and the PAuth blraa(z) / blrab(z)) in this aarch64 code: its
+    indirect calls."""
+    mem = bytes(mem)
+    return sum(1 for m in _aligned(_BLR, mem) if _is_blr(struct.unpack_from("<I", mem, m.start())[0]))
 
 
 def has_indirect_call(mem):

@@ -842,6 +842,30 @@ class Reopen(unittest.TestCase):
                 p.term()
 
 
+class NoIndirectCall(unittest.TestCase):
+    """ko189: Scan on a kCFI module that makes no indirect call (GKI zram.ko; here kcfi_quirks_a64.o, Clang kCFI, no
+    blr) warned that the binary "may not be built with -fsanitize=kcfi"; it now says the code has no indirect call."""
+
+    def test_scan_warning(self):
+        w, E, log = load_entry("kcfi_quirks_a64", "ARM")
+        self.assertEqual(E.ScanAction().activate(None), 1)
+        warns = [m for m in log["msgs"] if m.startswith("WARN")]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("makes no indirect call (no blr instruction)", warns[0])
+        self.assertNotIn("GCC", warns[0])
+        self.assertTrue(any('"blr_instructions": 0' in m for m in log["msgs"]))
+
+    def test_other_warning_unchanged(self):
+        # An x86-64 object with no check: no blr count (aarch64 only), the old warning.
+        w, E, log = load_entry("x86_64-kernel")
+        for seg in w.segs:
+            w.mem[seg.start_ea] = b"\x90" * len(w.mem[seg.start_ea])
+        self.assertEqual(E.ScanAction().activate(None), 1)
+        warns = [m for m in log["msgs"] if m.startswith("WARN")]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("may not be built with -fsanitize=kcfi", warns[0])
+
+
 class JumpTableCfi(unittest.TestCase):
     """The plugin actions on the hand-assembled Linux 5.x jump-table CFI fixture."""
 

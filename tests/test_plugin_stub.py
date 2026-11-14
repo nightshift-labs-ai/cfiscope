@@ -386,6 +386,27 @@ class BTFTypeNames(unittest.TestCase):
         self.assertEqual(il.pseudocode_text(by_hash[0x4a7b6fdc]), "CFIScope: 0 candidates in this image")
 
 
+    def test_split_btf_module_says_why(self):
+        # review s189 NIT 6: on a module with split BTF the IDA layer named nothing and said nothing.
+        import tempfile
+        from test_cli import ModuleSplitBTF
+        w, il = IdaLayer.make(None, "kcfi_types_a64", "ARM")
+        msgs = []
+        sys.modules["ida_kernwin"].msg = msgs.append
+        with tempfile.TemporaryDirectory() as tmp:
+            w.input_path, _ = ModuleSplitBTF().module(tmp)
+            sites, stats = il.scan()
+        self.assertTrue(sites)
+        self.assertNotIn("kcfi_hashes_named", stats)
+        self.assertEqual(len([m for m in msgs if "split BTF" in m]), 1, msgs)
+        self.assertIn("--btf KERNEL", msgs[0])
+        msgs.clear()
+        w.input_path = os.path.join(HERE, "fixtures", "kcfi_types_btf.o")   # whole BTF: named, no hint
+        sites, stats = il.scan()
+        self.assertEqual(stats["kcfi_hashes_named"], 3)
+        self.assertFalse([m for m in msgs if "split BTF" in m])
+
+
 class NoXrefsIntoData(unittest.TestCase):
     """tests/test_core.kernel_with_rodata_hash() in one RWX segment, as IDA loads a vmlinux-to-elf ELF: the hash value
     in 'rodata' yields a candidate at KB + 0x1004 next to the real one at KB + 0x24."""

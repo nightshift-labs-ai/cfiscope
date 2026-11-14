@@ -324,6 +324,12 @@ class ScanAction(ida_kernwin.action_handler_t):
             ida_kernwin.hide_wait_box()
         report(json.dumps(STATE["stats"]))
         report(json.dumps(res))
+        if not sites and STATE["stats"].get("blr_instructions") == 0:   # e.g. a kCFI module with no indirect call
+            ida_kernwin.warning("No kCFI checks found: the code makes no indirect call (no blr instruction), so kCFI "
+                                "has nothing to check here. This does not tell whether it was built with kCFI (a "
+                                "loadable module may simply make no indirect call).")
+            save_marker(None)
+            return 1
         if not sites:
             ida_kernwin.warning("No kCFI checks found, and no aarch64 jump-table CFI either. This binary may not be "
                                 "built with -fsanitize=kcfi (Linux 6.1+ CONFIG_CFI_CLANG) or with the older "

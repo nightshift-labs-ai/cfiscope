@@ -240,22 +240,39 @@ class BTFError(ValueError):
     pass
 
 
-class BTF:
-    """A parsed .BTF blob: self.types[i] = (kind, name, kind_flag, size_or_type, extra) for type id i."""
+def _layout(blob):
+    """(start of the types, end of the types, start of the strings, string length) of a BTF blob."""
+    if len(blob) < 24:
+        raise BTFError("BTF too short")
+    magic, _ver, _flags, hdr_len = struct.unpack_from("<HBBI", blob, 0)
+    if magic != BTF_MAGIC:
+        raise BTFError("no BTF magic (only little-endian BTF is read)")
+    type_off, type_len, str_off, str_len = struct.unpack_from("<4I", blob, 8)
+    t0, s0 = hdr_len + type_off, hdr_len + str_off
+    if t0 + type_len > len(blob) or s0 + str_len > len(blob):
+        raise BTFError("BTF sections run past the end")
+    return t0, t0 + type_len, s0, str_len
 
-    def __init__(self, blob):
-        if len(blob) < 24:
-            raise BTFError("BTF too short")
-        magic, _ver, _flags, hdr_len = struct.unpack_from("<HBBI", blob, 0)
-        if magic != BTF_MAGIC:
-            raise BTFError("no BTF magic (only little-endian BTF is read)")
-        type_off, type_len, str_off, str_len = struct.unpack_from("<4I", blob, 8)
-        t0, s0 = hdr_len + type_off, hdr_len + str_off
-        if t0 + type_len > len(blob) or s0 + str_len > len(blob):
-            raise BTFError("BTF sections run past the end")
-        self.strings = blob[s0:s0 + str_len]
-        self.types = [(0, "", 0, 0, None)]
-        p, end = t0, t0 + type_len
+
+def is_split(blob):
+    """Is this split BTF, as in a module's .BTF: names or type ids beyond its own, which continue vmlinux's BTF?"""
+    t0, end, _s0, str_len = _layout(blob)
+    recs = list(_offsets(blob, t0, end))
+    return any(name_off >= str_len or any(r > len(recs) for r in refs) for _kind, name_off, refs in recs)
+
+
+class BTF:
+    """A parsed .BTF blob: self.types[i] = (kind, name, kind_flag, size_or_type, extra) for type id i.
+
+    base: the parsed BTF that a split BTF (a module's .BTF) continues, its kernel's: type ids and string offsets then
+    run on from base's, and self.types and self.strings hold both."""
+
+    def __init__(self, blob, base=None):
+        t0, end, s0, str_len = _layout(blob)
+        self.strings = (base.strings if base is not None else b"") + blob[s0:s0 + str_len]
+        self.types = list(base.types) if base is not None else [(0, "", 0, 0, None)]
+        first = len(self.types)
+        p = t0
         while p < end:
             name_off, info, st = struct.unpack_from("<3I", blob, p)
             p += 12
@@ -283,9 +300,20 @@ class BTF:
             raise BTFError("BTF type section is truncated")
         # A module's .BTF is split BTF: its names and type ids continue those of vmlinux's BTF, which is not here.
         n = len(self.types)
+        if base is None:
+            for kind, name_off, refs in _offsets(blob, t0, end):
+                if name_off >= str_len or any(r >= n for r in refs):
+                    raise BTFError("split BTF (a module's .BTF refers to vmlinux's types); give the kernel's BTF "
+                                   "instead")
+            return
+        # On a base: every name must start a string and every type id exist. The split BTF of one build on the
+        # kernel BTF of another fails this (its offsets land inside strings), rather than being misread.
+        strings = self.strings
         for kind, name_off, refs in _offsets(blob, t0, end):
-            if name_off >= str_len or any(r >= n for r in refs):
-                raise BTFError("split BTF (a module's .BTF refers to vmlinux's types); give the kernel's BTF instead")
+            if name_off >= len(strings) or (name_off and strings[name_off - 1] != 0) or any(r >= n for r in refs):
+                raise BTFError("this split BTF does not continue the given kernel BTF (BTF of another kernel build?)")
+        if first == n:
+            raise BTFError("empty split BTF")
 
     def name(self, off):
         e = self.strings.find(b"\0", off)
@@ -618,6 +646,27 @@ def load_type_names(data):
     if blob is None:
         return None
     return TypeNames(BTF(blob))
+
+
+def has_split_btf(data):
+    """Does this ELF (a module, .ko) carry split BTF, which needs its kernel's BTF to be read?"""
+    blob = find_btf(data)
+    try:
+        return blob is not None and is_split(blob)
+    except (BTFError, struct.error):
+        return False
+
+
+def load_split_type_names(data, kernel_data):
+    """TypeNames from a module's split BTF (data: the .ko) read on top of its kernel's BTF (kernel_data: an ELF with
+    a .BTF section, a raw kernel image or raw BTF); None if data has no split BTF. BTFError if kernel_data has no
+    BTF or the module's does not continue it."""
+    if not has_split_btf(data):
+        return None
+    base = find_btf(kernel_data)
+    if base is None:
+        raise BTFError("no BTF found (no .BTF section, BTF header or raw BTF)")
+    return TypeNames(BTF(find_btf(data), base=BTF(base)))
 
 
 def name_sites(sites, names):

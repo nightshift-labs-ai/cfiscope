@@ -310,6 +310,317 @@ class UnreadableBTFNoSites(unittest.TestCase):
             self.assertIn("BTF is unreadable", err)
 
 
+class NoIndirectCall(unittest.TestCase):
+    """ko189: a kCFI module that makes no indirect call (GKI zram.ko: 0 blr) was reported as "probably built without
+    Clang kCFI ... for example by GCC". kcfi_quirks_a64.o is such an object: Clang -fsanitize=kcfi, type hashes in
+    front of its functions, no blr."""
+
+    def test_no_blr_is_not_called_gcc(self):
+        path = os.path.join(FIX, "kcfi_quirks_a64.o")
+        rc, out, _ = run(path)
+        self.assertEqual(rc, 0)
+        self.assertIn("call sites 0", out)
+        self.assertNotIn("GCC", out)
+        self.assertIn("no indirect call (no blr instruction)", out)
+        rc, out, _ = run(path, "--json")
+        self.assertEqual(json.loads(out)["stats"]["blr_instructions"], 0)
+
+    def test_blr_without_checks_keeps_the_gcc_hint(self):
+        # The same object with one of its words made a blr: no kCFI check guards it, so the old message stays.
+        with open(os.path.join(FIX, "kcfi_quirks_a64.o"), "rb") as fh:
+            d = bytearray(fh.read())
+        arch, ranges, _ = cli.load_elf(bytes(d))
+        sec = next(s for s in cli._sections(bytes(d)) if s[2] & 4 and s[5])
+        struct.pack_into("<I", d, sec[4] + sec[5] - 4, 0xd63f0100)      # blr x8 as the last word of .text
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "blr.o")
+            with open(path, "wb") as fh:
+                fh.write(d)
+            rc, out, _ = run(path)
+            self.assertEqual(rc, 0)
+            self.assertIn("probably built without Clang kCFI", out)
+            self.assertNotIn("no indirect call", out)
+            rc, out, _ = run(path, "--json")
+            self.assertEqual(json.loads(out)["stats"]["blr_instructions"], 1)
+
+    def test_key_only_without_sites(self):
+        rc, out, _ = run(os.path.join(FIX, "aarch64-plain.o"), "--json")
+        self.assertNotIn("blr_instructions", json.loads(out)["stats"])
+
+    def test_pauth_calls_count(self):
+        # review s189 NIT 5: blraa / blrab / blraaz / blrabz are indirect calls too; br, ret and braa are not.
+        from cfiscope import core
+        words = [0xd63f0100,                 # blr x8
+                 0xd63f091f, 0xd63f0d1f,     # blraaz x8, blrabz x8
+                 0xd73f0911, 0xd73f0d11,     # blraa x8, x17; blrab x8, x17
+                 0xd61f0100, 0xd65f03c0,     # br x8, ret
+                 0xd71f0911]                 # braa x8, x17
+        self.assertEqual(core.count_blr(struct.pack("<%dI" % len(words), *words)), 5)
+        self.assertEqual(core.count_blr(b"\0\0" + struct.pack("<I", 0xd63f0100) + b"\0\0"), 0)   # misaligned
+
+    def test_not_counted_on_jump_table_cfi(self):
+        # review s189 NIT 5: the count was made (and thrown away) on every 5.x jump-table CFI kernel too.
+        from unittest import mock
+        from cfiscope import core
+        with mock.patch.object(core, "count_blr", side_effect=AssertionError("count_blr called")):
+            rc, out, err = run(os.path.join(FIX, "aarch64-jtcfi.elf"), "--json")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(out)["stats"]["scheme"], "jump-table CFI")
+
+
+def module_and_kernel(tmp, unhash=("impl_2_0", "impl_2_1", "impl_2_2")):
+    """A stand-in for a module (.ko) and its kernel, from aarch64-plain.o (ET_REL, one section per function):
+    module.o is the object with the type hash in front of each function in unhash zeroed, so that their call
+    (do_call_2) has no candidate in the module; kernel.elf is an ET_EXEC holding the object's unchanged code at
+    0xffffffc008000000 with every function renamed k_<name>. Returns (module path, kernel path)."""
+    sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+    try:
+        import gen_fixtures
+    finally:
+        sys.path.pop(0)
+    with open(os.path.join(FIX, "aarch64-plain.o"), "rb") as fh:
+        d = bytearray(fh.read())
+    secs = cli._sections(bytes(d))
+    shstr = secs[struct.unpack_from("<H", d, 0x3e)[0]]
+    def sec_name(s):
+        start = shstr[4] + s[0]
+        return bytes(d[start:d.index(b"\0", start)]).decode()
+    for s in secs:
+        if sec_name(s) in [".text." + n for n in unhash]:
+            d[s[4]:s[4] + 4] = b"\0\0\0\0"
+    arch, ranges, symbols = cli.load_elf(bytes(d))
+    with open(os.path.join(FIX, "aarch64-plain.o"), "rb") as fh:
+        _, ranges, _ = cli.load_elf(fh.read())
+    lo, kb = ranges[0][0], 0xffffffc008000000
+    code = bytearray(ranges[-1][0] + len(ranges[-1][1]) - lo)
+    for base, mem in ranges:
+        code[base - lo:base - lo + len(mem)] = mem
+    module, kernel = os.path.join(tmp, "module.o"), os.path.join(tmp, "kernel.elf")
+    with open(module, "wb") as fh:
+        fh.write(d)
+    with open(kernel, "wb") as fh:
+        fh.write(gen_fixtures.elf64_aarch64(bytes(code), kb, sorted(("k_" + n, kb + ea - lo)
+                                                                   for ea, n in symbols.items())))
+    return module, kernel
+
+
+class WithKernel(unittest.TestCase):
+    """ko189: --with VMLINUX lists, for each call site of a module, the kernel's functions with the call's hash."""
+
+    def test_sites_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = module_and_kernel(tmp)
+            rc, out, _ = run(module, "--sites", "--json")
+            doc = json.loads(out)
+            by_in = {s["in"].split("+")[0]: s for s in doc["sites"]}
+            self.assertEqual(by_in["do_call_2"]["candidates"], 0)
+            self.assertNotIn("kernel_candidates", by_in["do_call_2"])
+            self.assertNotIn("kernel", doc["stats"])
+            rc, out, err = run(module, "--sites", "--json", "--with", kernel)
+            self.assertEqual(rc, 0, err)
+            doc = json.loads(out)
+            by_in = {s["in"].split("+")[0]: s for s in doc["sites"]}
+            s2 = by_in["do_call_2"]
+            self.assertEqual((s2["candidates"], s2["kernel_candidates"]), (0, 3))
+            self.assertEqual([t["name"] for t in s2["kernel_targets"]], ["k_impl_2_0", "k_impl_2_1", "k_impl_2_2"])
+            for s in doc["sites"]:        # every other call: the same functions in the module and in the kernel
+                if s is not s2:
+                    self.assertEqual(["k_" + t["name"] for t in s["targets"]], [t["name"] for t in s["kernel_targets"]])
+            self.assertEqual(doc["stats"]["kernel"], {
+                "file": "kernel.elf", "named_functions": 97, "sites_with_kernel_candidates": 21,
+                "sites_only_in_kernel": 1, "sites_in_neither": 0})
+
+    def test_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = module_and_kernel(tmp)
+            rc, out, err = run(module, "--with", kernel)
+            self.assertEqual(rc, 0, err)
+            self.assertIn("with --with kernel.elf (97 named functions): sites with candidates in the kernel 21; "
+                          "with none in this file but some in the kernel 1; in neither 0", out)
+            rc, out, _ = run(module, "--sites", "--with", kernel)
+            line = next(x for x in out.splitlines() if "do_call_2+" in x)
+            self.assertTrue(line.endswith("0 candidate(s); in kernel.elf 3: k_impl_2_0, k_impl_2_1, k_impl_2_2"), line)
+            rc, out, _ = run(module, "--sites", "--with", kernel, "--max-list", "1")
+            line = next(x for x in out.splitlines() if "do_call_2+" in x)
+            self.assertTrue(line.endswith("0 candidate(s); in kernel.elf 3: k_impl_2_0 ..."), line)
+            rc, out, _ = run(module, "--sites")
+            self.assertNotIn("kernel.elf", out)
+
+    def test_callers_and_targets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = module_and_kernel(tmp)
+            rc, out, _ = run(module, "--callers", "impl_2_1")       # its hash was zeroed: nothing in the module
+            self.assertEqual((rc, out.splitlines()[0]), (0, "0 call site(s) can reach impl_2_1"))
+            rc, out, _ = run(module, "--callers", "k_impl_2_1")
+            self.assertEqual(rc, 2)
+            rc, out, err = run(module, "--callers", "k_impl_2_1", "--with", kernel)
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(out.splitlines()[0], "1 call site(s) can reach k_impl_2_1 (in kernel.elf)")
+            self.assertIn("do_call_2+0x24", out.splitlines()[1])
+            rc, out, _ = run(module, "--callers", "impl_3_1", "--with", kernel)   # a module function: as before
+            self.assertEqual(out.splitlines()[0], "1 call site(s) can reach impl_3_1")
+            rc, out, _ = run(module, "--sites", "--json")
+            call = next(s["call"] for s in json.loads(out)["sites"] if s["in"].startswith("do_call_2+"))
+            rc, out, _ = run(module, "--targets", call, "--with", kernel)
+            self.assertEqual(rc, 0)
+            lines = out.splitlines()
+            self.assertEqual(lines[-4], "  in kernel.elf (3):")
+            self.assertEqual([x.split()[1] for x in lines[-3:]], ["k_impl_2_0", "k_impl_2_1", "k_impl_2_2"])
+            self.assertTrue(lines[-1].split()[0].startswith("0xffffffc008"))
+
+    def test_callers_json_says_where_the_name_was_found(self):
+        # review s189 MINOR 3: with --with, JSON says whether the target was the module's or the kernel's; a name in
+        # both is the module's (said in the text header too).
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = module_and_kernel(tmp)
+            rc, out, _ = run(module, "--callers", "k_impl_2_1", "--with", kernel, "--json")
+            self.assertEqual(json.loads(out)["callers"], {"call_sites": 1, "unlinked_checks": 0, "target_in": "kernel"})
+            rc, out, _ = run(module, "--callers", "impl_3_1", "--with", kernel, "--json")
+            self.assertEqual(json.loads(out)["callers"]["target_in"], "module")
+            rc, out, _ = run(module, "--callers", "impl_3_1", "--json")      # no --with: unchanged
+            self.assertNotIn("target_in", json.loads(out)["callers"])
+            # A kernel that also has impl_3_1: the module's symbol wins, and the header says so.
+            k2 = os.path.join(tmp, "kernel2.elf")
+            with open(kernel, "rb") as fh:
+                d = fh.read()
+            with open(k2, "wb") as fh:
+                fh.write(d.replace(b"k_impl_3_1\0", b"impl_3_1\0\0\0"))
+            rc, out, err = run(module, "--callers", "impl_3_1", "--with", k2)
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(out.splitlines()[0], "1 call site(s) can reach impl_3_1 (in this module; kernel2.elf "
+                                                  "also has a function of that name, not searched)")
+            rc, out, _ = run(module, "--callers", "impl_3_1", "--with", k2, "--json")
+            self.assertEqual(json.loads(out)["callers"]["target_in"], "module")
+
+    def test_unknown_callers_name_hint(self):
+        # review s189 MINOR 2: a kernel function asked of a module without --with gets a hint to add --with; with
+        # --with, an unknown name says that the kernel was searched too. A vmlinux gets no --with hint.
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = module_and_kernel(tmp)
+            rc, _, err = run(module, "--callers", "k_impl_2_1")
+            self.assertEqual(rc, 2)
+            self.assertIn("unknown function 'k_impl_2_1'", err)
+            self.assertIn("add --with VMLINUX", err)
+            rc, _, err = run(module, "--callers", "no_such_fn", "--with", kernel)
+            self.assertEqual(rc, 2)
+            self.assertIn("not in this module nor in kernel.elf", err)
+            self.assertNotIn("add --with", err)
+            rc, _, err = run(kernel, "--callers", "no_such_fn")
+            self.assertEqual(rc, 2)
+            self.assertNotIn("--with", err)
+
+    def test_bad_kernel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, _ = module_and_kernel(tmp)
+            rc, _, err = run(module, "--with", os.path.join(FIX, "x86_64-plain.o"))
+            self.assertEqual(rc, 2)
+            self.assertIn("--with", err)
+            self.assertIn("x86_64", err)
+            rc, _, err = run(module, "--with", os.path.join(tmp, "missing.elf"))
+            self.assertEqual(rc, 2)
+            raw = os.path.join(tmp, "Image")
+            with open(raw, "wb") as fh:
+                fh.write(b"\0" * 4096)
+            rc, _, err = run(module, "--with", raw)
+            self.assertEqual(rc, 2)
+            self.assertIn("give the kernel as an ELF with symbols", err)
+            self.assertNotIn("--raw", err)
+
+    def test_ignored_without_call_sites(self):
+        # review s189 NIT 4: a module with no kCFI call site (GKI zram.ko) ignored --with silently.
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out, err = run(os.path.join(FIX, "kcfi_quirks_a64.o"), "--with", os.path.join(tmp, "missing.elf"))
+            self.assertEqual(rc, 0)
+            self.assertIn("call sites 0", out)
+            self.assertIn("--with ignored: this input has no kCFI call site", err)
+
+    def test_ignored_for_jump_table_cfi(self):
+        rc, out, err = run(os.path.join(FIX, "aarch64-jtcfi.elf"), "--with", os.path.join(FIX, "aarch64-plain.o"))
+        self.assertEqual(rc, 0)
+        self.assertIn("--with is for kCFI type hashes; ignored for this jump-table CFI kernel", err)
+
+
+class ModuleSplitBTF(unittest.TestCase):
+    """ko189: a module's .BTF is split BTF on top of its kernel's. --btf KERNEL now reads both (GKI bluetooth.ko:
+    7 of 48 hashes named from the kernel's BTF alone). Here kcfi_types_a64.o carries the last types of
+    kcfi_types_btf.o's BTF as split BTF, and base.btf holds the first 29 (test_kcfi_types.split_btf)."""
+
+    def module(self, tmp, k=29):
+        sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+        try:
+            import add_btf_section as A
+        finally:
+            sys.path.pop(0)
+        from test_kcfi_types import split_btf
+        from cfiscope import kcfi_types
+        with open(os.path.join(FIX, "kcfi_types_btf.o"), "rb") as fh:
+            base, split = split_btf(kcfi_types.find_btf(fh.read()), k)
+        with open(os.path.join(FIX, "kcfi_types_a64.o"), "rb") as fh:
+            obj = A.add_btf(fh.read(), split)
+        module, kernel = os.path.join(tmp, "m.ko"), os.path.join(tmp, "base.btf")
+        with open(module, "wb") as fh:
+            fh.write(obj)
+        with open(kernel, "wb") as fh:
+            fh.write(base)
+        return module, kernel
+
+    def test_split_btf_with_its_kernel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = self.module(tmp)
+            rc, out, err = run(module, "--btf", kernel)
+            self.assertEqual((rc, err), (0, ""))
+            self.assertIn("kCFI hashes named: 3 of 4 (75.0%) from 21 BTF function prototypes", out)
+            # The same as with the whole BTF of the object:
+            rc, whole, _ = run(module, "--btf", os.path.join(FIX, "kcfi_types_btf.o"), "--sites")
+            rc, split, _ = run(module, "--btf", kernel, "--sites")
+            self.assertEqual(split, whole)
+
+    def test_split_btf_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, _ = self.module(tmp)
+            rc, out, err = run(module)
+            self.assertEqual(rc, 0)
+            self.assertNotIn("named:", out)
+            self.assertIn("this module's BTF is split BTF", err)
+            self.assertIn("--btf", err)
+            self.assertNotIn("unreadable", err)
+
+    def test_split_btf_with_another_kernel(self):
+        # The kernel BTF of another build: a warning, then the kernel's BTF alone (its types still hash the same).
+        with tempfile.TemporaryDirectory() as tmp:
+            module, _ = self.module(tmp)
+            other = os.path.join(FIX, "kcfi_quirks_btf.o")
+            rc, out, err = run(module, "--btf", other)
+            self.assertEqual(rc, 0)
+            self.assertIn("does not continue", err)
+            alone = run(os.path.join(FIX, "kcfi_types_a64.o"), "--btf", other)[1]
+            self.assertEqual(out, alone)
+
+
+    def test_no_split_warning_without_call_sites(self):
+        # review s189 NIT 7: a module with no call site (GKI zram.ko) and --btf of another build printed the
+        # split-BTF refusal although there was nothing to name.
+        sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+        try:
+            import add_btf_section as A
+        finally:
+            sys.path.pop(0)
+        from test_kcfi_types import split_btf
+        from cfiscope import kcfi_types
+        with open(os.path.join(FIX, "kcfi_types_btf.o"), "rb") as fh:
+            _, split = split_btf(kcfi_types.find_btf(fh.read()), 29)
+        with open(os.path.join(FIX, "kcfi_quirks_a64.o"), "rb") as fh:
+            obj = A.add_btf(fh.read(), split)
+        with tempfile.TemporaryDirectory() as tmp:
+            module = os.path.join(tmp, "z.ko")
+            with open(module, "wb") as fh:
+                fh.write(obj)
+            rc, out, err = run(module, "--btf", os.path.join(FIX, "kcfi_quirks_btf.o"))
+            self.assertEqual(rc, 0)
+            self.assertIn("call sites 0", out)
+            self.assertEqual(err, "")
+
+
 class QuickTryFixtureBTF(unittest.TestCase):
     """s176: the Quick-try fixtures carry the BTF of t.c (tools/add_btf_section.py), so the first try names types."""
 
