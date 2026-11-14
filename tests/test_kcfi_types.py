@@ -122,6 +122,7 @@ class Mangle(unittest.TestCase):
         f = ("f", ("b", "v"), [("p", ("n", "btf_show")), ("p", ("q", "K", ("b", "c"))), ("s", "__va_list")], False)
         self.assertEqual(K.mangle(f), "_ZTSFvP8btf_showPKcSt9__va_listE")
         self.assertEqual(K.kcfi_hash(K.mangle(f)), 0x37b1f161)
+        # Made-up counts: rounded down, so 100.0% only when every hash is named (GKI 6.1 really gives 4184 of 4184).
         self.assertEqual(K.named_summary(4182, 4184), "kCFI hashes named: 4182 of 4184 (99.9%)")
         self.assertEqual(K.named_summary(3, 3), "kCFI hashes named: 3 of 3 (100.0%)")
 

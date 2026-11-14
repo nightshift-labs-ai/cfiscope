@@ -1,7 +1,8 @@
 """kCFI call-site and target recovery. Pure Python, no IDA imports.
 
 Clang's -fsanitize=kcfi (Linux CONFIG_CFI_CLANG, Android GKI) leaves a 32-bit
-function-type hash in front of every function and compares it at every
+function-type hash in front of every function that may be called indirectly
+(not static functions whose address is never taken) and compares it at every
 indirect call.  Both ends survive in a stripped binary, so matching them gives
 the set of functions a given indirect call may reach.
 """

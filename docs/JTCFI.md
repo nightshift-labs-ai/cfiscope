@@ -43,7 +43,7 @@ median candidates per site with candidates 6 (over all sites 5), max 1310
 
 Its call totals differ from the table below on purpose: the summary counts every `blr` and `br` in the executable segments (21,739 `blr` and 1,485 `br`), the table counts only `blr` in kernel text (21,738), which leaves out one call with candidates in exit text (`dm_exit+0x4c`): 14,053 here, 14,052 there. On the 5.10 kernel the summary says 22,461 and 14,137 (20,940 `blr`, 1,521 `br`; again one call in exit text, `dm_exit+0x40`).
 
-Which indirect calls can reach `tcp_sendmsg` on that kernel (real output):
+Which indirect calls may reach `tcp_sendmsg` on that kernel (same CFI type; real output):
 
 ```
 $ python3 -m cfiscope gki515.elf --callers tcp_sendmsg --max-list 3
