@@ -448,6 +448,23 @@ class WithKernel(unittest.TestCase):
             self.assertEqual([x.split()[1] for x in lines[-3:]], ["k_impl_2_0", "k_impl_2_1", "k_impl_2_2"])
             self.assertTrue(lines[-1].split()[0].startswith("0xffffffc008"))
 
+    def test_unknown_callers_name_hint(self):
+        # review s189 MINOR 2: a kernel function asked of a module without --with gets a hint to add --with; with
+        # --with, an unknown name says that the kernel was searched too. A vmlinux gets no --with hint.
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = module_and_kernel(tmp)
+            rc, _, err = run(module, "--callers", "k_impl_2_1")
+            self.assertEqual(rc, 2)
+            self.assertIn("unknown function 'k_impl_2_1'", err)
+            self.assertIn("add --with VMLINUX", err)
+            rc, _, err = run(module, "--callers", "no_such_fn", "--with", kernel)
+            self.assertEqual(rc, 2)
+            self.assertIn("not in this module nor in kernel.elf", err)
+            self.assertNotIn("add --with", err)
+            rc, _, err = run(kernel, "--callers", "no_such_fn")
+            self.assertEqual(rc, 2)
+            self.assertNotIn("--with", err)
+
     def test_bad_kernel(self):
         with tempfile.TemporaryDirectory() as tmp:
             module, _ = module_and_kernel(tmp)

@@ -409,9 +409,17 @@ def main(argv=None):
             try:
                 want = parse_target(a.callers or a.targets, names)
             except InputError:
-                if not (a.callers and kernel is not None):
+                if a.callers and kernel is not None:
+                    try:
+                        kwant, want = parse_target(a.callers, kernel.names), set()
+                    except InputError:
+                        raise InputError("unknown function %r (not in this module nor in %s; give an address "
+                                         "instead)" % (a.callers, kernel.label))
+                elif a.callers and not a.with_kernel and _relocatable(a, data):  # review s189 MINOR 2
+                    raise InputError("unknown function %r (no such symbol in this module; a kernel function? add "
+                                     "--with VMLINUX, its kernel ELF; or give an address)" % a.callers)
+                else:
                     raise
-                kwant, want = parse_target(a.callers, kernel.names), set()
     except (OSError, InputError, ValueError, OverflowError, struct.error) as e:
         print("cfiscope: %s" % e, file=sys.stderr)
         return 2
