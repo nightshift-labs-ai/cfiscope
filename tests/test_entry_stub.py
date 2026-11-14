@@ -1,6 +1,7 @@
 """Loads cfiscope_entry.py on fake ida_* modules: scan cache, rescan after a rebase, menus, right-click hooks and
 the pseudocode comments. It proves the plugin wiring runs, not that IDA or Hex-Rays behave like the fakes."""
 import importlib, json, os, sys, types, unittest
+from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, ".."))
 import test_plugin_stub as T  # noqa: E402
@@ -101,7 +102,8 @@ class Entry(unittest.TestCase):
         F = lambda ea: types.SimpleNamespace(start_ea=ea, end_ea=ea + 4, tailqty=0)
         sys.modules["ida_funcs"].get_func = lambda ea: F(ea) if ea in w.funcs else None
         self.answers(log, create=0)
-        self.assertEqual(E.ScanAction().activate(None), 1)
+        with mock.patch.dict(os.environ, {"CFISCOPE_DEBUG": "1"}):     # the raw counts too
+            self.assertEqual(E.ScanAction().activate(None), 1)
         self.assertEqual(log["asked"], [("Create functions at candidates IDA has not recognised", 0, 0)])
         self.assertEqual(w.funcs, set(targets[::2]))
         self.assertEqual(w.planned_funcs, set())
@@ -110,6 +112,9 @@ class Entry(unittest.TestCase):
         res = [m for m in log["msgs"] if '"xrefs_skipped_no_function"' in m]
         self.assertEqual(len(res), 1)
         self.assertNotIn('"xrefs_skipped_no_function": 0}', res[0])
+        skipped = json.loads(res[0][len("[CFIScope] "):])["xrefs_skipped_no_function"]
+        self.assertIn("(none to %d candidates that have no function: you answered No to creating functions)" % skipped,
+                      log["msgs"][0])
         # Remove annotations takes out every xref the scan added.
         self.assertEqual(E.RemoveAction().activate(None), 1)
         self.assertEqual(w.crefs, set())
@@ -126,7 +131,8 @@ class Entry(unittest.TestCase):
         F = lambda ea: types.SimpleNamespace(start_ea=ea - 0x10 if ea in inside else ea, end_ea=ea + 4, tailqty=0)
         sys.modules["ida_funcs"].get_func = lambda ea: F(ea) if ea in targets and ea not in none else None
         self.answers(log, create=0)
-        self.assertEqual(E.ScanAction().activate(None), 1)
+        with mock.patch.dict(os.environ, {"CFISCOPE_DEBUG": "1"}):     # the raw counts too
+            self.assertEqual(E.ScanAction().activate(None), 1)
         self.assertEqual(w.planned_funcs, set())
         limit = sys.modules["cfiscope.idalayer"].DEFAULT_XREF_LIMIT
         X = sys.modules["ida_xref"]
@@ -137,6 +143,10 @@ class Entry(unittest.TestCase):
         self.assertEqual((res["data_xrefs_inside_function"], res["xrefs_skipped_no_function"]),
                          (sum(t in inside for _, t in pairs), sum(t in none for _, t in pairs)))
         self.assertTrue(res["data_xrefs_inside_function"] and res["xrefs_skipped_no_function"])
+        self.assertIn("%d cross-references added (%d of them data cross-references to candidates inside a function; "
+                      "none to %d candidates that have no function: you answered No to creating functions)"
+                      % (res["xrefs"] + res["data_xrefs_inside_function"], res["data_xrefs_inside_function"],
+                         res["xrefs_skipped_no_function"]), log["msgs"][0])
         self.assertEqual(E.RemoveAction().activate(None), 1)
         self.assertIn("[CFIScope] xrefs removed: %d\n" % len(set(pairs) - {p for p in pairs if p[1] in none}),
                       log["msgs"])
@@ -853,7 +863,8 @@ class NoIndirectCall(unittest.TestCase):
         self.assertEqual(len(warns), 1)
         self.assertIn("makes no indirect call (no blr instruction)", warns[0])
         self.assertNotIn("GCC", warns[0])
-        self.assertTrue(any('"blr_instructions": 0' in m for m in log["msgs"]))
+        self.assertIn("[CFIScope] Scan: 0 kCFI call sites; the code makes no indirect call (no blr instruction).\n",
+                      log["msgs"])
 
     def test_other_warning_unchanged(self):
         # An x86-64 object with no check: no blr count (aarch64 only), the old warning.
@@ -864,6 +875,62 @@ class NoIndirectCall(unittest.TestCase):
         warns = [m for m in log["msgs"] if m.startswith("WARN")]
         self.assertEqual(len(warns), 1)
         self.assertIn("may not be built with -fsanitize=kcfi", warns[0])
+
+
+NEXT = " Next: Alt-Shift-T on a call, Alt-Shift-X on a function.\n"
+
+
+class ScanMessage(unittest.TestCase):
+    """Review s193 (judge #3): Scan's result in the Output window was two raw JSON dicts ("disps": [-20], ...). Now it
+    is one sentence; the dicts are printed only with the environment variable CFISCOPE_DEBUG=1."""
+
+    def scan(self, name="x86_64-kernel", proc="metapc", create=1, debug=None, btf=True, ext=".o"):
+        """Scan through ScanAction with "Create functions" answered create; the [CFIScope] lines it printed."""
+        with mock.patch.dict(os.environ):
+            os.environ.pop("CFISCOPE_DEBUG", None)
+            if debug is not None:
+                os.environ["CFISCOPE_DEBUG"] = debug
+            w, E, log = load_entry(name, proc, ext=ext)
+            if btf:
+                w.input_path = os.path.join(HERE, "fixtures", name + ext)
+            sys.modules["ida_kernwin"].ask_yn = lambda default, text: create
+            self.assertEqual(E.ScanAction().activate(None), 1)
+        return [m for m in log["msgs"] if m.startswith("[CFIScope]")]
+
+    def test_one_sentence_on_both_fixtures(self):
+        for name, proc in (("x86_64-kernel", "metapc"), ("aarch64-kernel", "ARM")):
+            with self.subTest(name):
+                msgs = self.scan(name, proc)
+                self.assertFalse([m for m in msgs if "{" in m], msgs)            # no raw JSON
+                self.assertEqual(msgs[0], "[CFIScope] Scan: 21 kCFI call sites (21 types, all named from the file's "
+                                 "BTF); 21 with candidates (median 3); 21 comments and 76 cross-references added." + NEXT)
+
+    def test_without_btf_and_after_no(self):
+        # No BTF: hashes, not types. "No" with no function at any candidate: no xref, and the sentence says why.
+        msgs = self.scan(create=0, btf=False)
+        self.assertEqual(msgs[0], "[CFIScope] Scan: 21 kCFI call sites (21 type hashes); 21 with candidates (median 3); "
+                         "21 comments and 0 cross-references added (none to 76 candidates that have no function: you "
+                         "answered No to creating functions)." + NEXT)
+
+    def test_json_only_with_debug_flag(self):
+        for flag in ("", "0"):
+            with self.subTest(flag=flag):
+                self.assertFalse([m for m in self.scan(debug=flag) if "{" in m])
+        msgs = self.scan(debug="1")
+        self.assertTrue(msgs[0].startswith("[CFIScope] Scan: 21 kCFI call sites"), msgs)
+        stats, res = (json.loads(m[len("[CFIScope] "):]) for m in msgs[1:3])
+        self.assertEqual((stats["sites"], stats["disps"], res["comments"], res["xrefs"]), (21, [-20], 21, 76))
+
+    def test_jump_table_cfi(self):
+        # jtcfi_truth.json: 22 candidates over the 9 calls; 11 site comments + 1 on the CFI runtime's call (call_inline)
+        msgs = self.scan("aarch64-jtcfi", "ARM", btf=False, ext=".elf")
+        self.assertEqual(msgs[0], "[CFIScope] Scan: 11 jump-table CFI call sites (3 type ids); 10 with candidates "
+                         "(median 3), 1 with none in this file; 12 comments and 22 cross-references added." + NEXT)
+
+    def test_no_site(self):
+        msgs = self.scan("kcfi_quirks_a64", "ARM", btf=False)
+        self.assertEqual(msgs, ["[CFIScope] Scan: 0 kCFI call sites; the code makes no indirect call (no blr "
+                                "instruction).\n"])
 
 
 class JumpTableCfi(unittest.TestCase):

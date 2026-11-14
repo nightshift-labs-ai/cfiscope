@@ -53,6 +53,34 @@ class Showcase(unittest.TestCase):
         self.assertIn("code xrefs from this call (2): impl_2_0, impl_2_2", out)
         self.assertIn("data xrefs from this call (1): __cfi_impl_2_1+0x20", out)
 
+    def test_module_with_split_btf(self):
+        # Review s193: on a module with split BTF (GKI bluetooth.ko, 8021q.ko) the scan prints a hint with
+        # ida_kernwin.msg, which the showcase's fake modules lacked: AttributeError, so the VERIFICATION .ko numbers
+        # did not reproduce. Here kcfi_types_a64.o carries split BTF, as a .ko does (test_cli.ModuleSplitBTF).
+        from test_cli import ModuleSplitBTF
+        with tempfile.TemporaryDirectory() as tmp:
+            module, _ = ModuleSplitBTF().module(tmp)
+            r = subprocess.run([sys.executable, "-I", TOOL, module, "call_some+0x60", "ops_open"],
+                               capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        self.assertIn("Output window: [CFIScope] this module's BTF is split BTF", r.stdout)
+        self.assertIn("4 sites, 4 comments, 3 cross-references in the whole database", r.stdout)
+        self.assertIn("; kCFI 0x4F4CCB9D: 1 candidate(s): ops_open", r.stdout)      # no type: split BTF not read
+        self.assertIn("on ops_open: 1 row(s)", r.stdout)
+
+    @unittest.skipUnless(os.path.isfile(os.path.join(os.environ.get("CFISCOPE_KO_DIR", ""), "bluetooth.ko")),
+                         "set CFISCOPE_KO_DIR to a folder with the GKI bluetooth.ko and 8021q.ko of docs/VERIFICATION.md")
+    def test_real_modules(self):
+        # docs/VERIFICATION.md, "The IDA layer on a module": 253 / 253 / 1,176 and 6 / 6 / 7.
+        ko = os.environ["CFISCOPE_KO_DIR"]
+        for name, call, callee, want in (
+                ("bluetooth.ko", "compute_ecdh_secret+0x160", "hci_conn_failed", "253 sites, 253 comments, 1176"),
+                ("8021q.ko", "vlan_dev_hard_header+0x120", "vlan_dev_hard_header", "6 sites, 6 comments, 7")):
+            with self.subTest(name):
+                out = subprocess.run([sys.executable, "-I", TOOL, os.path.join(ko, name), call, callee],
+                                     capture_output=True, text=True, check=True).stdout
+                self.assertIn(want + " cross-references in the whole database", out)
+
 
 if __name__ == "__main__":
     unittest.main()

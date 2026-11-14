@@ -155,6 +155,61 @@ def report(text):
     ida_kernwin.msg("[CFIScope] %s\n" % text)
 
 
+def debug_output():
+    """CFISCOPE_DEBUG=1 in the environment IDA was started from: Scan also prints its raw counts as JSON."""
+    return os.environ.get("CFISCOPE_DEBUG", "") not in ("", "0")
+
+
+def _count(n, one, many=None):
+    """'1 call site', '13,897 call sites'."""
+    return "%s %s" % (format(n, ","), one if n == 1 else (many or one + "s"))
+
+
+def scan_sentence(stats, res):
+    """Scan's result in one sentence for the Output window (stats: idalayer.scan(), res: idalayer.annotate())."""
+    if not stats.get("sites"):
+        if stats.get("blr_instructions") == 0:
+            return "Scan: 0 kCFI call sites; the code makes no indirect call (no blr instruction)."
+        return "Scan: 0 kCFI call sites."
+    jt = stats.get("scheme") == "jump-table CFI"
+    if jt:
+        kinds = _count(stats["hashes"], "type id")
+    elif "kcfi_hashes_named" in stats:
+        named = stats["kcfi_hashes_named"]
+        kinds = "%s, %s named from the file's BTF" % (_count(stats["hashes"], "type"),
+                                                      "all" if named == stats["hashes"] else format(named, ","))
+    else:
+        kinds = _count(stats["hashes"], "type hash", "type hashes")
+    text = "Scan: %s (%s); %s with candidates (median %d)" % (
+        _count(stats["sites"], "jump-table CFI call site" if jt else "kCFI call site"), kinds,
+        format(stats["resolved"], ","), stats["median_candidates_resolved"])
+    if stats["unresolved"]:
+        text += ", %s with none in this file" % format(stats["unresolved"], ",")
+    if stats.get("outside_text"):
+        text += ", %s outside kernel code left out" % _count(stats["outside_text"], "candidate")
+    xrefs = res["xrefs"] + res["data_xrefs_inside_function"]
+    text += "; %s and %s added" % (_count(res["comments"] + res["runtime_comments"], "comment"),
+                                   _count(xrefs, "cross-reference"))
+    notes = []
+    inside = res["data_xrefs_inside_function"]
+    if inside:
+        notes.append("1 of them a data cross-reference to a candidate inside a function" if inside == 1 else
+                     "%s of them data cross-references to candidates inside a function" % format(inside, ","))
+    if res["xrefs_skipped_no_function"]:
+        notes.append("none to %s that have no function: you answered No to creating functions"
+                     % _count(res["xrefs_skipped_no_function"], "candidate"))
+    if res["xrefs_skipped_not_code"]:
+        notes.append("none to %s IDA holds as data or outside the code segments"
+                     % _count(res["xrefs_skipped_not_code"], "candidate"))
+    if stats.get("max_candidates", 0) > idalayer.DEFAULT_XREF_LIMIT:
+        notes.append("none for lists of more than %d" % idalayer.DEFAULT_XREF_LIMIT)
+    if res["kept_user_comments"]:
+        notes.append("%s kept" % _count(res["kept_user_comments"], "comment of your own", "comments of your own"))
+    if notes:
+        text += " (%s)" % "; ".join(notes)
+    return text + ". Next: Alt-Shift-T on a call, Alt-Shift-X on a function."
+
+
 
 ISSUES_URL = "https://github.com/nightshift-labs-ai/cfiscope/issues"
 
@@ -322,8 +377,10 @@ class ScanAction(ida_kernwin.action_handler_t):
                 made = idalayer.define_functions(sites)
         finally:
             ida_kernwin.hide_wait_box()
-        report(json.dumps(STATE["stats"]))
-        report(json.dumps(res))
+        report(scan_sentence(STATE["stats"], res))
+        if debug_output():      # the raw counts (CFISCOPE_DEBUG=1)
+            report(json.dumps(STATE["stats"]))
+            report(json.dumps(res))
         if not sites and STATE["stats"].get("blr_instructions") == 0:   # e.g. a kCFI module with no indirect call
             ida_kernwin.warning("No kCFI checks found: the code makes no indirect call (no blr instruction), so kCFI "
                                 "has nothing to check here. This does not tell whether it was built with kCFI (a "

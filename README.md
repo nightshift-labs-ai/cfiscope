@@ -116,7 +116,7 @@ The menu names below are under Edit > Plugins, with their default keys. Scan and
 Quick try, no download (about a minute). The repository ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`.
 
 1. Open `tests/fixtures/x86_64-kernel.o` (or `aarch64-kernel.o`) in IDA. After `hcli plugin install cfiscope` the fixtures are in `$IDAUSR/plugins/cfiscope/tests/fixtures/` (`~/.idapro/plugins/...` on Linux and macOS, `%APPDATA%\Hex-Rays\IDA Pro\plugins\...` on Windows).
-2. Choose **CFIScope: Scan kCFI calls** (`Alt-Shift-K`) and answer its question about creating functions (either answer works for these steps). It should find 21 kCFI call sites, one per function-pointer type in `t.c`, each with candidates (the counts are printed in the Output window).
+2. Choose **CFIScope: Scan kCFI calls** (`Alt-Shift-K`) and answer its question about creating functions (either answer works for these steps). The Output window should then say `Scan: 21 kCFI call sites (21 types, all named from the file's BTF); 21 with candidates (median 3); ...`: one call site per function-pointer type in `t.c`, each with candidates.
 3. Put the cursor on the call in `do_call_2` and choose **CFIScope: Candidates for this call** (`Alt-Shift-T`). It should list `impl_2_0`, `impl_2_1`, `impl_2_2`; the call's comment and the list title name the type, `long (short, int)`, from the BTF of `t.c` that these two fixtures carry.
 4. Put the cursor on `impl_2_1` and choose **CFIScope: Callers of this function** (`Alt-Shift-X`). It should list that call in `do_call_2`.
 
@@ -172,7 +172,7 @@ Full description of each action: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#the
 
 **CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is in [docs/VERIFICATION.md](docs/VERIFICATION.md): the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
 
-Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (156 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules).
+Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (163 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules; one, on the real GKI modules of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), is skipped unless `CFISCOPE_KO_DIR` names the folder that holds them).
 
 CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
 

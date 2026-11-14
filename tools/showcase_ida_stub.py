@@ -29,6 +29,7 @@ def main(argv):
     w = T.World(segs, mem); w.proc = "ARM" if arch == "aarch64" else "metapc"
     w.input_path = os.path.abspath(path)
     il = T.install(w)
+    sys.modules["ida_kernwin"].msg = lambda text: print("Output window: " + text, end="")   # e.g. the split-BTF hint on a .ko
     eas = sorted(symbols)
     w.nlist = [(ea, symbols[ea]) for ea in eas]
     sys.modules["ida_name"].get_ea_name = lambda ea: symbols.get(ea, "")
