@@ -40,6 +40,48 @@ def _extra(t):
     return 4 if kind in (K.K_VAR, K.K_DECL_TAG) else 0
 
 
+def split_btf(blob, k):
+    """(base, split): a BTF blob cut into a "kernel" BTF of its first k types and a "module" split BTF of the rest, as
+    pahole writes a module's .BTF: the split's type ids continue the base's, and its strings follow the base's
+    (here a copy of all strings, so every non-zero name offset in the split's records moves up by the base's string
+    length)."""
+    hdr_len = struct.unpack_from("<I", blob, 4)[0]
+    type_off, type_len, str_off, str_len = struct.unpack_from("<4I", blob, 8)
+    t0, s0 = hdr_len + type_off, hdr_len + str_off
+    strings = blob[s0:s0 + str_len]
+    names = []          # (record start, [offsets of the record's string offsets]) per type
+    p = t0
+    while p < t0 + type_len:
+        _n, info, _st = struct.unpack_from("<3I", blob, p)
+        vlen, kind = info & 0xffff, (info >> 24) & 0x1f
+        at, q = [p], p + 12
+        if kind in (K.K_INT, K.K_VAR, K.K_DECL_TAG):
+            q += 4
+        elif kind == K.K_ARRAY:
+            q += 12
+        elif kind in (K.K_STRUCT, K.K_UNION, K.K_ENUM64):
+            at += [q + 12 * i for i in range(vlen)]
+            q += 12 * vlen
+        elif kind == K.K_DATASEC:
+            q += 12 * vlen
+        elif kind in (K.K_ENUM, K.K_FUNC_PROTO):
+            at += [q + 8 * i for i in range(vlen)]
+            q += 8 * vlen
+        names.append((p, q, at))
+        p = q
+    cut = names[k][0] if k < len(names) else t0 + type_len
+    def blob_of(types, strs):
+        return struct.pack("<HBBI4I", 0xEB9F, 1, 0, 24, 0, len(types), len(types), len(strs)) + types + strs
+    base = blob_of(bytes(blob[t0:cut]), strings)
+    split = bytearray(blob[cut:t0 + type_len])
+    for _p, _q, at in names[k:]:
+        for a in at:
+            off = struct.unpack_from("<I", split, a - cut)[0]
+            if off:
+                struct.pack_into("<I", split, a - cut, off + len(strings))
+    return base, blob_of(bytes(split), strings)
+
+
 class Hash(unittest.TestCase):
     def test_xxh64_reference(self):
         self.assertEqual(K.xxh64(b""), 0xEF46DB3751D8E999)
@@ -241,6 +283,40 @@ class FixtureBTF(unittest.TestCase):
         struct.pack_into("<I", blob, off + 8, 70000)                    # a pointer to a vmlinux type id
         with self.assertRaises(K.BTFError):
             K.BTF(bytes(blob))
+
+    def test_split_btf_on_its_base(self):
+        # ko189: a module's split BTF read on top of its kernel's BTF names the same prototypes as the whole BTF.
+        whole = K.find_btf(read("kcfi_types_btf.o"))
+        full = K.TypeNames(K.BTF(whole))
+        types = K.BTF(whole).types
+        t0 = struct.unpack_from("<I", whole, 4)[0]
+        refs = [r for _k, _n, r in K._offsets(whole, t0, t0 + struct.unpack_from("<I", whole, 12)[0])]
+        # A kernel's BTF stands alone: cut only where the first k types refer to none after them.
+        closed = [k for k in range(1, len(types) - 1) if all(x <= k for r in refs[:k] for x in r)]
+        self.assertGreaterEqual(len(closed), 3)
+        for k in (closed[0], closed[len(closed) // 2], closed[-1]):
+            with self.subTest(k=k):
+                base, split = split_btf(whole, k)
+                self.assertTrue(K.is_split(split))
+                self.assertFalse(K.is_split(base))
+                with self.assertRaises(K.BTFError):
+                    K.BTF(split)                                        # alone: refused, as before
+                both = K.BTF(split, base=K.BTF(base))
+                self.assertEqual([t[:4] for t in both.types], [t[:4] for t in types])
+                names = K.TypeNames(both)
+                self.assertEqual(names.protos, full.protos)
+                self.assertEqual({h: sorted(v) for h, v in names.by_hash.items()},
+                                 {h: sorted(v) for h, v in full.by_hash.items()})
+        self.assertFalse(K.is_split(whole))
+
+    def test_split_btf_on_another_base(self):
+        # The split BTF of one build on the kernel BTF of another: refused, not misread.
+        whole = K.find_btf(read("kcfi_types_btf.o"))
+        n = len(K.BTF(whole).types)
+        base, split = split_btf(whole, n // 2)
+        other = K.find_btf(read("kcfi_quirks_btf.o"))
+        with self.assertRaises(K.BTFError):
+            K.BTF(split, base=K.BTF(other))
 
     def test_datasec_offsets_are_not_type_ids(self):
         # vmlinux's .data..percpu DATASEC has variable offsets far above its type count: not split BTF.

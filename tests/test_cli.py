@@ -464,6 +464,63 @@ class WithKernel(unittest.TestCase):
         self.assertIn("--with is for kCFI type hashes; ignored for this jump-table CFI kernel", err)
 
 
+class ModuleSplitBTF(unittest.TestCase):
+    """ko189: a module's .BTF is split BTF on top of its kernel's. --btf KERNEL now reads both (GKI bluetooth.ko:
+    7 of 48 hashes named from the kernel's BTF alone). Here kcfi_types_a64.o carries the last types of
+    kcfi_types_btf.o's BTF as split BTF, and base.btf holds the first 29 (test_kcfi_types.split_btf)."""
+
+    def module(self, tmp, k=29):
+        sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+        try:
+            import add_btf_section as A
+        finally:
+            sys.path.pop(0)
+        from test_kcfi_types import split_btf
+        from cfiscope import kcfi_types
+        with open(os.path.join(FIX, "kcfi_types_btf.o"), "rb") as fh:
+            base, split = split_btf(kcfi_types.find_btf(fh.read()), k)
+        with open(os.path.join(FIX, "kcfi_types_a64.o"), "rb") as fh:
+            obj = A.add_btf(fh.read(), split)
+        module, kernel = os.path.join(tmp, "m.ko"), os.path.join(tmp, "base.btf")
+        with open(module, "wb") as fh:
+            fh.write(obj)
+        with open(kernel, "wb") as fh:
+            fh.write(base)
+        return module, kernel
+
+    def test_split_btf_with_its_kernel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = self.module(tmp)
+            rc, out, err = run(module, "--btf", kernel)
+            self.assertEqual((rc, err), (0, ""))
+            self.assertIn("kCFI hashes named: 3 of 4 (75.0%) from 21 BTF function prototypes", out)
+            # The same as with the whole BTF of the object:
+            rc, whole, _ = run(module, "--btf", os.path.join(FIX, "kcfi_types_btf.o"), "--sites")
+            rc, split, _ = run(module, "--btf", kernel, "--sites")
+            self.assertEqual(split, whole)
+
+    def test_split_btf_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, _ = self.module(tmp)
+            rc, out, err = run(module)
+            self.assertEqual(rc, 0)
+            self.assertNotIn("named:", out)
+            self.assertIn("this module's BTF is split BTF", err)
+            self.assertIn("--btf", err)
+            self.assertNotIn("unreadable", err)
+
+    def test_split_btf_with_another_kernel(self):
+        # The kernel BTF of another build: a warning, then the kernel's BTF alone (its types still hash the same).
+        with tempfile.TemporaryDirectory() as tmp:
+            module, _ = self.module(tmp)
+            other = os.path.join(FIX, "kcfi_quirks_btf.o")
+            rc, out, err = run(module, "--btf", other)
+            self.assertEqual(rc, 0)
+            self.assertIn("does not continue", err)
+            alone = run(os.path.join(FIX, "kcfi_types_a64.o"), "--btf", other)[1]
+            self.assertEqual(out, alone)
+
+
 class QuickTryFixtureBTF(unittest.TestCase):
     """s176: the Quick-try fixtures carry the BTF of t.c (tools/add_btf_section.py), so the first try names types."""
 

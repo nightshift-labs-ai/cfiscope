@@ -309,10 +309,20 @@ def _print_jt_summary(st):
 
 
 def _type_names(a, data):
-    """kcfi_types.TypeNames from --btf, else from the input's own BTF; None if there is none."""
+    """kcfi_types.TypeNames from --btf, else from the input's own BTF; None if there is none.  A module's own split
+    BTF is read on top of --btf (its kernel's BTF), which it continues."""
     if a.btf:
         with open(a.btf, "rb") as fh:
             btf_data = fh.read()
+        if not a.raw and not a.no_btf:
+            try:
+                names = kcfi_types.load_split_type_names(data, btf_data)
+            except (kcfi_types.BTFError, struct.error) as e:
+                print("cfiscope: the module's BTF was not read (%s); kCFI hashes named from %s alone"
+                      % (e, a.btf), file=sys.stderr)
+                names = None
+            if names is not None:
+                return names
         try:
             names = kcfi_types.load_type_names(btf_data)
         except (kcfi_types.BTFError, struct.error) as e:
@@ -321,6 +331,10 @@ def _type_names(a, data):
             raise InputError("%s: no BTF found (no .BTF section, BTF header or raw BTF)" % a.btf)
         return names
     if a.no_btf:
+        return None
+    if not a.raw and kcfi_types.has_split_btf(data):
+        print("cfiscope: this module's BTF is split BTF (it continues its kernel's BTF): add --btf with its kernel "
+              "(a vmlinux or raw Image of the same build) to name kCFI hashes by C type", file=sys.stderr)
         return None
     try:
         return kcfi_types.load_type_names(data)
