@@ -6,6 +6,10 @@ Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 
 
 The scanner was scored on a real Android GKI kernel for each architecture ([numbers](docs/VERIFICATION.md)); the IDA layer has not been run in IDA yet (see [Status](#status)).
 
+<a href="docs/img/hero.svg"><img src="docs/img/hero.png" width="900" alt="Diagram drawn from python3 -m cfiscope output on the GKI android14-6.1 kernel, not an IDA screenshot. Top: the indirect call blr x8 at sock_sendmsg+0xb4, call hash 0x1ebda935, type int (struct socket *, struct msghdr *, unsigned long), with arrows to its 14 candidates: tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg. Bottom: the 3 indirect calls that may reach tcp_sendmsg (same kCFI type), at kernel_sendmsg_locked+0x64, inet_sendmsg+0x58 and inet6_sendmsg+0x58, each with call hash 0x87bcba6f, type int (struct sock *, struct msghdr *, unsigned long), 11 candidates; kernel_sendmsg_locked+0x64 is a type-only match (it calls proto_ops.sendmsg_locked)."></a>
+
+<sub>Drawn by `tools/draw_hero.py` from `python3 -m cfiscope gki.elf` output on the public GKI android14-6.1 kernel of [Try it](#try-it); not an IDA screenshot. Top: the kCFI-checked `blr x8` in `sock_sendmsg`, its C type from the kernel's BTF, and the 14 functions of that type it may reach. Bottom: the 3 indirect calls that may reach `tcp_sendmsg` (same kCFI type; `kernel_sendmsg_locked+0x64` is a type-only match: it calls `proto_ops.sendmsg_locked`). In blue, `inet_sendmsg` and `inet6_sendmsg`: candidates of the top call that hold two of the bottom calls. How it is made and checked: [docs/img](docs/img/README.md).</sub>
+
 ## Without CFIScope
 
 The call at `sock_sendmsg+0xb4` is `blr x8`: the target is loaded from `sock->ops` at run time, so the binary names no callee. The usual fallback is a name search. In the GKI 6.1 kernel below, 31 functions are named `*_sendmsg` (`nm gki.elf | grep -v __ksymtab | grep -c '_sendmsg$'`): 13 have this call's type, the other 18 (such as `tcp_sendmsg`, which takes a `struct sock *`) would fail its kCFI check, and the search misses `packet_sendmsg_spkt`. Source-level call-graph tools need the source and its LLVM IR, which vendor kernels and modules do not ship. CFIScope lists the call's 14 candidates, all of its type, from the binary alone (next block; 2.3 to 2.7 s on the command line here).
@@ -14,7 +18,7 @@ The call at `sock_sendmsg+0xb4` is `blr x8`: the target is loaded from `sock->op
 
 We have no IDA, so this is the command-line tool, which runs the same scanner as the plugin, on the public GKI aarch64 kernel from the [walkthrough](#try-it) with its symbols restored by vmlinux-to-elf (57,453 named functions). The plugin puts the same answers in its comments, cross-references and jump lists.
 
-Which functions can the indirect call in `sock_sendmsg` reach?
+Which functions may the indirect call in `sock_sendmsg` reach?
 
 ```
 $ python3 -m cfiscope gki.elf --sites --max-list 20 | grep sock_sendmsg+
@@ -165,8 +169,8 @@ A real module (1.4 MB, no conversion): the GKI android14-6.1 `bluetooth.ko` of [
 ## Features
 
 - **Scan kCFI calls** (`Alt-Shift-K`): comments every kCFI call site with the type hash and candidate count. Adds cross-references when the list is short (at most 16) and offers to create functions at candidates IDA has not recognised. It asks first; Cancel writes nothing.
-- **Candidates for this call** (`Alt-Shift-T`): a jump list of every function the call under the cursor can reach. In pseudocode it takes the call on the cursor's line and asks which one if the line has several.
-- **Callers of this function** (`Alt-Shift-X`): every indirect call site that can reach this function (in pseudocode, the decompiled function). IDA's own xrefs window shows such a call only after Scan, and only when its list has at most 16 candidates (Scan adds cross-references to short lists only); this list also works before Scan and includes the calls with longer lists.
+- **Candidates for this call** (`Alt-Shift-T`): a jump list of every function the call under the cursor may reach (its kCFI type). In pseudocode it takes the call on the cursor's line and asks which one if the line has several.
+- **Callers of this function** (`Alt-Shift-X`): every indirect call site that may reach this function, by its kCFI type (in pseudocode, the decompiled function). IDA's own xrefs window shows such a call only after Scan, and only when its list has at most 16 candidates (Scan adds cross-references to short lists only); this list also works before Scan and includes the calls with longer lists.
 - **List kCFI call sites** (unreleased; no default key; Scan opens it at its end): a non-modal window of every call site, with columns Address, Function+off, Type (the C prototype from BTF, else the hash), Candidates (a number column, `CHCOL_DEC`) and First candidates; Enter jumps to the call. The rows are those of `python3 -m cfiscope FILE --sites`, the names in the comment's order. Checked against fake IDA modules only: 21 rows on each Quick-try fixture and 13,897 on GKI 6.1, each equal to its `--sites` line, built in 0.15 s or less there.
 - **Remove annotations**: removes the comments and cross-references the scan added. Functions created when you answered Yes stay.
 - **Pseudocode comments** (with the Hex-Rays decompiler): the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2` (the type when the file has BTF). After you reopen a scanned database they come back without a new Scan (unreleased): the first decompiled function or lookup re-reads the code, read-only.
@@ -179,7 +183,7 @@ A real module (1.4 MB, no conversion): the GKI android14-6.1 `bluetooth.ko` of [
 cd ~/.idapro/plugins/cfiscope                       # the plugin folder, or a clone of this repository
 python3 -m cfiscope vmlinux                         # summary
 python3 -m cfiscope vmlinux --sites                 # every call site and its candidates
-python3 -m cfiscope vmlinux --callers tcp_sendmsg   # indirect calls that can reach a function
+python3 -m cfiscope vmlinux --callers tcp_sendmsg   # indirect calls that may reach a function (same kCFI type)
 python3 -m cfiscope vmlinux --targets 0xffffffc008cc55ac
 python3 -m cfiscope Image --raw --arch aarch64 --base 0xffffffc008000000
 python3 -m cfiscope vmlinux --sites --btf vmlinux   # name hashes by C type from BTF (automatic when the input has BTF)

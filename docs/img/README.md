@@ -1,6 +1,6 @@
 # docs/img
 
-`hero.svg` and `hero.png` are the picture proposed for the top of the README. `tools/draw_hero.py` draws them from `python3 -m cfiscope gki.elf` output on the public Android GKI android14-6.1 aarch64 kernel of the README walkthrough. They are not IDA screenshots: CFIScope has not been run inside real IDA yet.
+`hero.svg` and `hero.png` are the picture at the top of the README. `tools/draw_hero.py` draws them from `python3 -m cfiscope gki.elf` output on the public Android GKI android14-6.1 aarch64 kernel of the README walkthrough. They are not IDA screenshots: CFIScope has not been run inside real IDA yet.
 
 ## What the picture shows
 
@@ -49,7 +49,7 @@ To redraw after a change to the scanner or to its output: run step 2, then step 
     - The counts equal the number of boxes.
     - Blue marks exactly the candidates whose name is the function of a bottom call, the arrows to them, and the names of those calls.
     - Each text fits inside its box at 0.62 em per character.
-  - **The snippet below:** its three paths exist, and its names, types and counts are the picture's.
+  - **The snippet below:** its three paths exist, its names, types and counts are the picture's, and README.md carries it unchanged, under the status sentence and above the first section.
   - **The tool on the small aarch64 test fixture** (`tests/fixtures/aarch64-kernel.o`): the caption names that file; `--site do_call_2+zz` stops with `draw_hero: do_call_2+zz: bad offset 'zz'` and no traceback; and the PNG message says `256 colours` only when `palette_png` rewrote the PNG (then with the `tEXt` chunk), `kept as rendered` for a 16-bit one.
 - **With `CFISCOPE_GKI_ELF=path/to/gki.elf`:**
   - **A fresh run of both commands**, in `--json` and in text:
@@ -61,9 +61,9 @@ To redraw after a change to the scanner or to its output: run step 2, then step 
   - **Redraw:** `tools/draw_hero.py` gives `hero.svg` byte for byte.
   - **Command:** `CFISCOPE_GKI_ELF=~/gki.elf python3 -m unittest discover -s tests -p test_draw_hero.py`. It runs the command line 6 times on the 39 MB kernel, about 15 s.
 
-## README snippet (proposed)
+## README snippet
 
-README.md does not have it yet (another branch edits README.md). It goes right after the paragraph that ends `the IDA layer has not been run in IDA yet (see [Status](#status)).` and before `## What you will see`. That way the status sentence stays above the picture. The test checks the snippet against the picture.
+README.md carries it, right after the paragraph that ends `the IDA layer has not been run in IDA yet (see [Status](#status)).` and before `## Without CFIScope`, so the status sentence stays above the picture. The test checks the snippet against the picture, and that README.md carries it there unchanged.
 
 ```markdown
 <a href="docs/img/hero.svg"><img src="docs/img/hero.png" width="900" alt="Diagram drawn from python3 -m cfiscope output on the GKI android14-6.1 kernel, not an IDA screenshot. Top: the indirect call blr x8 at sock_sendmsg+0xb4, call hash 0x1ebda935, type int (struct socket *, struct msghdr *, unsigned long), with arrows to its 14 candidates: tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg. Bottom: the 3 indirect calls that may reach tcp_sendmsg (same kCFI type), at kernel_sendmsg_locked+0x64, inet_sendmsg+0x58 and inet6_sendmsg+0x58, each with call hash 0x87bcba6f, type int (struct sock *, struct msghdr *, unsigned long), 11 candidates; kernel_sendmsg_locked+0x64 is a type-only match (it calls proto_ops.sendmsg_locked)."></a>

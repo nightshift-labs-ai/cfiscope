@@ -238,6 +238,13 @@ class Picture(unittest.TestCase):
         with open(DOC, encoding="utf-8") as fh:
             doc = fh.read()
         snippet = re.search(r"```markdown\n(.*?)```", doc, re.S).group(1)
+        # README.md carries the snippet as it is here: under the status sentence, above the first section.
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as fh:
+            readme = fh.read()
+        self.assertIn(snippet.strip(), readme)
+        at = readme.index(snippet.strip())
+        self.assertLess(readme.index("has not been run in IDA yet"), at)
+        self.assertLess(at, readme.index("\n## "))
         paths = re.findall(r'(?:src|href)="([^"]+)"|\]\(([^)#]+)\)', snippet)
         paths = [a or b for a, b in paths if "://" not in (a or b)]
         self.assertEqual(sorted(set(paths)), ["docs/img/README.md", "docs/img/hero.png", "docs/img/hero.svg"])
