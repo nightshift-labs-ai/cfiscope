@@ -4,7 +4,7 @@ Taken from the GitHub release notes. Newest first.
 
 ## v0.1.21 (2026-11-17)
 
-- README cut to a front door (6,897 to 1,585 words): pitch, real output on the public GKI 6.1 kernel, what the plugin writes into IDA (fake IDA), How it works (one kCFI check in bytes), Install, Try it (menu steps), short Features, Limitations, Status. The details moved without changes to three new files: `docs/HOW_IT_WORKS.md` (the actions in full, candidates, supported targets, fixtures, command line and headless runner), `docs/VERIFICATION.md` (fake-IDA counts, kCFI kernel measurements, known-answer objects, the test suite) and `docs/JTCFI.md` (Linux 5.x jump-table CFI). Try it says to unzip the GKI zip (it holds `boot-6.1.img`).
+- README cut to a front door (6,897 to 1,585 words): pitch, real output on the public GKI 6.1 kernel, what the plugin writes into IDA (fake IDA), How it works (one kCFI check and its type hash, disassembled), Install, Try it (menu steps), short Features, Limitations, Status, Credits, Licence. The details moved verbatim (only links adjusted) to three new files: `docs/HOW_IT_WORKS.md` (the actions in full, candidates, supported targets, fixtures, command line and headless runner), `docs/VERIFICATION.md` (fake-IDA counts, kCFI kernel measurements, known-answer objects, the test suite) and `docs/JTCFI.md` (Linux 5.x jump-table CFI). Try it says to unzip the GKI zip (it holds `boot-6.1.img`).
 
 ## v0.1.20 (2026-11-16)
 
