@@ -1204,8 +1204,9 @@ def slot_groups(site, ordered):
     """[(label, [candidates])] of the non-empty groups of ordered (slot_first() order): slot_label(), BY_STRIDE,
     SAME_TYPE_ONLY."""
     groups = ((slot_label(site), []), (BY_STRIDE, []), (SAME_TYPE_ONLY, []))
+    slot, stride = site.slot_backed, getattr(site, "slot_stride", None) or ()
     for t in ordered:
-        groups[slot_rank(site, t)][1].append(t)
+        groups[2 if t not in slot else 1 if t in stride else 0][1].append(t)      # slot_rank()
     return [g for g in groups if g[1]]
 
 
@@ -1223,14 +1224,21 @@ def slot_text(site, ordered, name, limit, more=", +%d more"):
     slot-backed ones, those at the member's offset first (the rest of a group gets `more`), and counts the others
     ('same type only: 10 more')."""
     fits, budget, parts = len(ordered) <= limit, limit, []
-    for label, group in slot_groups(site, ordered):
-        shown = group if fits else [] if label == SAME_TYPE_ONLY else group[:max(budget, 0)]
+    k, n = len(getattr(site, "slot_stride", None) or ()), len(site.slot_backed)
+    sizes = (n - k, k, len(ordered) - n)                  # each group's length; only the first names are looked at
+    labels = (slot_label(site), BY_STRIDE, SAME_TYPE_ONLY)
+    groups = dict(slot_groups(site, ordered if fits else ordered[:limit]))
+    for label, size in zip(labels, sizes):
+        if not size:
+            continue
+        shown = groups.get(label, []) if fits or label != SAME_TYPE_ONLY else []
+        shown = shown[:max(budget, 0)] if not fits else shown
         budget -= len(shown)
         if shown:
             parts.append("%s: %s%s" % (label, ", ".join(name(t) for t in shown),
-                                       more % (len(group) - len(shown)) if len(group) > len(shown) else ""))
+                                       more % (size - len(shown)) if size > len(shown) else ""))
         else:
-            parts.append("%s: %d more" % (label, len(group)))
+            parts.append("%s: %d more" % (label, size))
     return "; ".join(parts)
 
 

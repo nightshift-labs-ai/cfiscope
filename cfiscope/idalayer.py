@@ -303,16 +303,18 @@ def ranked(site, taken=None):
     at its offset, then by array stride only (core.slot_rank()); then address-taken candidates: only they can really be
     stored in a pointer. Every candidate is kept. taken: a dict that keeps each candidate's pointer_taken() answer
     across the sites of one pass (the call-site list), so it is asked once."""
-    rank = core.slot_rank
+    slot = getattr(site, "slot_backed", None) or ()     # core.slot_rank(), inline below: this runs for every
+    stride = getattr(site, "slot_stride", None) or ()   # candidate of every list (the call-site list)
     if taken is None:
-        return sorted(site.targets, key=lambda t: (rank(site, t), not pointer_taken(site, t), t))
+        return sorted(site.targets, key=lambda t: (2 if t not in slot else 1 if t in stride else 0,
+                                                   not pointer_taken(site, t), t))
     jt = getattr(site, "kind", "kcfi") != "kcfi"      # pointer_taken() depends on the target and, for these, its entry
 
     def key(t):
         known = taken.get((jt, t))
         if known is None:
             known = taken[(jt, t)] = pointer_taken(site, t)
-        return (rank(site, t), not known, t)
+        return (2 if t not in slot else 1 if t in stride else 0, not known, t)
     return sorted(site.targets, key=key)
 
 
