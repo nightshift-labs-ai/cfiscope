@@ -1,6 +1,6 @@
 """Loads cfiscope_entry.py on fake ida_* modules: scan cache, rescan after a rebase, menus, right-click hooks and
 the pseudocode comments. It proves the plugin wiring runs, not that IDA or Hex-Rays behave like the fakes."""
-import importlib, json, os, sys, types, unittest
+import bisect, importlib, json, os, sys, types, unittest
 from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, ".."))
@@ -269,7 +269,8 @@ class Entry(unittest.TestCase):
         _, E, log = load_entry()
         E.PLUGIN_ENTRY().init()
         self.assertEqual(log["keys"], {"cfiscope:scan": "Alt-Shift-K", "cfiscope:targets": "Alt-Shift-T",
-                                       "cfiscope:callers": "Alt-Shift-X", "cfiscope:sites": "", "cfiscope:remove": ""})
+                                       "cfiscope:callers": "Alt-Shift-X", "cfiscope:type": "", "cfiscope:sites": "",
+                                       "cfiscope:remove": ""})
         norm = lambda k: frozenset(k.lower().replace("+", "-").split("-"))
         taken = {norm(k) for k in self.TAKEN}
         for name, key in log["keys"].items():
@@ -280,7 +281,7 @@ class Entry(unittest.TestCase):
         _, E, log = load_entry()
         p = E.PLUGIN_ENTRY()
         self.assertEqual(p.init(), 1)
-        self.assertEqual(len(log["registered"]), 5)
+        self.assertEqual(len(log["registered"]), 6)
         self.assertIn(("Edit/Plugins/", "cfiscope:sites"), log["menu"])
         self.assertEqual(log["hooked"], 1)
         p.hooks.finish_populating_widget_popup(46, "popup")   # pseudocode view
@@ -288,7 +289,8 @@ class Entry(unittest.TestCase):
         p.hooks.finish_populating_widget_popup(27, "popup")   # disassembly view
         self.assertEqual([(w, n, path) for w, n, path in log["popup"]],
                          [(v, n, "CFIScope/") for v in (46, 27)
-                          for n in ("cfiscope:scan", "cfiscope:targets", "cfiscope:callers", "cfiscope:sites")])
+                          for n in ("cfiscope:scan", "cfiscope:targets", "cfiscope:callers", "cfiscope:type",
+                                    "cfiscope:sites")])
         p.term()
         self.assertEqual(log["hooked"], 0)
         self.assertEqual(log["registered"], [])
@@ -1142,6 +1144,147 @@ class JumpTableCfi(unittest.TestCase):
         self.assertEqual(self.E.RemoveAction().activate(None), 1)
         self.assertEqual(self.w.cmts, {})
         p.term()
+
+
+
+def name_functions(w, name, ext=".o"):
+    """Name the fake database's functions after the fixture's symbols, where test_plugin_stub.make laid out its code:
+    get_func() gives the function from each symbol to the next one (or its segment's end). Returns {name: address}."""
+    from test_core import symbols
+    d, S, text = T.sections(os.path.join(HERE, "fixtures", name + ext))
+    base_of = {i: seg.start_ea for i, seg in zip(sorted(text), w.segs)}
+    addr = {n: base_of[sh] + v for n, (sh, v) in symbols(d, S).items() if sh in base_of}
+    by_ea = {}
+    for n, ea in sorted(addr.items(), key=lambda kv: (kv[1], kv[0])):
+        by_ea.setdefault(ea, n)
+    starts = sorted(by_ea)
+
+    def get_func(ea):
+        i = bisect.bisect_right(starts, ea) - 1
+        seg = next((g for g in w.segs if g.start_ea <= ea < g.end_ea), None)
+        if i < 0 or seg is None or starts[i] < seg.start_ea:
+            return None
+        end = min([seg.end_ea] + [s for s in starts if s > starts[i]])
+        return types.SimpleNamespace(start_ea=starts[i], end_ea=end, tailqty=0)
+    sys.modules["ida_funcs"].get_func = get_func
+    sys.modules["ida_funcs"].get_func_name = lambda ea: by_ea.get(ea, "")
+    sys.modules["ida_name"].get_ea_name = lambda ea: by_ea.get(ea, "")
+    return addr
+
+
+class FunctionsOfType(unittest.TestCase):
+    """Judge s193 #3: CFIScope: Functions of this type, on the function under the cursor (in pseudocode, the decompiled
+    function): every function of the database with its kCFI hash, in a jump list, as --implements lists them on the
+    command line, whether or not a call site checks that hash. Read-only, like the other lookups."""
+
+    def open(self, name="x86_64-kernel", proc="metapc", btf=True, ext=".o"):
+        w, E, log = load_entry(name, proc, ext=ext)
+        if btf:
+            w.input_path = os.path.join(HERE, "fixtures", name + ext)
+        return w, E, log, name_functions(w, name, ext)
+
+    def show(self, E, log, ea, ctx=None):
+        sys.modules["ida_kernwin"].get_screen_ea = lambda: ea
+        n = len(log["shown"])
+        rc = E.TypeAction().activate(ctx)
+        return rc, (log["shown"][-1] if len(log["shown"]) > n else None)
+
+    def rows(self, chooser):
+        return [chooser.OnGetLine(n) for n in range(chooser.OnGetSize())]
+
+    def test_quick_try_fixtures(self):
+        import test_implements as TI
+        for name, proc in (("x86_64-kernel", "metapc"), ("aarch64-kernel", "ARM")):
+            with self.subTest(name):
+                w, E, log, addr = self.open(name, proc)
+                w.drefs.add(addr["impl_2_2"])                        # a stored pointer to impl_2_2
+                rc, (title, modal, chooser) = self.show(E, log, addr["impl_2_1"] + 4)
+                self.assertEqual(rc, 1)
+                self.assertEqual((title, modal), ("kCFI functions of the type of impl_2_1 (hash 0x1300E12B, long "
+                                                  "(short, int)): 3", False))
+                rows = self.rows(chooser)
+                self.assertEqual([r[1] for r in rows], ["impl_2_0", "impl_2_1", "impl_2_2"])
+                self.assertEqual([int(r[0], 16) for r in rows], [addr["impl_2_%d" % k] for k in range(3)])
+                self.assertEqual([r[2] for r in rows], ["", "this function", "address taken"])
+                rc, out, _ = TI.run(w.input_path, "--implements", "impl_2_1", "--json")   # the command line's list
+                self.assertEqual([t["name"] for t in json.loads(out)["implements"]["targets"]], [r[1] for r in rows])
+                C = sys.modules["ida_kernwin"].Choose
+                self.assertEqual(chooser.OnSelectLine(2), (C.NOTHING_CHANGED,))          # Enter jumps
+                self.assertEqual(log["jumped"], [addr["impl_2_2"]])
+                self.assertEqual((w.cmts, w.crefs, w.data_xrefs, log["asked"], w.netnodes), ({}, set(), set(), [], {}))
+
+    def test_a_type_no_call_site_checks(self):
+        # call_a_send's own type: no call goes through it, so no candidate list has the function; its preamble does
+        w, E, log, addr = self.open("kcfi_members_a64", "ARM")
+        sites = E.scan_or_warn()
+        h = 0x7708f251                                   # kcfi_hash('_ZTSFiP5a_opsP3msgE'), test_implements
+        self.assertNotIn(h, {s.hash for s in sites})
+        rc, (title, _, chooser) = self.show(E, log, addr["call_a_send"] + 8)
+        self.assertEqual(title, "kCFI functions of the type of call_a_send (hash 0x7708F251, int (struct a_ops *, "
+                                "struct msg *)): 1")
+        self.assertEqual([r[1:] for r in self.rows(chooser)], [["call_a_send", "this function"]])
+        rc, (title, _, chooser) = self.show(E, log, addr["send_y"])
+        self.assertEqual(title, "kCFI functions of the type of send_y (hash 0xFD39CD44, int (struct msg *, int)): 2")
+        self.assertEqual([r[1] for r in self.rows(chooser)], ["send_x", "send_y"])
+
+    def test_no_call_site_at_all(self):
+        # kcfi_quirks_a64.o: kCFI code that makes no indirect call (as GKI zram.ko), no BTF: the hash in the word
+        # before the function (aarch64 kCFI), no type name
+        w, E, log, addr = self.open("kcfi_quirks_a64", "ARM", btf=False)
+        rc, (title, _, chooser) = self.show(E, log, addr["n_void_params"])
+        self.assertEqual(title, "kCFI functions of the type of n_void_params (hash 0x72923C8F): 1")   # long (void)
+        self.assertEqual([r[1] for r in self.rows(chooser)], ["n_void_params"])
+        rc, (title, _, chooser) = self.show(E, log, addr["n_noproto"])
+        self.assertEqual(title, "kCFI functions of the type of n_noproto (hash 0xB5B3935C): 1")       # long ()
+
+    def test_preamble_inside_the_function(self):
+        # x86-64: IDA may start a function at its __cfi_ preamble (here 32 bytes before do_call_2, whose type no call
+        # site checks and BTF names): the entry after it is found
+        w, E, log, addr = self.open()
+        lo, hi = addr["__cfi_do_call_2"], addr["do_call_2"] + 0x30
+        named = sys.modules["ida_funcs"].get_func
+        sys.modules["ida_funcs"].get_func = lambda ea: (types.SimpleNamespace(start_ea=lo, end_ea=hi, tailqty=0)
+                                                        if lo <= ea < hi else named(ea))
+        rc, (title, _, chooser) = self.show(E, log, addr["do_call_2"] + 8)
+        self.assertEqual(rc, 1)
+        from cfiscope import kcfi_types
+        h = kcfi_types.kcfi_hash("_ZTSFlPFlsiEE")             # long (long (*)(short, int)), do_call_2's type in t.c
+        self.assertNotIn(h, {s.hash for s in E.STATE["sites"]})
+        self.assertEqual(title, "kCFI functions of the type of do_call_2 (hash 0x%08X, long (long (*)(short, int))): "
+                                "1" % h)
+        self.assertEqual([r[1:] for r in self.rows(chooser)], [["do_call_2", "this function"]])
+        rc, (title, _, _) = self.show(E, log, addr["impl_2_1"] + 4)    # a candidate of a call: found as before
+        self.assertIn("(hash 0x1300E12B, long (short, int)): 3", title)
+
+    def test_no_hash(self):
+        # IDA has no function here and the word in front is code (the br of do_call_2's call): no list
+        w, E, log, addr = self.open("aarch64-kernel", "ARM")
+        site = next(s for s in E.scan_or_warn() if s.call_ea and s.call_ea - addr["do_call_2"] < 0x40
+                    and s.call_ea > addr["do_call_2"])
+        sys.modules["ida_funcs"].get_func = lambda ea: None
+        rc, shown = self.show(E, log, site.call_ea + 4)
+        self.assertEqual((rc, shown), (0, None))
+        self.assertIn("WARN No kCFI type hash in front of this function: a function whose address is never taken "
+                      "(a static one) has none.", log["msgs"])
+
+    def test_jump_table_cfi(self):
+        w, E, log = load_entry("aarch64-jtcfi", "ARM", ".elf")
+        sys.modules["ida_kernwin"].get_screen_ea = lambda: w.segs[0].start_ea
+        self.assertEqual(E.TypeAction().activate(None), 0)
+        self.assertTrue(any(m.startswith("WARN Functions of this type is for kCFI") for m in log["msgs"]), log["msgs"])
+        self.assertEqual(log["shown"], [])
+
+    def test_from_pseudocode(self):
+        # In pseudocode the decompiled function counts, not the cursor's address
+        self.addCleanup(sys.modules.pop, "ida_hexrays", None)
+        w, E, log, addr = self.open("aarch64-kernel", "ARM")
+        fake_hexrays(log)
+        cf = FakeCfunc(["long impl_2_1(short a0, int a1)", "{", "  return 0;", "}"], {}, {}, entry_ea=addr["impl_2_1"])
+        log["vdui"] = types.SimpleNamespace(cfunc=cf, cpos=types.SimpleNamespace(lnnum=2))
+        rc, (title, _, chooser) = self.show(E, log, addr["impl_0_0"], types.SimpleNamespace(widget=46))
+        self.assertEqual(rc, 1)
+        self.assertIn("the type of impl_2_1 (hash 0x1300E12B", title)
+        self.assertEqual(len(self.rows(chooser)), 3)
 
 
 if __name__ == "__main__":
