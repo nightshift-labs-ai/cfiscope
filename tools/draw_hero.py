@@ -11,11 +11,11 @@ It runs the command-line tool twice, as `python3 -m cfiscope` does (a subprocess
 
 and draws two panels: the indirect call at --site, with its kCFI hash and C type, fanning out to every candidate;
 and every indirect call that may reach --callee (a call of its kCFI type), converging on it.  Every name, address,
-hash, type and count in the picture is a field of that output, written as the text output writes it ("call hash
-0x1ebda935", "14 candidate(s)", "3 call site(s)").  The instruction (`blr x8`) is decoded from the 4 bytes at the
-call's address (aarch64 blr and br only).  The tool's own words are the two headings and the caption (HEADINGS,
-CAPTION; the caption names the input file).  A candidate is drawn blue when a call of the second panel is inside it,
-and that call's function name is blue too.
+member, hash, type and count in the picture is a field of that output, written as the text output writes it ("call
+proto_ops.sendmsg hash 0x1ebda935", "14 candidate(s)", "3 call site(s)").  The instruction (`blr x8`) is decoded
+from the 4 bytes at the call's address (aarch64 blr and br only).  The tool's own words are the two headings and
+the caption (HEADINGS, CAPTION; the caption names the input file).  A candidate is drawn blue when a call of the
+second panel is inside it, and that call's function name is blue too.
 
 Plain Python, standard library only.  The SVG uses the generic monospace and sans-serif fonts and has no external
 font, script, style sheet, image or link.  The same input gives the same bytes.  tests/test_draw_hero.py checks the
@@ -113,8 +113,15 @@ def instruction(arch, ranges, ea):
     return None
 
 
-def hash_text(s):
-    return "%s hash %s" % ("jump" if s["tail_call"] else "call", s["hash"])
+def hash_text(s, member_limit=3):
+    """'call proto_ops.sendmsg hash 0x1ebda935', as the text output writes it: the struct member the call loads its
+    pointer from (aarch64, with BTF; 'one of N members (...)' when several: --callers shows the first member_limit,
+    --targets all, member_limit None) before 'hash', nothing when the JSON names none."""
+    m = list(s.get("members") or ())
+    shown = m if member_limit is None else m[:member_limit]
+    more = ", +%d more" % (len(m) - len(shown)) if len(m) > len(shown) else ""
+    member = m[0] if len(m) == 1 else "one of %d members (%s%s)" % (len(m), ", ".join(shown), more) if m else ""
+    return "%s %shash %s" % ("jump" if s["tail_call"] else "call", member + " " if member else "", s["hash"])
 
 
 def count_text(n, what="candidate(s)"):
@@ -155,16 +162,17 @@ class Svg:
                     num(x1 - 8), num(y1 - 4.5), num(x1), num(y1), num(x1 - 8), num(y1 + 4.5), colour))
 
 
-def call_lines(s, insn, with_count_line):
+def call_lines(s, insn, with_count_line, member_limit=3):
     """The rows of a call-site box: [(class, text, size, colour, bold), ...] per line."""
     first = [("in", s["in"], FS_NAME, INK, True)]
     if insn:
         first.append(("insn", insn, FS, INSN_INK, False))
     rows = [first, [("call", s["call"], FS, GREY, False)]]
     if with_count_line:
-        rows.append([("hash", hash_text(s), FS, INK, False)])
+        rows.append([("hash", hash_text(s, member_limit), FS, INK, False)])
     else:
-        rows.append([("hash", hash_text(s), FS, INK, False), ("count", count_text(s["candidates"]), FS, INK, False)])
+        rows.append([("hash", hash_text(s, member_limit), FS, INK, False),
+                     ("count", count_text(s["candidates"]), FS, INK, False)])
     if s.get("type"):
         rows.append([("type", s["type"], FS, TYPE_INK, False)])
     if with_count_line:
@@ -201,7 +209,7 @@ def draw(site, callers_doc, callee, insns, source="gki.elf"):
     caller_funcs = {c["in"].partition("+")[0] for c in callers}
     blue = [n in caller_funcs for n in cands]
 
-    srows = call_lines(site, insns.get(site["call"]), True)
+    srows = call_lines(site, insns.get(site["call"]), True, None)       # from --targets: every member
     sw, sh = box_size(srows)
     crows = [call_lines(c, insns.get(c["call"]), False) for c in callers]
     cw = max(box_size(r)[0] for r in crows)

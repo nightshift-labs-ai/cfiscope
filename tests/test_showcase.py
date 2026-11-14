@@ -50,7 +50,7 @@ class Showcase(unittest.TestCase):
 
     def rows_against_cli(self, path, *cli_args):
         """The call-site list's rows in the showcase's fake database of path, against `--sites --json` lines (with
-        cli_args): address, function+offset, type, count, first six names. Returns the rows."""
+        cli_args): address, function+offset, member, type, count, first six names. Returns the rows."""
         S = showcase_module()
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -66,18 +66,21 @@ class Showcase(unittest.TestCase):
             names, count = [t["name"] for t in c["targets"]], c["candidates"]
             first = (", ".join(names[:6]) + (", +%d more" % (count - 6) if count > 6 else "")) if count else \
                 "no implementation in this image"
-            differ += row != ["0x%x" % int(c["call"] or c["check"], 16), c["in"], c["type"], str(count), first]
+            ms = c.get("members") or []         # the Member column: as --sites prints it, the first 3 of several
+            member = ms[0] if len(ms) == 1 else "one of %d members (%s%s)" % (
+                len(ms), ", ".join(ms[:3]), ", +%d more" % (len(ms) - 3) if len(ms) > 3 else "") if ms else ""
+            differ += row != ["0x%x" % int(c["call"] or c["check"], 16), c["in"], member, c["type"], str(count), first]
         self.assertEqual(differ, 0)
         return rows
 
     def test_call_site_list_equals_cli_sites(self):
-        # Judge s193 #2: the list Scan opens has one row per `--sites` line, with its address, function+offset, type,
+        # Judge s193 #2: the list Scan opens has one row per `--sites` line, with its address, function+offset, member, type,
         # count and first names, in the fake database the showcase lays out as the command line does (same addresses).
         for name in ("x86_64-kernel.o", "aarch64-kernel.o"):
             with self.subTest(name):
                 rows = self.rows_against_cli(os.path.join(HERE, "fixtures", name))
                 self.assertEqual(len(rows), 21)
-                self.assertIn(["long (short, int)", "3", "impl_2_0, impl_2_1, impl_2_2"], [r[2:] for r in rows])
+                self.assertIn(["", "long (short, int)", "3", "impl_2_0, impl_2_1, impl_2_2"], [r[2:] for r in rows])
 
     @unittest.skipUnless(os.path.isfile(os.environ.get("CFISCOPE_GKI_ELF", "")),
                          "set CFISCOPE_GKI_ELF to the gki.elf of the README walkthrough (GKI android14-6.1 2024-01)")
@@ -86,7 +89,8 @@ class Showcase(unittest.TestCase):
         # this was a manual run only). About 5 s.
         rows = self.rows_against_cli(os.environ["CFISCOPE_GKI_ELF"], "--max-list", "6")
         self.assertEqual(len(rows), 13897)
-        self.assertIn(["0xffffffc008cc55ac", "sock_sendmsg+0xb4", "int (struct socket *, struct msghdr *, unsigned long)",
+        self.assertIn(["0xffffffc008cc55ac", "sock_sendmsg+0xb4", "proto_ops.sendmsg",
+                       "int (struct socket *, struct msghdr *, unsigned long)",
                        "14", "tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, "
                        "unix_dgram_sendmsg, +8 more"], rows)
 
@@ -95,8 +99,8 @@ class Showcase(unittest.TestCase):
                               "do_call_2+0x1a", "impl_2_1", "--list"], capture_output=True, text=True, check=True).stdout
         self.assertRegex(out, r"Call-site list \(opens after Scan; CFIScope: List kCFI call sites\): window 'CFIScope: 21 "
                               r"kCFI call sites', 21 rows, built in \d+\.\d\d s\n")
-        self.assertIn("  columns: Address | Function+off | Type | Candidates | First candidates\n"
-                      "  row 2:  0x11e03a | do_call_2+0x1a | long (short, int) | 3 | impl_2_0, impl_2_1, impl_2_2\n"
+        self.assertIn("  columns: Address | Function+off | Member | Type | Candidates | First candidates\n"
+                      "  row 2:  0x11e03a | do_call_2+0x1a |  | long (short, int) | 3 | impl_2_0, impl_2_1, impl_2_2\n"
                       "  command line --sites:  0x11e03a  do_call_2+0x1a                           jump hash 0x1300e12b "
                       "(long (short, int))  3 candidate(s): impl_2_0, impl_2_1, impl_2_2\n", out)
 

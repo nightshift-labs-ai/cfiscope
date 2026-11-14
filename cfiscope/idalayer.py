@@ -217,6 +217,8 @@ def scan():
             from . import kcfi_types
             named, total = kcfi_types.name_sites(sites, names)
             stats = dict(stats, kcfi_hashes_named=named, btf_prototypes=names.protos)
+            if arch == "aarch64":  # and the struct member each call loads its pointer from (as the command line does)
+                stats.update(kcfi_types.name_members(sites, ranges, arch, names))
         elif input_has_split_btf():  # review s189 NIT 6: say why a module's hashes are not named, once per scan
             ida_kernwin.msg("[CFIScope] this module's BTF is split BTF (it continues its kernel's BTF), which the IDA "
                             "plugin does not read: kCFI hashes are not named by C type here; the command line names "
@@ -295,13 +297,20 @@ def candidate_names(site, targets):
     return "candidates unknown (the check's jump-table range was not found)"
 
 
+def site_member(site):
+    """The struct member a kCFI call loads its pointer from, as the command line prints it (core.member_label():
+    'proto_ops.sendmsg', or 'one of 2 members (...)'); '' when not known (no BTF, no decodable load, x86-64)."""
+    return core.member_label(site) or ""
+
+
 def describe(site):
     targets = ranked(site)
     if getattr(site, "kind", "kcfi") != "kcfi":
         head = "%s %s" % (JT_COMMENT_TAG, core.type_label(site) or "type unknown")
     else:
         typed = " %s" % site.type_name if getattr(site, "type_name", None) else ""
-        head = "%s 0x%08X%s" % (COMMENT_TAG, site.hash, typed)
+        member = site_member(site)
+        head = "%s %s0x%08X%s" % (COMMENT_TAG, member + " " if member else "", site.hash, typed)
     if not targets:
         return "%s: %s" % (head, candidate_names(site, targets))
     return "%s: %d candidate(s): %s" % (head, len(targets), candidate_names(site, targets))
@@ -316,14 +325,15 @@ def site_type(site):
 
 
 def sites_rows(sites):
-    """(address, function+offset, type, candidates, first candidates) of every call site, in scan order: the fields of
-    a `python3 -m cfiscope --sites` line (the call, or the check when no call was linked; its count), with the type
-    as site_type() and the names as the comment gives them (describe(): address-taken first)."""
+    """(address, function+offset, member, type, candidates, first candidates) of every call site, in scan order: the
+    fields of a `python3 -m cfiscope --sites` line (the call, or the check when no call was linked; the struct member
+    it calls through, site_member(); its count), with the type as site_type() and the names as the comment gives them
+    (describe(): address-taken first)."""
     taken, rows = {}, []
     for s in sites:
         at = s.call_ea or s.check_ea
         targets = ranked(s, taken)
-        rows.append((at, target_name(at), site_type(s), len(targets), candidate_names(s, targets)))
+        rows.append((at, target_name(at), site_member(s), site_type(s), len(targets), candidate_names(s, targets)))
     return rows
 
 
@@ -339,12 +349,14 @@ def pseudocode_text(site, limit=5):
             return "CFIScope: candidates unknown%s" % of
     elif getattr(site, "type_name", None):       # kCFI hash named from BTF
         of = " of " + site.type_name
+    member = site_member(site)                   # 'CFIScope: proto_ops.sendmsg, 14 candidates of ...'
+    member = member + ", " if member else ""
     if not targets:
-        return "CFIScope: 0 candidates in this image%s" % of
+        return "CFIScope: %s0 candidates in this image%s" % (member, of)
     names = ", ".join(target_name(t) for t in targets[:limit])
     if len(targets) > limit:
         names += " and %d more" % (len(targets) - limit)
-    return "CFIScope: %d candidate%s%s: %s" % (len(targets), "" if len(targets) == 1 else "s", of, names)
+    return "CFIScope: %s%d candidate%s%s: %s" % (member, len(targets), "" if len(targets) == 1 else "s", of, names)
 
 
 def runtime_calls(sites):
@@ -517,7 +529,7 @@ class Chooser(ida_kernwin.Choose):
 
 
 # The call-site list: Candidates is a number column (CHCOL_DEC), so clicking its header sorts by count.
-SITES_COLUMNS = [["Address", 18 | ida_kernwin.Choose.CHCOL_HEX], ["Function+off", 30], ["Type", 44],
+SITES_COLUMNS = [["Address", 18 | ida_kernwin.Choose.CHCOL_HEX], ["Function+off", 30], ["Member", 28], ["Type", 44],
                  ["Candidates", 6 | ida_kernwin.Choose.CHCOL_DEC], ["First candidates", 60]]
 
 
@@ -572,7 +584,9 @@ def targets_title(site):
     at = site.call_ea or site.check_ea
     if site.kind == "kcfi":
         typed = ", " + site.type_name if getattr(site, "type_name", None) else ""
-        return "kCFI candidates for the call at 0x%X (hash 0x%08X%s)" % (at, site.hash, typed)
+        member = site_member(site)
+        return "kCFI candidates for the call at 0x%X (%shash 0x%08X%s)" % (at, member + ", " if member else "",
+                                                                         site.hash, typed)
     return "jump-table CFI candidates for the call at 0x%X (%s)" % (at, core.type_label(site) or "type unknown")
 
 
@@ -614,7 +628,8 @@ def callers_rows(sites, ea):
     lo, hi = (func.start_ea, func.end_ea) if func is not None else (ea, ea + 1)
     calls, checks = core.callers(sites, lambda t: t == ea or lo <= t < hi, in_cfi_runtime)
     # a kCFI check whose call was not recognised still counts as a call site: list it at its check address
-    rows = [(s.call_ea or s.check_ea, target_name(s.call_ea or s.check_ea), "%d candidate(s)" % len(s.targets)) for s in calls]
+    rows = [(s.call_ea or s.check_ea, target_name(s.call_ea or s.check_ea),
+             (site_member(s) + ", " if site_member(s) else "") + "%d candidate(s)" % len(s.targets)) for s in calls]
     rows += [(s.check_ea, target_name(s.check_ea), "%s, %d candidate(s)" % (core.UNLINKED, len(s.targets)))
              for s in checks]
     return rows

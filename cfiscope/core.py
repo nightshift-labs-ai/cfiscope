@@ -40,6 +40,10 @@ class Site:
     runtime_check: bool = False  # guards no call, passes no type id, pointer in x1: the CFI runtime's own (__cfi_check)
     extra_checks: list = field(default_factory=list)   # other checks guarding the same call (their own Sites)
     note: str = None       # caveat for the user, e.g. a slow-path-only site whose type does have functions here
+    # kCFI on aarch64, with BTF (kcfi_types.name_members()): the byte offset of the load that fetched the called pointer
+    # (member_offsets()), and the struct members BTF has of the call's type at that offset ('proto_ops.sendmsg').
+    member_offset: int = None
+    members: list = field(default_factory=list)
 
 
 def _s8(v):
@@ -1023,6 +1027,114 @@ def _check_site(jt, chk, call_ea, tail):
     if chk.slow_bl is not None and chk.slow_bl[0].w[chk.slow_bl[1]] & 0xfffffc1f == 0xd63f0000:
         s.runtime_call_ea = chk.slow_bl[0].ea(chk.slow_bl[1])   # inlined __cfi_slowpath: not a program call
     return s
+
+
+# ---- the struct member a kCFI call loads its pointer from (aarch64) ----
+# `sock->ops->sendmsg(...)` compiles to `ldr x8, [x9, #136]` (the member at byte 136 of struct proto_ops), then the kCFI
+# check `ldur w16, [x8, #-4]` ... `blr x8`. The offset of that load, with the call's type hash, names the member in BTF
+# (kcfi_types.TypeNames.members). Straight-line code only: the walk back from the check gives up at anything it cannot
+# follow.
+
+_BRANCH_TOP = re.compile(rb"[\x14-\x17\x34-\x37\x54\xb4-\xb7]")   # top byte of b, cbz/cbnz, tbz/tbnz, b.cond
+
+
+def _branch_targets(c, wanted):
+    """The word indexes in wanted that a b, b.cond, cbz/cbnz or tbz/tbnz in code c jumps to (a br through a register,
+    as in a switch's jump table, is not followed)."""
+    W, out = c.w, set()
+    for m in _BRANCH_TOP.finditer(c.mem[3::4]):        # mem[4k + 3]: the top byte of word k (little-endian)
+        k = m.start()
+        w = W[k]
+        top = w >> 24
+        if top < 0x18:                                   # b
+            t = k + _imm26(w)
+        elif top == 0x54 or top & 0x7e == 0x34:          # b.cond (and bc.cond), cbz / cbnz
+            t = k + _imm19(w)
+        else:                                            # tbz / tbnz
+            v = (w >> 5) & 0x3fff
+            t = k + (v - 0x4000 if v & 0x2000 else v)
+        if t in wanted:
+            out.add(t)
+    return out
+
+
+MEMBER_WALK = 16     # words walked back from a check for the load of its pointer
+
+
+def _member_load(c, i, limit=MEMBER_WALK):
+    """(word, byte offset) of the 64-bit load (ldr xN, [xM, #imm], or ldur) that put the called pointer in xN before the
+    kCFI check at word i (ldur wT, [xN, #-4]), through mov copies; None when the walk back leaves straight-line code,
+    xN comes from anything else (ldp, a register offset, an index writeback, a call), the base is the stack (sp, x29)
+    or the base was set by adrp on the straight path walked back from the load (the offset is then the low 12 bits of a
+    global's address; an adrp further back, or behind a branch, is not seen). The caller still checks that no branch
+    lands between the load and the check (member_offsets())."""
+    W = c.w
+    r = (W[i] >> 5) & 31
+    for k in range(i - 1, max(i - limit, 0) - 1, -1):
+        w = W[k]
+        if _stops_walk(w, k, i):
+            return None
+        if r not in _written(w):
+            continue
+        if _is_mov_reg(w) and w & 31 == r:              # mov xN, xS: follow the copy
+            r = (w >> 16) & 31
+            if r == 31:                                   # mov from xzr
+                return None
+            continue
+        if w & 0xffc00000 == 0xf9400000:                  # ldr xN, [xM, #imm12 * 8]
+            off = ((w >> 10) & 0xfff) * 8
+        elif w & 0xffe00c00 == 0xf8400000:                # ldur xN, [xM, #imm9]
+            imm = (w >> 12) & 0x1ff
+            off = imm - 512 if imm & 0x100 else imm
+        else:
+            return None
+        base = (w >> 5) & 31
+        if base in (29, 31):
+            return None
+        d = _def_of(c, k, base, limit)
+        if d is not None and W[d] & 0x9f000000 == 0x90000000:   # adrp xM
+            return None
+        return k, off
+    return None
+
+
+def member_offsets(ranges, sites):
+    """{check address: byte offset of the load that fetched the called pointer (_member_load())} for the aarch64 kCFI
+    sites in sites whose walk back finds one with no branch landing between the load and the check (a path that
+    joins there may load the pointer from elsewhere). ranges: the (base, bytes) code ranges the sites were found in."""
+    codes = [_Code(base, mem) for base, mem in ranges if not base & 3 and len(mem) >= 8]
+    found = defaultdict(list)                  # code index -> [(check address, load word, check word, offset)]
+    for s in sites:
+        if s.kind != "kcfi":
+            continue
+        for n, c in enumerate(codes):
+            i = c.index(s.check_ea)
+            if i is not None:
+                got = _member_load(c, i)
+                if got is not None:
+                    found[n].append((s.check_ea, got[0], i, got[1]))
+                break
+    out = {}
+    for n, loads in found.items():
+        joins = _branch_targets(codes[n], {j for _ea, k, i, _off in loads for j in range(k + 1, i + 1)})
+        for ea, k, i, off in loads:
+            if not any(j in joins for j in range(k + 1, i + 1)):
+                out[ea] = off
+    return out
+
+
+def member_label(site, limit=3):
+    """'proto_ops.sendmsg' when BTF has one struct member of the call's type at the loaded offset; 'one of 2 members
+    (break_hook.fn, step_hook.fn)' when it has several (the first `limit` names, then '+N more'; limit None: all);
+    None when it has none or the offset is not known."""
+    m = list(getattr(site, "members", None) or ())
+    if not m:
+        return None
+    if len(m) == 1:
+        return m[0]
+    shown = m if limit is None else m[:limit]
+    more = ", +%d more" % (len(m) - len(shown)) if len(m) > len(shown) else ""
+    return "one of %d members (%s%s)" % (len(m), ", ".join(shown), more)
 
 
 # ---- type names (jump-table CFI) ----

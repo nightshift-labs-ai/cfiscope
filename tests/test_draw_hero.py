@@ -266,12 +266,12 @@ class Picture(unittest.TestCase):
                       alt)
         self.assertIn("%s at %s, %s, type %s," % (site["insn"], site["in"], site["hash"], site["type"]), alt)
         callers = [dict(texts(c)) for c in kids(p2, "g", "caller")]
-        self.assertIn("the %d indirect calls that may reach %s (same kCFI type), at %s and %s, each with %s, type %s, "
-                      "%s;" % (n_callers, callee, ", ".join(c["in"] for c in callers[:-1]), callers[-1]["in"],
-                               callers[0]["hash"], callers[0]["type"], callers[0]["count"].replace("(s)", "s")), alt)
-        for c in callers:     # "each with": the same hash, type and count for every caller
-            self.assertEqual((c["hash"], c["type"], c["count"]), (callers[0]["hash"], callers[0]["type"],
-                                                                 callers[0]["count"]))
+        at = ["%s (%s)" % (c["in"], c["hash"]) for c in callers]      # each call's member and hash
+        self.assertIn("the %d indirect calls that may reach %s (same kCFI type), at %s and %s, each with type %s, %s;"
+                      % (n_callers, callee, ", ".join(at[:-1]), at[-1], callers[0]["type"],
+                         callers[0]["count"].replace("(s)", "s")), alt)
+        for c in callers:     # "each with": the same type and count for every caller
+            self.assertEqual((c["type"], c["count"]), (callers[0]["type"], callers[0]["count"]))
 
 
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "aarch64-kernel.o")
@@ -320,6 +320,25 @@ class Tool(unittest.TestCase):
         self.assertEqual([t.text for t in kids(ET.fromstring(svg), "text")],
                          ["Drawn from python3 -m cfiscope aarch64-kernel.o output, not an IDA screenshot"])
 
+    def test_member_is_written_as_the_command_line_writes_it(self):
+        # the struct member (review s195, merge of mem194): 'call a_ops.send hash 0x...', as `--sites` prints it
+        h = tool_module().hash_text
+        self.assertEqual(h({"tail_call": False, "hash": "0x1"}), "call hash 0x1")
+        self.assertEqual(h({"tail_call": True, "hash": "0x1", "members": ["a.f"]}), "jump a.f hash 0x1")
+        four = {"tail_call": False, "hash": "0x1", "members": ["a.f", "b.g", "c.h", "d.i"]}
+        self.assertEqual(h(four), "call one of 4 members (a.f, b.g, c.h, +1 more) hash 0x1")          # --callers
+        self.assertEqual(h(four, None), "call one of 4 members (a.f, b.g, c.h, d.i) hash 0x1")        # --targets
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "x.svg")
+            obj = os.path.join(ROOT, "tests", "fixtures", "kcfi_members_a64.o")
+            p = subprocess.run([sys.executable, "-I", TOOL, obj, "-o", out, "--site", "call_a_send+0x2c", "--callee",
+                                "send_x"],
+                               capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            got = [t.text for t in ET.parse(out).getroot().iter(NS + "text") if "hash" in cls(t)]
+        self.assertEqual(got[:2], ["call a_ops.send hash 0xfd39cd44", "call a_ops.send hash 0xfd39cd44"])
+        self.assertIn("call b_ops.recv hash 0xfd39cd44", got)
+
     def test_bad_offset_is_a_message(self):
         p, svg = self.run_tool("--site", "do_call_2+zz", "--callee", "impl_2_0")
         self.assertEqual((p.returncode, p.stderr), (1, "draw_hero: do_call_2+zz: bad offset 'zz'\n"))
@@ -367,10 +386,15 @@ class FreshRun(unittest.TestCase):
         del data, _ranges
         cls_.raw, cls_.root = load_svg()
 
-    def check_call(self, group, s, line):
+    def check_call(self, group, s, line, member_limit=3):
         got = texts(group)
+        ms = s.get("members") or []         # the struct member, as the text line writes it (--targets: all of them)
+        shown = ms if member_limit is None else ms[:member_limit]
+        more = ", +%d more" % (len(ms) - len(shown)) if len(ms) > len(shown) else ""
+        member = ms[0] if len(ms) == 1 else "one of %d members (%s%s)" % (len(ms), ", ".join(shown), more) if ms else ""
         want = {"in": s["in"], "insn": self.insn[s["call"]], "call": s["call"],
-                "hash": "%s hash %s" % ("jump" if s["tail_call"] else "call", s["hash"]),
+                "hash": "%s %shash %s" % ("jump" if s["tail_call"] else "call", member + " " if member else "",
+                                          s["hash"]),
                 "type": s["type"], "count": "%d candidate(s)" % s["candidates"]}
         self.assertEqual(got, [(k, want[k]) for k, _t in got])
         self.assertEqual(sorted(k for k, _t in got), sorted(want))
@@ -386,7 +410,7 @@ class FreshRun(unittest.TestCase):
         self.assertEqual(self.targets["call"], self.addr)
         self.assertEqual(self.insn[self.addr], "blr x8")
         self.assertEqual(self.targets_text[0], "candidates for the site at %s" % self.addr)
-        self.check_call(kids(p1, "g", "site")[0], self.targets, self.targets_text[1])
+        self.check_call(kids(p1, "g", "site")[0], self.targets, self.targets_text[1], None)
         want = [t["name"] for t in self.targets["targets"]]
         self.assertEqual(len(want), self.targets["candidates"])
         self.assertEqual([texts(c) for c in kids(p1, "g", "candidate")], [[("name", n)] for n in want])

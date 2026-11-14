@@ -12,10 +12,10 @@ BEFORE (no CFIScope): 0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8
   comment: none; code xrefs from this call: none (indirect)
 
 AFTER Scan kCFI calls (Alt-Shift-K): 13897 sites, 13897 comments, 44718 cross-references in the whole database
-0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI 0x1EBDA935 int (struct socket *, struct msghdr *, unsigned long): 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
+0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI proto_ops.sendmsg 0x1EBDA935 int (struct socket *, struct msghdr *, unsigned long): 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
   code xrefs from this call (14): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
 
-Candidates for this call (Alt-Shift-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (hash 0x1EBDA935, int (struct socket *, struct msghdr *, unsigned long))'
+Candidates for this call (Alt-Shift-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (proto_ops.sendmsg, hash 0x1EBDA935, int (struct socket *, struct msghdr *, unsigned long))'
   0xffffffc00897842c  tun_sendmsg
   0xffffffc008cd2ac4  sock_no_sendmsg
   0xffffffc008d8cd98  netlink_sendmsg
@@ -32,25 +32,25 @@ Candidates for this call (Alt-Shift-T): window 'kCFI candidates for the call at 
   0xffffffc008f72e10  xsk_sendmsg
 
 Callers of this function (Alt-Shift-X) on tcp_sendmsg: 3 row(s)
-  0xffffffc008cc5778  kernel_sendmsg_locked+0x64  11 candidate(s)
-  0xffffffc008e433c8  inet_sendmsg+0x58  11 candidate(s)
-  0xffffffc008ead820  inet6_sendmsg+0x58  11 candidate(s)
+  0xffffffc008cc5778  kernel_sendmsg_locked+0x64  proto_ops.sendmsg_locked, 11 candidate(s)
+  0xffffffc008e433c8  inet_sendmsg+0x58  proto.sendmsg, 11 candidate(s)
+  0xffffffc008ead820  inet6_sendmsg+0x58  proto.sendmsg, 11 candidate(s)
 
-Pseudocode line of the call (with Hex-Rays):  // CFIScope: 14 candidates of int (struct socket *, struct msghdr *, unsigned long): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
+Pseudocode line of the call (with Hex-Rays):  // CFIScope: proto_ops.sendmsg, 14 candidates of int (struct socket *, struct msghdr *, unsigned long): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
 ```
 
 ### The call-site list
 
-Scan ends by opening a list of every call site (also **CFIScope: List kCFI call sites**; unreleased). Add `--list` to the command above for its row count, the time its rows took to build and the row of the call next to the command line's `--sites` line for it (re-run 2026-11-14; spacing of the last line condensed):
+Scan ends by opening a list of every call site (also **CFIScope: List kCFI call sites**; unreleased). Add `--list` to the command above for its row count, the time its rows took to build and the row of the call next to the command line's `--sites` line for it (re-run 2026-11-14 with the Member column; spacing of the last line condensed):
 
 ```
-Call-site list (opens after Scan; CFIScope: List kCFI call sites): window 'CFIScope: 13,897 kCFI call sites', 13897 rows, built in 0.13 s
-  columns: Address | Function+off | Type | Candidates | First candidates
-  row 11703:  0xffffffc008cc55ac | sock_sendmsg+0xb4 | int (struct socket *, struct msghdr *, unsigned long) | 14 | tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
-  command line --sites:  0xffffffc008cc55ac  sock_sendmsg+0xb4  call hash 0x1ebda935 (int (struct socket *, struct msghdr *, unsigned long))  14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg ...
+Call-site list (opens after Scan; CFIScope: List kCFI call sites): window 'CFIScope: 13,897 kCFI call sites', 13897 rows, built in 0.10 s
+  columns: Address | Function+off | Member | Type | Candidates | First candidates
+  row 11703:  0xffffffc008cc55ac | sock_sendmsg+0xb4 | proto_ops.sendmsg | int (struct socket *, struct msghdr *, unsigned long) | 14 | tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
+  command line --sites:  0xffffffc008cc55ac  sock_sendmsg+0xb4  call proto_ops.sendmsg hash 0x1ebda935 (int (struct socket *, struct msghdr *, unsigned long))  14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg ...
 ```
 
-All 13,897 rows were also compared with `python3 -m cfiscope gki.elf --sites --json --max-list 6` (address, function and offset, type, count, first six names): 0 differ. `tests/test_showcase.py` does the same for the 21 rows of each Quick-try fixture, and for all 13,897 rows of GKI 6.1 when `CFISCOPE_GKI_ELF` names `gki.elf` (skipped otherwise; 5.3 s and 322 MB here, re-run 2026-11-14). The rows are built at once, so that IDA can sort and filter them: 0.12 to 0.15 s over three runs (load average about 2 on 4 cores), since each candidate's "address taken" test is asked once per list (30,561 distinct candidates in 403,385 list entries). In real IDA those tests and the names are IDA API calls; that time was not measured. As in the comments, the fake database marks no candidate "address taken", so the first names here are in address order; in IDA, address-taken candidates would come first in both (by design; not run in IDA).
+All 13,897 rows were also compared with `python3 -m cfiscope gki.elf --sites --json --max-list 6` (address, function and offset, member, type, count, first six names): 0 differ (with the Member column, which is filled in 9,764 rows, the calls of the [struct-member table](#struct-members-aarch64) with at least one member). `tests/test_showcase.py` does the same for the 21 rows of each Quick-try fixture, and for all 13,897 rows of GKI 6.1 when `CFISCOPE_GKI_ELF` names `gki.elf` (skipped otherwise; 6.1 s and 363 MB here with the Member column, re-run 2026-11-14; its Member check is the `--sites` text: the member, or `one of N members (...)` with the first three). The rows are built at once, so that IDA can sort and filter them: 0.12 to 0.15 s over three runs (load average about 2 on 4 cores), 0.09 to 0.10 s over three runs with the Member column (review s195, load average about 1.3), since each candidate's "address taken" test is asked once per list (30,561 distinct candidates in 403,385 list entries). In real IDA those tests and the names are IDA API calls; that time was not measured. As in the comments, the fake database marks no candidate "address taken", so the first names here are in address order; in IDA, address-taken candidates would come first in both (by design; not run in IDA).
 
 ## kCFI on real kernels
 
@@ -100,6 +100,65 @@ Real x86-64 kernel: the public GKI prebuilt `kernel-6.1` from [kernel/prebuilts/
 
 The other 622 candidates: 244 sit at weak (`W`) symbols in the map, mostly syscall entry stubs such as `__ia32_sys_msgctl`, and 378 are at no symbol in the map; those 378 were not checked one by one. This `vmlinux` comes from a bzImage, whose build strips its symbols, so the table is measured without kernel-code bounds (re-run with this version: the same figures). The script's last line scans it again with the bounds its `System.map` names, as the command line would for a `vmlinux` that kept its symbols: 0 of the 33,015 candidates are left out, and no list changes. The map names no function between `_etext` and `_sinittext` (`.rodata` and `.data` lie there), and x86-64 exit text, whose bounds it does not name, comes after init text and is kept. Only 63.50% of the protected functions appear as candidates, which is expected for a kernel image alone: a function's hash only matches when some call site in the image uses that type.
 
+## Struct members (aarch64)
+
+Unreleased; aarch64 only. For each kCFI call, CFIScope walks back from the check (`ldur wT, [xN, #-4]`) to the instruction that wrote `xN`. When that is a 64-bit `ldr xN, [xM, #imm]` or `ldur xN, [xM, #imm]` (reached through `mov` copies, and past `cbz xN`, which reads `xN` but does not write it), the immediate is the byte offset of the field the pointer came from. The member map holds every function-pointer member in BTF under (kCFI hash of its prototype, plain and integer-normalized; byte offset): the members of named structs and unions and of those a typedef names, and also the members of embedded structs and unions (anonymous or not) and of arrays of up to 64 elements, at their offset in the outer struct and under the name of the struct that declares them. A pointer to a function pointer (`const iw_handler *standard`) is not a member of the function's type. A call is named when exactly one member matches. When several match, all are listed (`one of N members (...)`).
+
+The walk gives no offset when:
+- it leaves straight-line code (`ret`, `b`, `bti c` and the like within 16 words);
+- `xN` comes from anything but those loads (`ldp`, a register offset, an index writeback, a call that clobbers it);
+- the base is `sp` or `x29` (a pointer spilled to the stack);
+- the base was set by `adrp` on the straight path walked back from the load (the immediate is then the low 12 bits of a global's address). An `adrp` further back, or behind a branch, is not seen: a linear scan back to the nearest `bti c` or `paciasp` finds an `adrp` as the base's last write for 20 decoded offsets on GKI 6.1 (23 on 6.6, 34 on 6.12), for example `__delay+0x84` at 1592 (its `adrp x21` is in the function's first block, behind a `b`). 1 of them on each kernel matches a member: `tracing_set_tracer+0x1d0` (`tracer.init`, offset 8) on 6.1, and on 6.6 and 6.12 a `__kvm_nvhe_handle_trap` call with several members;
+- a `b`, `b.cond`, `cbz`/`cbnz` or `tbz`/`tbnz` in the same code lands between the load and the check (another path may load the pointer from elsewhere). A `br` through a register, as in a switch table, is not followed.
+
+Reproduce with the summary of `python3 -m cfiscope gki.elf`, line `kCFI calls through a struct member: ...` (re-run 2026-11-14 on each kernel's `gki.elf`, symbols restored by vmlinux-to-elf; the 6.6 and 6.12 kernels of the tables above):
+
+| Measure | GKI 6.1 | GKI 6.6 | GKI 6.12 |
+|---|---|---|---|
+| kCFI call sites | 13,897 | 14,694 | 16,164 |
+| Load offset decoded | 11,905 | 12,126 | 12,623 |
+| At least one BTF member of the call's type at that offset | 9,764 | 9,675 | 9,984 |
+| Exactly one member | 8,937 | 8,821 | 9,284 |
+| (hash, offset) pairs in the member map | 15,660 | 17,190 | 17,765 |
+| Time: member map / walk and lookup (best of 3, in-process) | 0.10 s / 0.29 s | 0.11 s / 0.30 s | 0.13 s / 0.31 s |
+
+The whole `--callers tcp_sendmsg` command on 6.1 took 2.94 to 3.11 s, and 2.31 to 2.68 s with the code before this change (three runs each, alternating; load average about 2.5 on the machine named above). Re-run in review s195: 3.03 to 3.27 s, against 2.30 to 2.44 s for 458eeeb (load average 0.7 to 1.0), and after the merge into cfi193 2.73 to 2.89 s, against 2.19 to 2.25 s for 5c6ddbf (load average 0.4 to 0.8); 0.5 to 0.8 s longer run for run. Maximum resident memory of the summary command (GNU `time`): 301,772 KB, 236,504 KB before (6.6: 319,264 / 249,752 KB; 6.12: 340,944 / 273,992 KB).
+
+Known answers (`tests/test_members.py`, run when `CFISCOPE_GKI_ELF` names the 6.1 `gki.elf`):
+
+| Call | Load offset | Member |
+|---|---|---|
+| `sock_sendmsg+0xb4` | 136 | `proto_ops.sendmsg` |
+| `kernel_sendmsg_locked+0x64` | 216 | `proto_ops.sendmsg_locked` |
+| `inet_sendmsg+0x58` | 104 | `proto.sendmsg` |
+| `inet6_sendmsg+0x58` | 104 | `proto.sendmsg` |
+
+On 6.6 and 6.12 the same four calls (`sock_sendmsg+0xc0` and `+0xbc`, `kernel_sendmsg_locked+0x60`) get the same members; `proto_ops.sendmsg_locked` is at offset 208 there. Of the 827 calls on 6.1 with several members, 439 have 2 and none more than 8.
+
+The judge's prototype of review s193 found 7,608 offsets, 5,222 matches and 4,894 single matches on 6.1. Re-running its rules shows why it found fewer: it stopped at any instruction whose first register field was `xN`, so 4,808 of its walks ended at a `cbz xN` (a null check such as `if (ops->fn)`), which writes nothing. This code walks past those, follows `mov` copies, reads `ldur` too, and refuses the cases listed above. Its member map also takes in embedded named structs and arrays, under the declaring struct's name, so `proto_ops.sendmsg` stays one name wherever a `struct proto_ops` is embedded.
+
+What a name means: BTF has exactly one function-pointer member of the call's type at the loaded offset. That the call really goes through it is not proven, because the base register's type is not known:
+- A load at offset 0 from a pointer to a lone function pointer (`(*pp)()`) looks like a struct's first member. On 6.1, 844 named calls load from offset 0, 771 of them with one member.
+- A pointer cast from another type, or a constant index into an array of function pointers, is matched like a member too.
+- A pointer the compiler has already moved into the struct is read from the wrong origin: `gic_enable_of_quirks+0x54` (GKI 6.6, 6.12) keeps a pointer to `gic_quirk.init` (byte 24 of the 40-byte `struct gic_quirk`) in a loop (`add x22, x1, #24`) and loads `[x22, #0]`, so it is named `vhost_task.fn` (the one member of the call's type, `_Bool (void *)`, at offset 0). On 6.12 `gic_enable_quirks+0x80` gets the same name the same way.
+
+Modules: `bluetooth.ko --btf kernel-6.1` (the files of the next section) decodes 222 of 253 load offsets and names 216 calls, each with exactly one member, for example `bt_sock_recvmsg+0x10c` -> `bt_sock.skb_msg_name`. The IDA plugin does not read a module's split BTF, so it shows no member there.
+
+x86-64 is not read. There the pointer is loaded by a `mov` before the call to the retpoline thunk; that is a follow-up. x86-64 output is unchanged: the x86-64 Quick-try fixture's `--sites` output is byte-identical to that of the code before (a test).
+
+The IDA side was checked against fake IDA modules only, never in IDA:
+- the comment (`kCFI proto_ops.sendmsg 0x1EBDA935 int (struct socket *, ...): 14 candidate(s): ...`);
+- the pseudocode comment (`CFIScope: proto_ops.sendmsg, 14 candidates of ...`);
+- the Candidates window title and the Callers rows (see the showcase block at the top);
+- the Member column of the call-site list.
+
+No new IDA API name is used. Tests in `tests/test_members.py`:
+- the walk on hand-made instruction words;
+- the member map on crafted BTF: an array of function pointers, an array of 24-byte structs (each element at its own offset), a named member of anonymous type (`S.ops.fn`), a struct nested in itself, a pointer to a function pointer;
+- the member map on a new fixture, `tests/fixtures/kcfi_members.c`, built by `zig cc -fsanitize=kcfi` for aarch64 with its own BTF. `a_ops.send`, `b_ops.send` and `b_ops.recv` share a type at offsets 16, 0 and 24; `c_ops.poll` and `d_ops.poll` share one at the same offset. It also has an embedded struct, an anonymous union, a call through a parameter and one through a global. The true offsets are read from `offsetof` constants compiled into the object;
+- the command line, JSON and fake-IDA strings;
+- that calls with no decoded load or no member print exactly what the code before printed (golden lines from it on the fixture and on GKI 6.1, and the `--sites` output of four older fixtures by sha256).
+
 ## Loadable modules (.ko)
 
 Real modules: three GKI `system_dlkm` modules from the public prebuilts repository [kernel/prebuilts/6.1/arm64](https://android.googlesource.com/kernel/prebuilts/6.1/arm64) at commit `ad5f1ad22dd4` (head of `android14-qpr3-release`; kernel build 11484633, `6.1.68-android14-11-ga7f647f49daf-ab11484633`, the vermagic of all three), with the kernel of the same build from the same commit (`kernel-6.1`, a raw `Image`; symbols restored with vmlinux-to-elf as `kernel-6.1.elf`). This is a later build of the same android14-6.1 branch than the 2024-01 kernel above. Each file is `https://android.googlesource.com/kernel/prebuilts/6.1/arm64/+/ad5f1ad22dd47c7b244ec697c5e61f90783a06c2/<name>?format=TEXT` (base64 of the file):
@@ -144,7 +203,7 @@ The IDA layer on a module: `tools/showcase_ida_stub.py` runs it on the real `blu
 
 ## Known-answer objects and the test suite
 
-Known-answer objects: `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the table of signatures and implementations that `tools/gen_fixtures.py` wrote into the source; function offsets come from the compiled objects. `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the known candidate sets for the same objects, and that bad input gives a clear error.
+Known-answer objects: `tests/test_members.py` checks the struct member of each call on `tests/fixtures/kcfi_members_a64.o` against `offsetof` (see [Struct members](#struct-members-aarch64)). `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the table of signatures and implementations that `tools/gen_fixtures.py` wrote into the source; function offsets come from the compiled objects. `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the known candidate sets for the same objects, and that bad input gives a clear error.
 
 Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer and `tests/test_entry_stub.py` the plugin wiring (menus, right-click hooks, the call-site list, rescan after a rebase, pseudocode comments and the pseudocode-line lookups on a fake decompiler, restoring the scan after the database is reopened on a fake netnode) against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 113 IDA API names used, including the decompiler methods the pseudocode hook and lookups call, `func_t.tailqty`, the `netnode` methods of the scan marker, the `UI_Hooks` events that hook a decompiler loaded later and, for the call-site list, `Choose.CHCOL_DEC`, `Choose.OnSelectLine` and `close_chooser`, exist in the official stubs; `python3 tests/check_ida_names.py <stub dir>...` checks that the 74 `ida_*` / `idc` names alone also exist in older stubs (0 missing in those of IDA 9.1, 9.2, 9.3 and 9.4: PyPI `idapro` 0.0.5, 0.0.7, 0.0.9, 0.0.11). None of these is a test in real IDA.
 

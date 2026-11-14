@@ -6,13 +6,13 @@ Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 
 
 The scanner was scored on a real Android GKI kernel for each architecture ([numbers](docs/VERIFICATION.md)); the IDA layer has not been run in IDA yet (see [Status](#status)).
 
-<a href="docs/img/hero.svg"><img src="docs/img/hero.png" width="900" alt="Diagram drawn from python3 -m cfiscope output on the GKI android14-6.1 kernel, not an IDA screenshot. Top: the indirect call blr x8 at sock_sendmsg+0xb4, call hash 0x1ebda935, type int (struct socket *, struct msghdr *, unsigned long), with arrows to its 14 candidates: tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg. Bottom: the 3 indirect calls that may reach tcp_sendmsg (same kCFI type), at kernel_sendmsg_locked+0x64, inet_sendmsg+0x58 and inet6_sendmsg+0x58, each with call hash 0x87bcba6f, type int (struct sock *, struct msghdr *, unsigned long), 11 candidates; kernel_sendmsg_locked+0x64 is a type-only match (it calls proto_ops.sendmsg_locked)."></a>
+<a href="docs/img/hero.svg"><img src="docs/img/hero.png" width="900" alt="Diagram drawn from python3 -m cfiscope output on the GKI android14-6.1 kernel, not an IDA screenshot. Top: the indirect call blr x8 at sock_sendmsg+0xb4, call proto_ops.sendmsg hash 0x1ebda935, type int (struct socket *, struct msghdr *, unsigned long), with arrows to its 14 candidates: tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg. Bottom: the 3 indirect calls that may reach tcp_sendmsg (same kCFI type), at kernel_sendmsg_locked+0x64 (call proto_ops.sendmsg_locked hash 0x87bcba6f), inet_sendmsg+0x58 (call proto.sendmsg hash 0x87bcba6f) and inet6_sendmsg+0x58 (call proto.sendmsg hash 0x87bcba6f), each with type int (struct sock *, struct msghdr *, unsigned long), 11 candidates; kernel_sendmsg_locked+0x64 is a type-only match (it calls proto_ops.sendmsg_locked)."></a>
 
-<sub>Drawn by `tools/draw_hero.py` from `python3 -m cfiscope gki.elf` output on the public GKI android14-6.1 kernel of [Try it](#try-it); not an IDA screenshot. Top: the kCFI-checked `blr x8` in `sock_sendmsg`, its C type from the kernel's BTF, and the 14 functions of that type it may reach. Bottom: the 3 indirect calls that may reach `tcp_sendmsg` (same kCFI type; `kernel_sendmsg_locked+0x64` is a type-only match: it calls `proto_ops.sendmsg_locked`). In blue, `inet_sendmsg` and `inet6_sendmsg`: candidates of the top call that hold two of the bottom calls. How it is made and checked: [docs/img](docs/img/README.md).</sub>
+<sub>Drawn by `tools/draw_hero.py` from `python3 -m cfiscope gki.elf` output on the public GKI android14-6.1 kernel of [Try it](#try-it); not an IDA screenshot. Top: the kCFI-checked `blr x8` in `sock_sendmsg`, the struct member it loads its pointer from (`proto_ops.sendmsg`), its C type from the kernel's BTF, and the 14 functions of that type it may reach. Bottom: the 3 indirect calls that may reach `tcp_sendmsg` (same kCFI type; `kernel_sendmsg_locked+0x64` is a type-only match: it calls `proto_ops.sendmsg_locked`). In blue, `inet_sendmsg` and `inet6_sendmsg`: candidates of the top call that hold two of the bottom calls. How it is made and checked: [docs/img](docs/img/README.md).</sub>
 
 ## Without CFIScope
 
-The call at `sock_sendmsg+0xb4` is `blr x8`: the target is loaded from `sock->ops` at run time, so the binary names no callee. The usual fallback is a name search. In the GKI 6.1 kernel below, 31 functions are named `*_sendmsg` (`nm gki.elf | grep -v __ksymtab | grep -c '_sendmsg$'`): 13 have this call's type, the other 18 (such as `tcp_sendmsg`, which takes a `struct sock *`) would fail its kCFI check, and the search misses `packet_sendmsg_spkt`. Source-level call-graph tools need the source and its LLVM IR, which vendor kernels and modules do not ship. CFIScope lists the call's 14 candidates, all of its type, from the binary alone (next block; 2.3 to 2.7 s on the command line here).
+The call at `sock_sendmsg+0xb4` is `blr x8`: the target is loaded from `sock->ops` at run time, so the binary names no callee. The usual fallback is a name search. In the GKI 6.1 kernel below, 31 functions are named `*_sendmsg` (`nm gki.elf | grep -v __ksymtab | grep -c '_sendmsg$'`): 13 have this call's type, the other 18 (such as `tcp_sendmsg`, which takes a `struct sock *`) would fail its kCFI check, and the search misses `packet_sendmsg_spkt`. Source-level call-graph tools need the source and its LLVM IR, which vendor kernels and modules do not ship. CFIScope lists the call's 14 candidates, all of its type, from the binary alone (next block; 2.8 to 2.9 s on the command line here).
 
 ## What you will see (real output, not an IDA screenshot)
 
@@ -22,8 +22,8 @@ Which functions may the indirect call in `sock_sendmsg` reach?
 
 ```
 $ python3 -m cfiscope gki.elf --sites --max-list 20 | grep sock_sendmsg+
-0xffffffc008cc55ac  sock_sendmsg+0xb4  call hash 0x1ebda935 (int (struct socket *, struct msghdr *, unsigned long))  14 candidate(s): tun_sendmsg, sock_no_sendmsg,
-    netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg,
+0xffffffc008cc55ac  sock_sendmsg+0xb4  call proto_ops.sendmsg hash 0x1ebda935 (int (struct socket *, struct msghdr *, unsigned long))  14 candidate(s): tun_sendmsg,
+    sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg,
     packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
 ```
 
@@ -32,14 +32,14 @@ Which indirect calls may reach `tcp_sendmsg` (same kCFI type)? One of the three 
 ```
 $ python3 -m cfiscope gki.elf --callers tcp_sendmsg --max-list 3
 3 call site(s) can reach tcp_sendmsg
-0xffffffc008cc5778  kernel_sendmsg_locked+0x64  call hash 0x87bcba6f (int (struct sock *, struct msghdr *, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
-0xffffffc008e433c8  inet_sendmsg+0x58           call hash 0x87bcba6f (int (struct sock *, struct msghdr *, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
-0xffffffc008ead820  inet6_sendmsg+0x58          call hash 0x87bcba6f (int (struct sock *, struct msghdr *, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008cc5778  kernel_sendmsg_locked+0x64  call proto_ops.sendmsg_locked hash 0x87bcba6f (int (struct sock *, struct msghdr *, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008e433c8  inet_sendmsg+0x58           call proto.sendmsg hash 0x87bcba6f (int (struct sock *, struct msghdr *, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
+0xffffffc008ead820  inet6_sendmsg+0x58          call proto.sendmsg hash 0x87bcba6f (int (struct sock *, struct msghdr *, unsigned long))  11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...
 ```
 
 (Long lines wrapped by hand; spacing condensed.)
 
-The type after each hash comes from the kernel's own BTF (new in 0.1.22, see [Features](#features)); this is the output of the code on `gki.elf`, re-run 2026-11-13.
+The type after each hash comes from the kernel's own BTF (new in 0.1.22, see [Features](#features)). The struct member before `hash` (unreleased, aarch64) is the field the call loads its pointer from: `sock->ops->sendmsg` is a load from byte 136, and BTF has exactly one member of this type there. So the three answers for `tcp_sendmsg` are a `proto_ops.sendmsg_locked` call (the type-only match above) and two `proto.sendmsg` calls. This is the output of the code on `gki.elf`, re-run 2026-11-14.
 
 ## What the plugin writes into IDA (fake IDA, not a screenshot)
 
@@ -51,10 +51,10 @@ BEFORE (no CFIScope): 0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8
   comment: none; code xrefs from this call: none (indirect)
 
 AFTER Scan kCFI calls (Alt-Shift-K): 13897 sites, 13897 comments, 44718 cross-references in the whole database
-0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI 0x1EBDA935 int (struct socket *, struct msghdr *, unsigned long): 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
+0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI proto_ops.sendmsg 0x1EBDA935 int (struct socket *, struct msghdr *, unsigned long): 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
   code xrefs from this call (14): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
 
-Candidates for this call (Alt-Shift-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (hash 0x1EBDA935, int (struct socket *, struct msghdr *, unsigned long))'
+Candidates for this call (Alt-Shift-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (proto_ops.sendmsg, hash 0x1EBDA935, int (struct socket *, struct msghdr *, unsigned long))'
   0xffffffc00897842c  tun_sendmsg
   0xffffffc008cd2ac4  sock_no_sendmsg
   0xffffffc008d8cd98  netlink_sendmsg
@@ -71,11 +71,11 @@ Candidates for this call (Alt-Shift-T): window 'kCFI candidates for the call at 
   0xffffffc008f72e10  xsk_sendmsg
 
 Callers of this function (Alt-Shift-X) on tcp_sendmsg: 3 row(s)
-  0xffffffc008cc5778  kernel_sendmsg_locked+0x64  11 candidate(s)
-  0xffffffc008e433c8  inet_sendmsg+0x58  11 candidate(s)
-  0xffffffc008ead820  inet6_sendmsg+0x58  11 candidate(s)
+  0xffffffc008cc5778  kernel_sendmsg_locked+0x64  proto_ops.sendmsg_locked, 11 candidate(s)
+  0xffffffc008e433c8  inet_sendmsg+0x58  proto.sendmsg, 11 candidate(s)
+  0xffffffc008ead820  inet6_sendmsg+0x58  proto.sendmsg, 11 candidate(s)
 
-Pseudocode line of the call (with Hex-Rays):  // CFIScope: 14 candidates of int (struct socket *, struct msghdr *, unsigned long): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
+Pseudocode line of the call (with Hex-Rays):  // CFIScope: proto_ops.sendmsg, 14 candidates of int (struct socket *, struct msghdr *, unsigned long): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
 ```
 
 ## How it works
@@ -124,9 +124,10 @@ The menu names below are under Edit > Plugins, with their default keys. Scan, th
 Quick try, no download (about a minute). The plugin ships small objects built with Clang kCFI from `tests/fixtures/t.c`, with the known answer for every call in `tests/fixtures/truth.json`.
 
 1. Copy one out of the plugin folder first, so that IDA does not write its database into it (an upgrade replaces the folder): `cp ~/.idapro/plugins/cfiscope/tests/fixtures/x86_64-kernel.o ~/` (Windows: `copy "%APPDATA%\Hex-Rays\IDA Pro\plugins\cfiscope\tests\fixtures\x86_64-kernel.o" %USERPROFILE%\`). Open the copy in IDA (`aarch64-kernel.o` works the same way).
-2. Choose **CFIScope: Scan kCFI calls** (`Alt-Shift-K`) and answer its question about creating functions (either answer works for these steps). The Output window should then say `Scan: 21 kCFI call sites (21 types, all named from the file's BTF); 21 with candidates (median 3); ...` (checked against fake IDA modules): one call site per function-pointer type in `t.c`, each with candidates. Scan then opens a window, **CFIScope: 21 kCFI call sites**, with one row per call site: address, function and offset, type, number of candidates and the first ones (checked against fake IDA modules). Enter on a row jumps to the call; **CFIScope: List kCFI call sites** opens it again. If the list has the keyboard focus, click back into the IDA View before pressing `G` in the next steps.
+2. Choose **CFIScope: Scan kCFI calls** (`Alt-Shift-K`) and answer its question about creating functions (either answer works for these steps). The Output window should then say `Scan: 21 kCFI call sites (21 types, all named from the file's BTF); 21 with candidates (median 3); ...` (checked against fake IDA modules): one call site per function-pointer type in `t.c`, each with candidates. Scan then opens a window, **CFIScope: 21 kCFI call sites**, with one row per call site: address, function and offset, member (empty here: these calls go through parameters), type, number of candidates and the first ones (checked against fake IDA modules). Enter on a row jumps to the call; **CFIScope: List kCFI call sites** opens it again. If the list has the keyboard focus, click back into the IDA View before pressing `G` in the next steps.
 3. Press `G`, type `do_call_2`, and put the cursor on its indirect call: the `jmp rax` after the `ud2`, at `do_call_2+0x1a` (in `aarch64-kernel.o` the `br x2` at `do_call_2+0x24`). Choose **CFIScope: Candidates for this call** (`Alt-Shift-T`). It should list `impl_2_0`, `impl_2_1`, `impl_2_2`; the call's comment and the list title name the type, `long (short, int)`, from the BTF of `t.c` that these two fixtures carry.
 4. Press `G`, type `impl_2_1` and choose **CFIScope: Callers of this function** (`Alt-Shift-X`). It should list that call in `do_call_2`.
+5. The struct member each call goes through (unreleased; aarch64): copy out and open `tests/fixtures/kcfi_members_a64.o` the same way and Scan. The comment on `call_a_send+0x2c` should read `kCFI a_ops.send 0xFD39CD44 int (struct msg *, int): 2 candidate(s): send_x, send_y`, and the call-site list's Member column says `a_ops.send` there and `one of 2 members (c_ops.poll, d_ops.poll)` for `call_c_poll+0x2c` (checked against fake IDA modules). Without IDA: `cd ~/.idapro/plugins/cfiscope && python3 -m cfiscope tests/fixtures/kcfi_members_a64.o --sites` prints the same members.
 
 A real kernel (the public aarch64 Android kernel used for the output above and the [numbers](docs/VERIFICATION.md)):
 
@@ -140,14 +141,14 @@ A real kernel (the public aarch64 Android kernel used for the output above and t
    ```
    Install [vmlinux-to-elf](https://github.com/marin-m/vmlinux-to-elf#readme) first, as its README says (snap, yay or `uv tool install vmlinux-to-elf`). `pip install vmlinux-to-elf` worked for us on Linux, where pip built its `minilzo` dependency with the C compiler.
 2. Open `gki.elf` in IDA. Auto-analysis of this 39 MB kernel (57,453 named functions) takes a while, and you need not wait for it: Scan asks "Wait for auto-analysis to finish before scanning?", and No scans at once. The call sites and candidates are read from the code bytes, so they are the same; the order of each list (functions whose address is taken first), the call-site list's Function+off column and, if you answer No to "Create functions", the cross-references depend on what IDA has analysed so far (run Scan again after analysis to refresh them).
-3. Meanwhile, the same answers in about 2 seconds on the command line (2.3 s each here):
+3. Meanwhile, the same answers in about 3 seconds on the command line (2.7 to 2.9 s each here):
    ```
    cd ~/.idapro/plugins/cfiscope
    python3 -m cfiscope ~/gki.elf --callers tcp_sendmsg
    python3 -m cfiscope ~/gki.elf --targets 0xffffffc008cc55ac
    ```
 4. Choose **CFIScope: Scan kCFI calls**. The Output window should say `Scan: 13,897 kCFI call sites (4,184 types, all named from the file's BTF); 11,960 with candidates (median 6), ...`, and the call-site window lists all 13,897 with their types and candidate counts (both checked against fake IDA modules).
-5. Click into the IDA View, press `G`, type `0xffffffc008cc55ac` (the `blr x8` at `sock_sendmsg+0xb4`) and choose **CFIScope: Candidates for this call**: the 14 functions of the block above (IDA lists those whose address is taken first, so the order can differ). Press `G`, type `tcp_sendmsg` and choose **CFIScope: Callers of this function**: 3 call sites of its kCFI type.
+5. Click into the IDA View, press `G`, type `0xffffffc008cc55ac` (the `blr x8` at `sock_sendmsg+0xb4`) and choose **CFIScope: Candidates for this call**: the 14 functions of the block above (IDA lists those whose address is taken first, so the order can differ); the window title and the call's comment name the member, `proto_ops.sendmsg` (checked against fake IDA modules). Press `G`, type `tcp_sendmsg` and choose **CFIScope: Callers of this function**: 3 call sites of its kCFI type.
 
 A real module (1.4 MB, no conversion): the GKI android14-6.1 `bluetooth.ko` of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), from the public AOSP prebuilts (gitiles serves a file as base64 with `?format=TEXT`).
 
@@ -171,7 +172,8 @@ A real module (1.4 MB, no conversion): the GKI android14-6.1 `bluetooth.ko` of [
 - **Scan kCFI calls** (`Alt-Shift-K`): comments every kCFI call site with the type hash and candidate count. Adds cross-references when the list is short (at most 16) and offers to create functions at candidates IDA has not recognised. It asks first; Cancel writes nothing.
 - **Candidates for this call** (`Alt-Shift-T`): a jump list of every function the call under the cursor may reach (its kCFI type). In pseudocode it takes the call on the cursor's line and asks which one if the line has several.
 - **Callers of this function** (`Alt-Shift-X`): every indirect call site that may reach this function, by its kCFI type (in pseudocode, the decompiled function). IDA's own xrefs window shows such a call only after Scan, and only when its list has at most 16 candidates (Scan adds cross-references to short lists only); this list also works before Scan and includes the calls with longer lists.
-- **List kCFI call sites** (unreleased; no default key; Scan opens it at its end): a non-modal window of every call site, with columns Address, Function+off, Type (the C prototype from BTF, else the hash), Candidates (a number column, `CHCOL_DEC`) and First candidates; Enter jumps to the call. The rows are those of `python3 -m cfiscope FILE --sites`, the names in the comment's order. Checked against fake IDA modules only: 21 rows on each Quick-try fixture and 13,897 on GKI 6.1, each equal to its `--sites` line, built in 0.15 s or less there.
+- **List kCFI call sites** (unreleased; no default key; Scan opens it at its end): a non-modal window of every call site, with columns Address, Function+off, Member (the struct member, see below), Type (the C prototype from BTF, else the hash), Candidates (a number column, `CHCOL_DEC`) and First candidates; Enter jumps to the call. The rows are those of `python3 -m cfiscope FILE --sites`, the names in the comment's order. Checked against fake IDA modules only: 21 rows on each Quick-try fixture and 13,897 on GKI 6.1, each equal to its `--sites` line, built in 0.15 s or less there.
+- **The struct member each call goes through** (unreleased; aarch64 only): `sock_sendmsg+0xb4` is `blr x8`, and CFIScope says it calls through `proto_ops.sendmsg`. It walks back from the kCFI check to the `ldr` that loaded the called pointer and looks up the load's byte offset, with the call's type hash, among the function-pointer members in BTF (embedded and anonymous structs and unions included). One match names the member; several print `one of N members (...)`, rather than picking one. It shows on the command line (`--sites`, `--callers`, `--targets`, the summary, and `member` / `members` / `member_offset` in `--json`) and in the IDA comment, pseudocode comment, Candidates window title, Callers rows and a Member column of the call-site list (the IDA side checked against fake IDA modules only). On GKI 6.1, 9,764 of 13,897 calls are matched to a member and 8,937 to exactly one. GKI 6.6 gives 9,675 / 8,821 and GKI 6.12 9,984 / 9,284 ([VERIFICATION](docs/VERIFICATION.md#struct-members-aarch64)). The member is the only one BTF has of that type at that offset; that the call really goes through it is not proven.
 - **Remove annotations**: removes the comments and cross-references the scan added. Functions created when you answered Yes stay.
 - **Pseudocode comments** (with the Hex-Rays decompiler): the pseudocode line of each kCFI call gets a trailing comment such as `// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2` (the type when the file has BTF). After you reopen a scanned database they come back without a new Scan (unreleased): the first decompiled function or lookup re-reads the code, read-only.
 - **kCFI hashes named by C function type** (0.1.22): when the kernel carries BTF (`CONFIG_DEBUG_INFO_BTF`), or with `--btf PATH`, each hash is shown as its type, e.g. `hash 0x4f4ccb9d (int (struct file *, int))` (CFIScope mangles every BTF prototype the way Clang does and hashes it: `cfiscope/kcfi_types.py`). Named: all 4,184 hashes on GKI 6.1, all 4,466 on GKI 6.6, 4,621 of 4,626 on the Rust-enabled GKI 6.12 (the 5 left are inside Rust code); details in [VERIFICATION](docs/VERIFICATION.md). The IDA layer does the same from the input file's BTF, checked only against fake IDA modules.
@@ -200,6 +202,7 @@ Full description of each action: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#the
 
 - **Not yet run inside real IDA.** The IDA layer was tested only against fake `ida_*` modules, the pseudocode comments and lookups, and the restore after reopening, only against fake `ida_hexrays` and `ida_netnode`.
 - **Candidates are type-compatible functions.** kCFI proves a function has the right type hash, not that a given call ever reaches it.
+- **Struct members:** aarch64 only (x86-64 is not read yet); with BTF only; straight-line code only (a load the walk cannot follow, or one with a branch landing between it and the check, gives no member). A call through a pointer to a lone function pointer (`(*pp)()`, offset 0) cannot be told from a struct's first member. A pointer the compiler has already moved into the struct is read from the wrong origin: `gic_enable_of_quirks+0x54` (GKI 6.6, 6.12) keeps a pointer to `gic_quirk.init` (byte 24) in a loop and loads `[x22, #0]`, so it is named `vhost_task.fn`.
 - **Some lists are long.** On each of the four kCFI GKI kernels measured, the median is 6 candidates per call that has any, but the largest list has 1,458 to 1,812.
 - **No candidates for some calls.** On GKI 6.1, 1,937 of 13,897 sites carry a hash that no function in the image has.
 - **Modules (.ko):** the lists hold the module's own functions; the kernel's need `--with` (command line only), and callees in other modules are not found. Measured on three GKI 6.1 modules.
@@ -213,7 +216,7 @@ Full description of each action: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#the
 
 **CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is in [docs/VERIFICATION.md](docs/VERIFICATION.md): the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
 
-Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (189 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules, and the picture above against its SVG; six are skipped unless you name the real files they need: one needs `CFISCOPE_KO_DIR`, the folder with the GKI modules of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), and five need `CFISCOPE_GKI_ELF`, the `gki.elf` of the walkthrough).
+Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (213 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules, and the picture above against its SVG; nine are skipped unless you name the real files they need: one needs `CFISCOPE_KO_DIR`, the folder with the GKI modules of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), and eight need `CFISCOPE_GKI_ELF`, the `gki.elf` of the walkthrough).
 
 CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
 
