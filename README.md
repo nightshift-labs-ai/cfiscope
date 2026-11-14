@@ -106,7 +106,7 @@ Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later.
 The plugin index can lag a day or more behind the [GitHub releases](https://github.com/nightshift-labs-ai/cfiscope/releases). If `hcli plugin status` shows an older version than the latest release, install the release zip directly:
 
 ```
-hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/tags/v0.1.20.zip
+hcli plugin install https://github.com/nightshift-labs-ai/cfiscope/archive/refs/tags/v0.1.21.zip
 ```
 
 ## Try it
