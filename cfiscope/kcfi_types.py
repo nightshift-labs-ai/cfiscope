@@ -7,6 +7,7 @@ gives a table hash -> type for the hashes a kernel's call sites check.  This cov
 kernel uses: builtins, pointers, const / volatile / restrict, named and typedef-named structs, unions
 and enums, function pointers, arrays (decayed in parameters), varargs, and Itanium substitutions.
 """
+import re
 import struct
 from collections import defaultdict
 
@@ -553,9 +554,12 @@ class TypeNames:
     pointers in structs and unions, else the typedef that names the pointer type.
 
     members: {(kCFI hash, byte offset): ['struct.member', ...]} of every function-pointer member (member_slots()), for
-    naming the member a call loads its pointer from (name_members())."""
+    naming the member a call loads its pointer from (name_members()).
 
-    def __init__(self, btf, examples=3):
+    btf: the parsed BTF itself with keep_btf (member_candidates(): --implements struct.member), else None."""
+
+    def __init__(self, btf, examples=3, keep_btf=False):
+        self.btf = btf if keep_btf else None
         self.by_hash = defaultdict(dict)
         self.plain_of = defaultdict(set)     # integer-normalized mangled name -> the plain mangled names behind it
         self.readable = {}                   # plain mangled name -> C text (c_type of its canonical type)
@@ -637,6 +641,21 @@ class TypeNames:
         """Readable C type(s) of a hash ('int (struct file *, int)'), ' | ' between collisions; None if unknown."""
         names = [r for _m, r, _e in self.lookup(h)]
         return " | ".join(names) if names else None
+
+    def type_candidates(self, text):
+        """[(kCFI hash, mangled name)] of the BTF function types whose C text (c_type(), as the tool prints types) is
+        text, spacing aside (type_key()): the plain mangling of each, then its integer-normalized one (the command line
+        keeps the one the input's call sites use)."""
+        key = type_key(text)
+        norm_of = {}
+        for normalized, plains in self.plain_of.items():
+            for plain in plains:
+                norm_of.setdefault(plain, normalized)
+        out = []
+        for plain in sorted(self.readable):
+            if type_key(self.readable[plain]) == key:
+                out += [(kcfi_hash(m), m) for m in (plain, norm_of.get(plain)) if m]
+        return out
 
 
 MAX_MEMBER_ENTRIES = 1 << 21   # member_slots() gives up (returns {}) beyond this many entries: crafted BTF, not a kernel
@@ -845,12 +864,12 @@ def _proto_behind(btf, tid, depth=0):
     return None
 
 
-def load_type_names(data):
-    """TypeNames from an ELF, raw BTF or raw kernel image; None if it holds no BTF."""
+def load_type_names(data, keep_btf=False):
+    """TypeNames from an ELF, raw BTF or raw kernel image; None if it holds no BTF. keep_btf: see TypeNames."""
     blob = find_btf(data)
     if blob is None:
         return None
-    return TypeNames(BTF(blob))
+    return TypeNames(BTF(blob), keep_btf=keep_btf)
 
 
 def has_split_btf(data):
@@ -862,16 +881,16 @@ def has_split_btf(data):
         return False
 
 
-def load_split_type_names(data, kernel_data):
+def load_split_type_names(data, kernel_data, keep_btf=False):
     """TypeNames from a module's split BTF (data: the .ko) read on top of its kernel's BTF (kernel_data: an ELF with
     a .BTF section, a raw kernel image or raw BTF); None if data has no split BTF. BTFError if kernel_data has no
-    BTF or the module's does not continue it."""
+    BTF or the module's does not continue it. keep_btf: see TypeNames."""
     if not has_split_btf(data):
         return None
     base = find_btf(kernel_data)
     if base is None:
         raise BTFError("no BTF found (no .BTF section, BTF header or raw BTF)")
-    return TypeNames(BTF(find_btf(data), base=BTF(base)))
+    return TypeNames(BTF(find_btf(data), base=BTF(base)), keep_btf=keep_btf)
 
 
 def name_sites(sites, names):
@@ -895,3 +914,122 @@ def named_summary(named, total):
     """'kCFI hashes named: N of M (x%)'."""
     pct = int(1000 * named / total) / 10.0 if total else 0.0    # rounded down: 100.0% only when all are named
     return "kCFI hashes named: %d of %d (%.1f%%)" % (named, total, pct)
+
+
+# ---- --implements SPEC: the kCFI hash of a struct member or a C function type ----
+
+class SpecError(ValueError):
+    """A struct member that BTF does not have, or that is not a function pointer."""
+
+
+def type_key(text):
+    """The tokens of a C type's text, so that spacing does not count: 'long(struct file*, unsigned int)' and
+    'long (struct file *, unsigned int)' are one type."""
+    return tuple(re.findall(r"\.\.\.|\w+|\S", text))
+
+
+def _strip(btf, t):
+    """t without typedefs, qualifiers and type tags."""
+    n = 0
+    while n < 16 and 0 < t < len(btf.types) and btf.types[t][0] in (K_TYPEDEF, K_CONST, K_VOLATILE, K_RESTRICT,
+                                                                       K_TYPE_TAG):
+        t, n = btf.types[t][3], n + 1
+    return t
+
+
+def _kind(btf, t):
+    return btf.types[t][0] if 0 < t < len(btf.types) else 0
+
+
+def _find_member(btf, tid, name, depth=0):
+    """Type id of the member `name` of struct or union tid, also inside its anonymous struct and union members (C
+    reaches theirs by name); None if it has none."""
+    for name_off, mtid, _off in btf.types[tid][4] or ():
+        mname = btf.name(name_off)
+        if mname == name:
+            return mtid
+        if not mname and depth < 16 and _kind(btf, _strip(btf, mtid)) in (K_STRUCT, K_UNION):
+            found = _find_member(btf, _strip(btf, mtid), name, depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+def _c_text(btf, t):
+    """C text of BTF type t for a message."""
+    try:
+        return c_type(btf.canon(t))
+    except Unmangleable:
+        return "BTF kind %d" % _kind(btf, t)
+
+
+def member_candidates(btf, spec):
+    """[(kCFI hash, mangled name)] of the function-pointer member spec ('file_operations.unlocked_ioctl', or
+    'outer.inner.notify' through members that are structs or unions by value; members of anonymous ones are reached by
+    their name, as in C) in BTF: for each struct or union of that name (an anonymous one by the typedef that names it)
+    that has it, the plain and the integer-normalized mangling of its function type (and, for a "T (*)[]" parameter,
+    of the GNU "T (*)[0]" form, as TypeNames enters both). An array of function pointers counts as one. SpecError when
+    BTF has no struct or union of that name, none of them has the member, or it is not a function pointer."""
+    parts = spec.split(".")
+    root, path = parts[0], parts[1:]
+    if not root or not path or not all(path):
+        raise SpecError("%r is not struct.member" % spec)
+    link = btf.linkage_names()
+    roots = [tid for tid, (kind, name, _kf, _st, _extra) in enumerate(btf.types)
+             if kind in (K_STRUCT, K_UNION) and (name or link.get(tid)) == root]
+    if not roots:
+        raise SpecError("no struct or union named %r in BTF" % root)
+    protos, problem = [], None
+    for tid in roots:
+        cur = tid
+        for i, m in enumerate(path):
+            where = ".".join([root] + path[:i + 1])
+            mtid = _find_member(btf, cur, m)
+            if mtid is None:
+                tag = "union" if btf.types[cur][0] == K_UNION else "struct"
+                problem = problem or "%s %s has no member %r" % (tag, btf.types[cur][1] or link.get(cur, "(anonymous)"),
+                                                                 m)
+                break
+            t = _strip(btf, mtid)
+            if i < len(path) - 1:
+                if _kind(btf, t) not in (K_STRUCT, K_UNION):
+                    problem = problem or "%s is not a struct or union" % where
+                    break
+                cur = t
+                continue
+            if _kind(btf, t) == K_ARRAY:
+                t = _strip(btf, btf.types[t][4][0])
+            proto = _strip(btf, btf.types[t][3]) if _kind(btf, t) == K_PTR else 0
+            if _kind(btf, proto) == K_FUNC_PROTO:
+                protos.append(proto)
+            else:
+                problem = problem or "%s is not a function pointer (%s)" % (where, _c_text(btf, mtid))
+    if not protos:
+        raise SpecError(problem)
+    out = []
+    for proto in sorted(set(protos)):
+        try:
+            t = btf.canon(proto)
+            if tree_size(t) > MAX_TYPE_NODES:
+                raise Unmangleable("type too large")
+            for v in [t] + ([zero_bound(t)] if zero_bound(t) != t else []):
+                for m in (mangle(v), mangle(v, normalize=True)):
+                    if (kcfi_hash(m), m) not in out:
+                        out.append((kcfi_hash(m), m))
+        except Unmangleable as e:
+            raise SpecError("the type of %s cannot be mangled (%s)" % (spec, e))
+    return out
+
+
+def normalized_scheme(sites):
+    """True when name_sites() named the kCFI sites by integer-normalized types (CONFIG_CFI_ICALL_NORMALIZE_INTEGERS,
+    kernels with Rust), False when by plain ones, None when it named none."""
+    plain = norm = 0
+    for s in sites:
+        m = getattr(s, "type_mangled", None)
+        if getattr(s, "kind", "kcfi") == "kcfi" and m:
+            if m.endswith(".normalized"):
+                norm += 1
+            else:
+                plain += 1
+    return None if not plain and not norm else norm > plain

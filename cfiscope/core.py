@@ -265,6 +265,84 @@ def preamble_index(ranges, arch, wanted, disps, text=None):
     return by_hash, outside
 
 
+# Where kCFI keeps a function's type hash when no check of the input says (Site.disp): aarch64 kCFI stores it in the word
+# before the function (GKI 6.1, 6.6, 6.12 and the fixtures all check at -4). x86-64 kernels differ (-4, -15, -20 with
+# patchable entries), so there an input with no check has no default.
+DEFAULT_DISPS = {"aarch64": [-4]}
+
+
+def preamble_hash(ranges, arch, ea, disps):
+    """The word stored where kCFI keeps the type hash of a function entry at ea, in find_preambles()'s form: at ea + disp
+    for the first disp in disps (Site.disp) that holds one (an aligned word on aarch64; the imm32 of a `mov r32, imm32`
+    on x86-64), in the same range, with ea looking like an entry (looks_like_entry()). None otherwise. A function with
+    no hash has some other word there (on aarch64, the last word of the code before it): see hash_evidence()."""
+    for base, mem in ranges:
+        if not base <= ea < base + len(mem):
+            continue
+        off = ea - base
+        if not looks_like_entry(mem, off, arch):
+            return None
+        for d in disps:
+            at = off + d
+            if at < 0 or at + 4 > len(mem):
+                continue
+            if arch == "aarch64" and at % 4:
+                continue
+            if arch == "x86_64" and (at < 1 or not 0xb8 <= mem[at - 1] <= 0xbf):
+                continue
+            return struct.unpack_from("<I", mem, at)[0]
+        return None
+    return None
+
+
+def _a64_padding_or_end(w):
+    """The aarch64 instruction w when it is one that ends or pads a function (so the word in front of a function with no
+    kCFI hash), else None: ret, b, bl (a call that does not return), br/blr, brk, nop or another hint (bti, paciasp),
+    udf. On GKI 6.1 these are 9,354 of the 9,431 words in front of a named function that BTF does not name as a type
+    hash, and 2,229 of the 48,021 that it does (measured for impl200)."""
+    if w & 0xfffffc1f == 0xd65f0000 or w & 0xfffffbff == 0xd65f0bff:
+        return "ret"
+    if w >> 26 == 0b000101:
+        return "b"
+    if w >> 26 == 0b100101:
+        return "bl"
+    if w & 0xff9ffc1f == 0xd61f0000 or w & 0xfe9ff800 == 0xd61f0800:
+        return "br/blr"
+    if w & 0xffe0001f == 0xd4200000:
+        return "brk"
+    if w & 0xfffff01f == 0xd503201f:
+        return "nop/hint"
+    if w >> 16 == 0:
+        return "udf"
+    return None
+
+
+def hash_evidence(h, arch, checked=(), named=()):
+    """Why the word h in front of a function (preamble_hash()) is taken as its kCFI type hash: "checked" (a call site
+    checks it), "named" (BTF names it as a function type), "preamble" (its form: x86-64's `mov r32, imm32`, which
+    preamble_hash() requires; on aarch64 a word that is no instruction ending or padding a function), or None: then it
+    is most likely the end of the code before a function that has no hash (a static function whose address is never
+    taken)."""
+    if h in checked:
+        return "checked"
+    if h in named:
+        return "named"
+    if arch == "aarch64" and _a64_padding_or_end(h):
+        return None
+    return "preamble"
+
+
+def implementations(ranges, arch, h, disps, sites=(), text=None):
+    """Sorted addresses of every function with the kCFI type hash h in front of it, found as resolve() finds candidates
+    (preamble_index(), with its text filter): the candidates of a kCFI site that checks h, when there is one (the same
+    list), else a scan of ranges for h."""
+    for s in sites:
+        if s.kind == "kcfi" and s.hash == h:
+            return sorted(s.targets)
+    by_hash, _ = preamble_index(ranges, arch, {h}, disps, text)
+    return sorted(by_hash.get(h, ()))
+
+
 def _resolve_kcfi(ranges, arch, text=None):
     sites = []
     for base, mem in ranges:
