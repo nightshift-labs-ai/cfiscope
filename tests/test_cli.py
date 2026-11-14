@@ -348,6 +348,122 @@ class NoIndirectCall(unittest.TestCase):
         self.assertNotIn("blr_instructions", json.loads(out)["stats"])
 
 
+def module_and_kernel(tmp, unhash=("impl_2_0", "impl_2_1", "impl_2_2")):
+    """A stand-in for a module (.ko) and its kernel, from aarch64-plain.o (ET_REL, one section per function):
+    module.o is the object with the type hash in front of each function in unhash zeroed, so that their call
+    (do_call_2) has no candidate in the module; kernel.elf is an ET_EXEC holding the object's unchanged code at
+    0xffffffc008000000 with every function renamed k_<name>. Returns (module path, kernel path)."""
+    sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+    try:
+        import gen_fixtures
+    finally:
+        sys.path.pop(0)
+    with open(os.path.join(FIX, "aarch64-plain.o"), "rb") as fh:
+        d = bytearray(fh.read())
+    secs = cli._sections(bytes(d))
+    shstr = secs[struct.unpack_from("<H", d, 0x3e)[0]]
+    def sec_name(s):
+        start = shstr[4] + s[0]
+        return bytes(d[start:d.index(b"\0", start)]).decode()
+    for s in secs:
+        if sec_name(s) in [".text." + n for n in unhash]:
+            d[s[4]:s[4] + 4] = b"\0\0\0\0"
+    arch, ranges, symbols = cli.load_elf(bytes(d))
+    with open(os.path.join(FIX, "aarch64-plain.o"), "rb") as fh:
+        _, ranges, _ = cli.load_elf(fh.read())
+    lo, kb = ranges[0][0], 0xffffffc008000000
+    code = bytearray(ranges[-1][0] + len(ranges[-1][1]) - lo)
+    for base, mem in ranges:
+        code[base - lo:base - lo + len(mem)] = mem
+    module, kernel = os.path.join(tmp, "module.o"), os.path.join(tmp, "kernel.elf")
+    with open(module, "wb") as fh:
+        fh.write(d)
+    with open(kernel, "wb") as fh:
+        fh.write(gen_fixtures.elf64_aarch64(bytes(code), kb, sorted(("k_" + n, kb + ea - lo)
+                                                                   for ea, n in symbols.items())))
+    return module, kernel
+
+
+class WithKernel(unittest.TestCase):
+    """ko189: --with VMLINUX lists, for each call site of a module, the kernel's functions with the call's hash."""
+
+    def test_sites_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = module_and_kernel(tmp)
+            rc, out, _ = run(module, "--sites", "--json")
+            doc = json.loads(out)
+            by_in = {s["in"].split("+")[0]: s for s in doc["sites"]}
+            self.assertEqual(by_in["do_call_2"]["candidates"], 0)
+            self.assertNotIn("kernel_candidates", by_in["do_call_2"])
+            self.assertNotIn("kernel", doc["stats"])
+            rc, out, err = run(module, "--sites", "--json", "--with", kernel)
+            self.assertEqual(rc, 0, err)
+            doc = json.loads(out)
+            by_in = {s["in"].split("+")[0]: s for s in doc["sites"]}
+            s2 = by_in["do_call_2"]
+            self.assertEqual((s2["candidates"], s2["kernel_candidates"]), (0, 3))
+            self.assertEqual([t["name"] for t in s2["kernel_targets"]], ["k_impl_2_0", "k_impl_2_1", "k_impl_2_2"])
+            for s in doc["sites"]:        # every other call: the same functions in the module and in the kernel
+                if s is not s2:
+                    self.assertEqual(["k_" + t["name"] for t in s["targets"]], [t["name"] for t in s["kernel_targets"]])
+            self.assertEqual(doc["stats"]["kernel"], {
+                "file": "kernel.elf", "named_functions": 97, "sites_with_kernel_candidates": 21,
+                "sites_only_in_kernel": 1, "sites_in_neither": 0})
+
+    def test_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = module_and_kernel(tmp)
+            rc, out, err = run(module, "--with", kernel)
+            self.assertEqual(rc, 0, err)
+            self.assertIn("with --with kernel.elf (97 named functions): sites with candidates in the kernel 21; "
+                          "with none in this file but some in the kernel 1; in neither 0", out)
+            rc, out, _ = run(module, "--sites", "--with", kernel)
+            line = next(x for x in out.splitlines() if "do_call_2+" in x)
+            self.assertTrue(line.endswith("0 candidate(s); in kernel.elf 3: k_impl_2_0, k_impl_2_1, k_impl_2_2"), line)
+            rc, out, _ = run(module, "--sites", "--with", kernel, "--max-list", "1")
+            line = next(x for x in out.splitlines() if "do_call_2+" in x)
+            self.assertTrue(line.endswith("0 candidate(s); in kernel.elf 3: k_impl_2_0 ..."), line)
+            rc, out, _ = run(module, "--sites")
+            self.assertNotIn("kernel.elf", out)
+
+    def test_callers_and_targets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = module_and_kernel(tmp)
+            rc, out, _ = run(module, "--callers", "impl_2_1")       # its hash was zeroed: nothing in the module
+            self.assertEqual((rc, out.splitlines()[0]), (0, "0 call site(s) can reach impl_2_1"))
+            rc, out, _ = run(module, "--callers", "k_impl_2_1")
+            self.assertEqual(rc, 2)
+            rc, out, err = run(module, "--callers", "k_impl_2_1", "--with", kernel)
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(out.splitlines()[0], "1 call site(s) can reach k_impl_2_1 (in kernel.elf)")
+            self.assertIn("do_call_2+0x24", out.splitlines()[1])
+            rc, out, _ = run(module, "--callers", "impl_3_1", "--with", kernel)   # a module function: as before
+            self.assertEqual(out.splitlines()[0], "1 call site(s) can reach impl_3_1")
+            rc, out, _ = run(module, "--sites", "--json")
+            call = next(s["call"] for s in json.loads(out)["sites"] if s["in"].startswith("do_call_2+"))
+            rc, out, _ = run(module, "--targets", call, "--with", kernel)
+            self.assertEqual(rc, 0)
+            lines = out.splitlines()
+            self.assertEqual(lines[-4], "  in kernel.elf (3):")
+            self.assertEqual([x.split()[1] for x in lines[-3:]], ["k_impl_2_0", "k_impl_2_1", "k_impl_2_2"])
+            self.assertTrue(lines[-1].split()[0].startswith("0xffffffc008"))
+
+    def test_bad_kernel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            module, _ = module_and_kernel(tmp)
+            rc, _, err = run(module, "--with", os.path.join(FIX, "x86_64-plain.o"))
+            self.assertEqual(rc, 2)
+            self.assertIn("--with", err)
+            self.assertIn("x86_64", err)
+            rc, _, err = run(module, "--with", os.path.join(tmp, "missing.elf"))
+            self.assertEqual(rc, 2)
+
+    def test_ignored_for_jump_table_cfi(self):
+        rc, out, err = run(os.path.join(FIX, "aarch64-jtcfi.elf"), "--with", os.path.join(FIX, "aarch64-plain.o"))
+        self.assertEqual(rc, 0)
+        self.assertIn("--with is for kCFI type hashes; ignored for this jump-table CFI kernel", err)
+
+
 class QuickTryFixtureBTF(unittest.TestCase):
     """s176: the Quick-try fixtures carry the BTF of t.c (tools/add_btf_section.py), so the first try names types."""
 

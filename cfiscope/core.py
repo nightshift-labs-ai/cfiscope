@@ -233,12 +233,10 @@ def resolve(ranges, arch, text=None):
     return sites, stats
 
 
-def _resolve_kcfi(ranges, arch, text=None):
-    sites = []
-    for base, mem in ranges:
-        sites.extend(scan_sites(mem, base, arch))
-    wanted = {s.hash for s in sites}
-    disps = sorted({s.disp for s in sites})
+def preamble_index(ranges, arch, wanted, disps, text=None):
+    """({hash: set of function addresses}, set of addresses left out) for the type hashes in wanted stored in front
+    of a function in ranges, at each offset in disps (Site.disp).  text: as for resolve().  Also used on a kernel for
+    the call sites of a module (the command line's --with)."""
     by_hash = defaultdict(set)
     outside = set()
     inside = _in_ranges(text) if text is not None else None
@@ -251,6 +249,16 @@ def _resolve_kcfi(ranges, arch, text=None):
                         outside.add(t)
                         continue
                     by_hash[h].add(t)
+    return by_hash, outside
+
+
+def _resolve_kcfi(ranges, arch, text=None):
+    sites = []
+    for base, mem in ranges:
+        sites.extend(scan_sites(mem, base, arch))
+    wanted = {s.hash for s in sites}
+    disps = sorted({s.disp for s in sites})
+    by_hash, outside = preamble_index(ranges, arch, wanted, disps, text)
     for s in sites:
         s.targets = sorted(by_hash.get(s.hash, ()))
     counts = sorted(len(s.targets) for s in sites)
