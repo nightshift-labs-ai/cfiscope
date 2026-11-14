@@ -81,7 +81,8 @@ def install(world):
     m["ida_name"].get_nlist_name = lambda i: world.nlist[i][1]
     m["ida_name"].get_name_ea = lambda frm, name: next((ea for ea, n in world.nlist if n == name), 2**64 - 1)
     class Choose:
-        CHCOL_HEX, CH_RESTORE, NOTHING_CHANGED = 1, 2, 0
+        # values of ida_kernwin.pyi (idapro 0.0.12): column formats share the CHCOL_FORMAT bits above the width
+        CHCOL_HEX, CHCOL_DEC, CHCOL_FORMAT, CH_RESTORE, NOTHING_CHANGED = 0x20000, 0x30000, 0xF0000, 0x20000, 0
         def __init__(self, title, cols, flags=0): pass
     m["ida_kernwin"].Choose = Choose
     m["ida_netnode"].BADNODE, m["ida_netnode"].MAXSPECSIZE, m["ida_netnode"].htag = 2**64 - 1, 1024, 72

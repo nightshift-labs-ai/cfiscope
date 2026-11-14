@@ -265,36 +265,66 @@ def target_name(ea):
     return "0x%x" % ea
 
 
-def ranked(site):
-    """Address-taken candidates first: only they can really be stored in a pointer."""
-    return sorted(site.targets, key=lambda t: (not pointer_taken(site, t), t))
+def ranked(site, taken=None):
+    """Address-taken candidates first: only they can really be stored in a pointer. taken: a dict that keeps each
+    candidate's pointer_taken() answer across the sites of one pass (the call-site list), so it is asked once."""
+    if taken is None:
+        return sorted(site.targets, key=lambda t: (not pointer_taken(site, t), t))
+    jt = getattr(site, "kind", "kcfi") != "kcfi"      # pointer_taken() depends on the target and, for these, its entry
+
+    def key(t):
+        known = taken.get((jt, t))
+        if known is None:
+            known = taken[(jt, t)] = pointer_taken(site, t)
+        return (not known, t)
+    return sorted(site.targets, key=key)
 
 
-def _jt_describe(site, targets):
-    label = core.type_label(site) or "type unknown"
-    if not targets:
-        if site.kind == "slowpath":
-            why = site.note or "only __cfi_slowpath checks this call: its targets can only be in modules"
-            return "%s %s: no candidate in this image (%s)" % (JT_COMMENT_TAG, label, why)
-        return "%s %s: candidates unknown (the check's jump-table range was not found)" % (JT_COMMENT_TAG, label)
-    names = ", ".join(target_name(t) for t in targets[:6])
-    if len(targets) > 6:
-        names += ", +%d more" % (len(targets) - 6)
-    return "%s %s: %d candidate(s): %s" % (JT_COMMENT_TAG, label, len(targets), names)
+def candidate_names(site, targets):
+    """The candidates part of describe(): the first 6 names of targets (ranked()), ', +N more', or why there are none."""
+    if targets:
+        names = ", ".join(target_name(t) for t in targets[:6])
+        if len(targets) > 6:
+            names += ", +%d more" % (len(targets) - 6)
+        return names
+    if getattr(site, "kind", "kcfi") == "kcfi":
+        return "no implementation in this image"
+    if site.kind == "slowpath":
+        why = site.note or "only __cfi_slowpath checks this call: its targets can only be in modules"
+        return "no candidate in this image (%s)" % why
+    return "candidates unknown (the check's jump-table range was not found)"
 
 
 def describe(site):
     targets = ranked(site)
     if getattr(site, "kind", "kcfi") != "kcfi":
-        return _jt_describe(site, targets)
-    typed = " %s" % site.type_name if getattr(site, "type_name", None) else ""
+        head = "%s %s" % (JT_COMMENT_TAG, core.type_label(site) or "type unknown")
+    else:
+        typed = " %s" % site.type_name if getattr(site, "type_name", None) else ""
+        head = "%s 0x%08X%s" % (COMMENT_TAG, site.hash, typed)
     if not targets:
-        return "%s 0x%08X%s: no implementation in this image" % (COMMENT_TAG, site.hash, typed)
-    names = ", ".join(target_name(t) for t in targets[:6])
-    more = len(targets) - 6
-    if more > 0:
-        names += ", +%d more" % more
-    return "%s 0x%08X%s: %d candidate(s): %s" % (COMMENT_TAG, site.hash, typed, len(targets), names)
+        return "%s: %s" % (head, candidate_names(site, targets))
+    return "%s: %d candidate(s): %s" % (head, len(targets), candidate_names(site, targets))
+
+
+def site_type(site):
+    """Type column of the call-site list: the kCFI hash's C prototype when BTF named it, else the hash; for jump-table
+    CFI, the type(s) its checks name (core.type_label())."""
+    if getattr(site, "kind", "kcfi") != "kcfi":
+        return core.type_label(site) or "type unknown"
+    return site.type_name if getattr(site, "type_name", None) else "hash 0x%08X" % site.hash
+
+
+def sites_rows(sites):
+    """(address, function+offset, type, candidates, first candidates) of every call site, in scan order: the fields of
+    a `python3 -m cfiscope --sites` line (the call, or the check when no call was linked; its count), with the type
+    as site_type() and the names as the comment gives them (describe(): address-taken first)."""
+    taken, rows = {}, []
+    for s in sites:
+        at = s.call_ea or s.check_ea
+        targets = ranked(s, taken)
+        rows.append((at, target_name(at), site_type(s), len(targets), candidate_names(s, targets)))
+    return rows
 
 
 def pseudocode_text(site, limit=5):
@@ -467,22 +497,37 @@ def define_functions(sites):
 
 
 class Chooser(ida_kernwin.Choose):
-    def __init__(self, title, rows):
-        columns = [["Address", 18 | ida_kernwin.Choose.CHCOL_HEX],
-                   ["Name", 44], ["Note", 26]]
-        super().__init__(title, columns, flags=ida_kernwin.Choose.CH_RESTORE)
+    """Non-modal jump list. rows: (address, column text, ...), one value per column after Address; Enter jumps."""
+    COLUMNS = [["Address", 18 | ida_kernwin.Choose.CHCOL_HEX], ["Name", 44], ["Note", 26]]
+
+    def __init__(self, title, rows, columns=None):
+        super().__init__(title, columns or self.COLUMNS, flags=ida_kernwin.Choose.CH_RESTORE)
         self.rows = rows
 
     def OnGetSize(self):
         return len(self.rows)
 
     def OnGetLine(self, n):
-        ea, name, note = self.rows[n]
-        return ["0x%x" % ea, name, note]
+        row = self.rows[n]
+        return ["0x%x" % row[0]] + [str(v) for v in row[1:]]
 
     def OnSelectLine(self, n):
         ida_kernwin.jumpto(self.rows[n][0])
         return (ida_kernwin.Choose.NOTHING_CHANGED, )
+
+
+# The call-site list: Candidates is a number column (CHCOL_DEC), so clicking its header sorts by count.
+SITES_COLUMNS = [["Address", 18 | ida_kernwin.Choose.CHCOL_HEX], ["Function+off", 30], ["Type", 44],
+                 ["Candidates", 6 | ida_kernwin.Choose.CHCOL_DEC], ["First candidates", 60]]
+
+
+def sites_title(sites):
+    return "CFIScope: %s %s call site%s" % (format(len(sites), ","), scheme_name(sites), "" if len(sites) == 1 else "s")
+
+
+def sites_chooser(sites):
+    """The non-modal list of every scanned call site (sites_rows()); Enter on a row jumps to the call."""
+    return Chooser(sites_title(sites), sites_rows(sites), SITES_COLUMNS)
 
 
 class SitePicker(ida_kernwin.Choose):

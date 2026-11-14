@@ -5,21 +5,23 @@ stub tests use (tests/test_plugin_stub.py), runs the plugin's own IDA layer (sca
 what it wrote: the comment on the call, the cross-references, the two jump lists and the pseudocode comment.
 Real IDA will show the same text; its own disassembly, names and layout around it are not modelled.
 
-    python3 -I tools/showcase_ida_stub.py gki.elf sock_sendmsg+0xb4 tcp_sendmsg [--no]
+    python3 -I tools/showcase_ida_stub.py gki.elf sock_sendmsg+0xb4 tcp_sendmsg [--no] [--list]
 
 --no: Scan as after answering No to "Create functions" (annotate(sites, create_functions=False)); without it, as
 after Yes (the call xrefs; the functions themselves are not modelled).
+--list: also the call-site list that opens at the end of Scan: its row count, how long its rows took to build, and
+the row of the call next to the command line's --sites line for it.
 """
-import bisect, os, struct, sys
+import bisect, os, struct, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 sys.path.insert(0, os.path.join(ROOT, "tests")); sys.path.insert(0, ROOT)
 import test_plugin_stub as T  # noqa: E402
 from cfiscope import cli  # noqa: E402
 
-def main(argv):
-    create = "--no" not in argv
-    path, call, callee = [a for a in argv if a != "--no"][1:4]
+def load(path):
+    """The fake database of an ELF file: its executable code as segments, its function symbols as IDA's names and
+    functions, laid out as the command line lays them out. Returns (idalayer, world, arch, mem, symbols)."""
     with open(path, "rb") as fh:
         d = fh.read()
     arch, ranges, symbols = cli.load_elf(d)
@@ -44,6 +46,13 @@ def main(argv):
         return F(eas[i], end) if ea < end else None
     sys.modules["ida_funcs"].get_func = get_func
     sys.modules["ida_funcs"].get_func_name = lambda ea: symbols.get(ea, "")
+    return il, w, arch, mem, symbols
+
+
+def main(argv):
+    create = "--no" not in argv
+    path, call, callee = [a for a in argv if a not in ("--no", "--list")][1:4]
+    il, w, arch, mem, symbols = load(path)
     names = cli.Names(symbols)
     def addr(text):
         base, _, off = text.partition("+")
@@ -84,6 +93,17 @@ def main(argv):
         print("  %s  %s  %s" % (hex(ea), nm, note))
     print()
     print("Pseudocode line of the call (with Hex-Rays):  // %s" % il.pseudocode_text(site))
+    if "--list" in argv:
+        start = time.perf_counter()
+        chooser = il.sites_chooser(sites)       # what Scan opens at its end (and CFIScope: List kCFI call sites)
+        took = time.perf_counter() - start
+        print()
+        print("Call-site list (opens after Scan; CFIScope: List kCFI call sites): window '%s', %d rows, built in %.2f s"
+              % (il.sites_title(sites), chooser.OnGetSize(), took))
+        print("  columns: " + " | ".join(c[0] for c in il.SITES_COLUMNS))
+        n = next(i for i, r in enumerate(chooser.rows) if r[0] == at)
+        print("  row %d:  %s" % (n, " | ".join(chooser.OnGetLine(n))))
+        print("  command line --sites:  %s" % cli._site_line(site, names, 8))
 
 if __name__ == "__main__":
     main(sys.argv)

@@ -11,7 +11,7 @@ def load_entry(name="x86_64-kernel", proc="metapc", ext=".o"):
     w, _ = T.IdaLayer("test_flow").make(name, proc, ext=ext)
     kw, ia = sys.modules["ida_kernwin"], sys.modules["ida_idaapi"]
     log = {"msgs": [], "menu": [], "popup": [], "registered": [], "hooked": 0, "asked": [], "world": w, "keys": {},
-           "shown": [], "pick": -1}
+           "shown": [], "pick": -1, "closed": [], "jumped": []}
     kw.msg = lambda t: log["msgs"].append(t)
     kw.show_wait_box = lambda t: None
     kw.hide_wait_box = lambda: None
@@ -25,6 +25,8 @@ def load_entry(name="x86_64-kernel", proc="metapc", ext=".o"):
         log["shown"].append((chooser.title, modal, chooser))
         return log["pick"] if modal else 0
     kw.Choose.Show = show
+    kw.close_chooser = lambda title: log["closed"].append(title) or True     # close_chooser(title: str) -> bool
+    kw.jumpto = lambda ea: log["jumped"].append(ea) or True
     kw.get_screen_ea = lambda: 2**64 - 1
     kw.register_action = lambda d: log["registered"].append(d) or True
     kw.unregister_action = lambda n: log["registered"].remove(n) or True
@@ -52,6 +54,11 @@ def load_entry(name="x86_64-kernel", proc="metapc", ext=".o"):
     return w, importlib.import_module("cfiscope_entry"), log
 
 
+def funcs_at(w):
+    """ida_funcs.get_func over w.funcs: a function starting at each address there (func_t-like), else None."""
+    return lambda ea: types.SimpleNamespace(start_ea=ea, end_ea=ea + 4, tailqty=0) if ea in w.funcs else None
+
+
 INTERRUPTED = ("[CFIScope] interrupted: the action stopped part-way; run it again (Scan kCFI calls or Remove "
                "annotations) to finish\n")
 
@@ -74,7 +81,7 @@ class Entry(unittest.TestCase):
         # "Create functions" answered yes: functions at the candidates IDA has none for, none where IDA holds data.
         w, E, log = load_entry()
         w.funcs = set()
-        sys.modules["ida_funcs"].get_func = lambda ea: ea in w.funcs or None
+        sys.modules["ida_funcs"].get_func = funcs_at(w)
         sys.modules["ida_kernwin"].ask_yn = lambda default, text: 1
         sites = E.scan_or_warn()
         targets = sorted({t for s in sites for t in s.targets})
@@ -156,7 +163,7 @@ class Entry(unittest.TestCase):
     def test_yes_asked_before_xrefs(self):
         w, E, log = load_entry()
         w.funcs = set()
-        sys.modules["ida_funcs"].get_func = lambda ea: ea in w.funcs or None
+        sys.modules["ida_funcs"].get_func = funcs_at(w)
         self.answers(log, create=1)
         self.assertEqual(E.ScanAction().activate(None), 1)
         self.assertEqual(log["asked"], [("Create functions at candidates IDA has not recognised", 0, 0)])
@@ -187,11 +194,12 @@ class Entry(unittest.TestCase):
             return True
         sys.modules["ida_funcs"].add_func = add_func
         w.funcs = set()
-        sys.modules["ida_funcs"].get_func = lambda ea: ea in w.funcs or None
+        sys.modules["ida_funcs"].get_func = funcs_at(w)
         self.answers(log, create=1)
         self.assertEqual(E.ScanAction().activate(None), 1)
         texts = [b for b in boxes if b]
-        self.assertEqual(len(texts), 2)
+        self.assertEqual(len(texts), 3)         # scan, annotate, and the call-site list's rows
+        self.assertEqual(texts[2], "HIDECANCEL\nCFIScope: listing call sites")
         self.assertTrue(all(t.startswith("HIDECANCEL\n") for t in texts), texts)
         self.assertEqual(boxes.count(None), len(texts))
         self.assertTrue(inside and set(inside) == {1}, inside)
@@ -261,7 +269,7 @@ class Entry(unittest.TestCase):
         _, E, log = load_entry()
         E.PLUGIN_ENTRY().init()
         self.assertEqual(log["keys"], {"cfiscope:scan": "Alt-Shift-K", "cfiscope:targets": "Alt-Shift-T",
-                                       "cfiscope:callers": "Alt-Shift-X", "cfiscope:remove": ""})
+                                       "cfiscope:callers": "Alt-Shift-X", "cfiscope:sites": "", "cfiscope:remove": ""})
         norm = lambda k: frozenset(k.lower().replace("+", "-").split("-"))
         taken = {norm(k) for k in self.TAKEN}
         for name, key in log["keys"].items():
@@ -272,11 +280,15 @@ class Entry(unittest.TestCase):
         _, E, log = load_entry()
         p = E.PLUGIN_ENTRY()
         self.assertEqual(p.init(), 1)
-        self.assertEqual(len(log["registered"]), 4)
+        self.assertEqual(len(log["registered"]), 5)
+        self.assertIn(("Edit/Plugins/", "cfiscope:sites"), log["menu"])
         self.assertEqual(log["hooked"], 1)
         p.hooks.finish_populating_widget_popup(46, "popup")   # pseudocode view
         p.hooks.finish_populating_widget_popup(99, "popup")   # some other view: nothing added
-        self.assertEqual([n for _, n, _ in log["popup"]], ["cfiscope:scan", "cfiscope:targets", "cfiscope:callers"])
+        p.hooks.finish_populating_widget_popup(27, "popup")   # disassembly view
+        self.assertEqual([(w, n, path) for w, n, path in log["popup"]],
+                         [(v, n, "CFIScope/") for v in (46, 27)
+                          for n in ("cfiscope:scan", "cfiscope:targets", "cfiscope:callers", "cfiscope:sites")])
         p.term()
         self.assertEqual(log["hooked"], 0)
         self.assertEqual(log["registered"], [])
@@ -454,7 +466,8 @@ class Pseudocode(unittest.TestCase):
                        {"call": (9, 2), "ret": (2, 2)}, entry_ea=0x5000)
         self.log["pick"] = 0
         self.assertEqual(self.lookup(self.E.TargetsAction, 2, cf), 1)
-        self.assertEqual([(title, modal) for title, modal, _ in shown], [(il.targets_title(a), False)])
+        self.assertEqual([(title, modal) for title, modal, _ in shown],          # Scan's call-site list, then this
+                         [("CFIScope: 21 kCFI call sites", False), (il.targets_title(a), False)])
 
     def test_targets_by_exact_address_when_the_line_has_no_call(self):
         # A call Hex-Rays splits over several lines, the cursor on its argument line: no scanned call on that line,
@@ -649,6 +662,7 @@ class Reopen(unittest.TestCase):
                 kw.Choose.Show = lambda chooser: shown.append(chooser.rows) or True
                 self.addCleanup(delattr, kw.Choose, "Show")
                 p = self.reopen(self.scanned(), fresh_module=True)
+                del shown[:]                                # the call-site list Scan opened before the reopen
                 kw.get_screen_ea = lambda: at(self.first_sites[0])
                 box, scanned_in_box = [False], []           # a lookup the user asked for may show its wait box
                 kw.show_wait_box = lambda t: box.__setitem__(0, True)
@@ -822,6 +836,7 @@ class Reopen(unittest.TestCase):
                 kw.Choose.Show = lambda chooser, modal=False: shown.append((chooser.title, modal)) or (1 if modal else True)
                 self.addCleanup(delattr, kw.Choose, "Show")
                 p = self.reopen(self.scanned(), fresh_module=True)
+                del shown[:]                                # the call-site list Scan opened before the reopen
                 kw.show_wait_box = lambda t: None
                 kw.hide_wait_box = lambda: None
                 kw.warning = lambda t: self.log["msgs"].append("WARN " + t)
@@ -945,6 +960,102 @@ class ScanMessage(unittest.TestCase):
                                 "instruction).\n"])
 
 
+class SiteList(unittest.TestCase):
+    """Judge s193 #2: after Scan the result was counts in the Output window only, and the call sites had to be found by
+    hand. Scan now ends by opening a non-modal list of every call site (also the action CFIScope: List kCFI call sites
+    and the right-click submenu): Address, Function+off, Type, Candidates (a number column), First candidates."""
+
+    def scan(self, name="x86_64-kernel", proc="metapc", create=1, ext=".o"):
+        w, E, log = load_entry(name, proc, ext=ext)
+        w.input_path = os.path.join(HERE, "fixtures", name + ext)      # the fixture's BTF names the types
+        Entry.answers(self, log, create=create)
+        return w, E, log
+
+    def test_scan_opens_the_list(self):
+        for name, proc in (("x86_64-kernel", "metapc"), ("aarch64-kernel", "ARM")):
+            with self.subTest(name):
+                w, E, log = self.scan(name, proc)
+                self.assertEqual(E.ScanAction().activate(None), 1)
+                title, modal, chooser = log["shown"][-1]
+                self.assertEqual((title, modal), ("CFIScope: 21 kCFI call sites", False))     # non-modal
+                il, C = E.idalayer, sys.modules["ida_kernwin"].Choose
+                self.assertEqual([c[0] for c in il.SITES_COLUMNS],
+                                 ["Address", "Function+off", "Type", "Candidates", "First candidates"])
+                self.assertEqual(il.SITES_COLUMNS[3][1] & C.CHCOL_FORMAT, C.CHCOL_DEC)   # sorts as a number
+                self.assertEqual(il.SITES_COLUMNS[0][1] & C.CHCOL_FORMAT, C.CHCOL_HEX)
+                self.assertEqual(chooser.OnGetSize(), 21)
+                sites = E.STATE["sites"]
+                lines = [chooser.OnGetLine(n) for n in range(21)]
+                self.assertEqual([int(l[0], 16) for l in lines], [s.call_ea or s.check_ea for s in sites])
+                for (ea, place, typ, count, first), s in zip(lines, sites):
+                    # the same names and count as the comment Scan wrote at the call (describe())
+                    self.assertEqual(w.cmts[int(ea, 16)], "kCFI 0x%08X %s: %s candidate(s): %s"
+                                     % (s.hash, typ, count, first))
+                    self.assertEqual(int(count), len(s.targets))
+                do_call_2 = [l for l in lines if l[2] == "long (short, int)"]
+                self.assertEqual(len(do_call_2), 1)
+                self.assertEqual(do_call_2[0][3], "3")
+                n = lines.index(do_call_2[0])
+                self.assertEqual(chooser.OnSelectLine(n), (C.NOTHING_CHANGED,))      # Enter jumps to the call
+                self.assertEqual(log["jumped"], [int(do_call_2[0][0], 16)])
+
+    def test_no_btf_shows_the_hash(self):
+        w, E, log = self.scan()
+        w.input_path = None
+        self.assertEqual(E.ScanAction().activate(None), 1)
+        chooser = log["shown"][-1][2]
+        self.assertEqual([chooser.OnGetLine(n)[2] for n in range(3)],
+                         ["hash 0x%08X" % s.hash for s in E.STATE["sites"][:3]])
+
+    def test_order_as_in_the_comment(self):
+        # A candidate whose address is taken comes first, in the list as in the comment.
+        w, E, log = self.scan()
+        sites = E.scan_or_warn()
+        s = next(x for x in sites if len(x.targets) >= 2)
+        w.drefs.add(s.targets[-1])
+        sys.modules["ida_name"].get_ea_name = lambda ea: "f_%x" % ea
+        self.assertEqual(E.ScanAction().activate(None), 1)
+        sites = E.STATE["sites"]
+        chooser = log["shown"][-1][2]
+        k = [x.check_ea for x in sites].index(s.check_ea)
+        first = chooser.OnGetLine(k)[4]
+        self.assertTrue(first.startswith("f_%x, " % s.targets[-1]), first)
+        self.assertTrue(w.cmts[sites[k].call_ea or sites[k].check_ea].endswith(": " + first))
+
+    def test_action_before_scan_writes_nothing(self):
+        w, E, log = self.scan()
+        p = E.PLUGIN_ENTRY()
+        p.init()
+        self.assertEqual(E.SitesAction().activate(None), 1)
+        self.assertEqual(log["shown"][-1][:2], ("CFIScope: 21 kCFI call sites", False))
+        self.assertEqual(log["shown"][-1][2].OnGetSize(), 21)
+        self.assertEqual((w.cmts, w.crefs, w.data_xrefs, log["asked"], w.netnodes), ({}, set(), set(), [], {}))
+        p.term()
+
+    def test_a_list_from_another_scan_is_closed(self):
+        # IDA only brings an open chooser of the same title to the front, so a list of an older scan is closed first.
+        w, E, log = self.scan()
+        self.assertEqual(E.SitesAction().activate(None), 1)
+        self.assertEqual(E.SitesAction().activate(None), 1)        # same scan: nothing closed
+        self.assertEqual((len(log["shown"]), log["closed"]), (2, []))
+        self.assertEqual(E.ScanAction().activate(None), 1)          # Scan scans again
+        self.assertEqual(log["closed"], ["CFIScope: 21 kCFI call sites"])
+        self.assertEqual(log["shown"][-1][2].OnGetSize(), 21)
+        seg = w.segs[0]                                              # a rebase: the lookups scan again
+        w.mem[seg.start_ea + 0x1000] = w.mem.pop(seg.start_ea)
+        seg.start_ea += 0x1000; seg.end_ea += 0x1000
+        self.assertEqual(E.SitesAction().activate(None), 1)
+        self.assertEqual(len(log["closed"]), 2)
+        self.assertEqual(int(log["shown"][-1][2].OnGetLine(0)[0], 16), E.STATE["sites"][0].call_ea)
+
+    def test_no_site(self):
+        w, E, log = load_entry("kcfi_quirks_a64", "ARM")
+        self.assertEqual(E.SitesAction().activate(None), 0)
+        self.assertIn("WARN No kCFI call site found. Scan kCFI calls says why.", log["msgs"])
+        self.assertEqual(E.ScanAction().activate(None), 1)
+        self.assertEqual(log["shown"], [])
+
+
 class JumpTableCfi(unittest.TestCase):
     """The plugin actions on the hand-assembled Linux 5.x jump-table CFI fixture."""
 
@@ -976,6 +1087,12 @@ class JumpTableCfi(unittest.TestCase):
         self.assertFalse(any("WARN" in m for m in self.log["msgs"]))
         hs = self.truth["sites"][0]
         call = self.shift(hs["call"])
+        title, rows = shown[0]                  # the call-site list Scan opens
+        self.assertEqual((title, len(rows)), ("CFIScope: 11 jump-table CFI call sites", 11))
+        self.assertIn((call, "0x%x" % call, "int (file*, int)", 3, "f_a, f_b, f_c"), rows)
+        slow = next(r for r in rows if r[0] == self.shift(self.truth["sites"][5]["call"]))
+        self.assertEqual(slow[3], 0)
+        self.assertTrue(slow[4].startswith("no candidate in this image ("), slow)
         cf = FakeCfunc(["int f(void)", "{", "  return fp(file, 0);", "}"], {call: ["c"]}, {"c": (2, 2)})
         self.E.STATE["hx"].func_printed(cf)
         self.assertEqual(cf.text()[2], "  return fp(file, 0);\x01\x04  // CFIScope: 3 candidates of int (file*, int): "

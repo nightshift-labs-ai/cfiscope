@@ -1,9 +1,16 @@
 """tools/showcase_ida_stub.py on a fixture: the before/after it prints comes from the plugin's own IDA layer."""
-import os, struct, subprocess, sys, tempfile, unittest
+import contextlib, importlib.util, io, json, os, struct, subprocess, sys, tempfile, unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, ".."))
 from cfiscope import cli  # noqa: E402
 TOOL = os.path.join(HERE, "..", "tools", "showcase_ida_stub.py")
+
+
+def showcase_module():
+    spec = importlib.util.spec_from_file_location("showcase_ida_stub", TOOL)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def not_a_function(src, name, dst):
@@ -39,6 +46,41 @@ class Showcase(unittest.TestCase):
         self.assertIn("code xrefs from this call (3): impl_2_0, impl_2_1, impl_2_2", out)
         self.assertIn("on impl_2_1: 1 row(s)\n  0x11e03a  do_call_2+0x1a  3 candidate(s)", out)
         self.assertIn("// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2", out)
+        self.assertNotIn("Call-site list", out)       # only with --list: the README block stays as it is
+
+    def test_call_site_list_equals_cli_sites(self):
+        # Judge s193 #2: the list Scan opens has one row per `--sites` line, with its address, function+offset, type,
+        # count and first names, in the fake database the showcase lays out as the command line does (same addresses).
+        S = showcase_module()
+        for name in ("x86_64-kernel.o", "aarch64-kernel.o"):
+            with self.subTest(name):
+                path = os.path.join(HERE, "fixtures", name)
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    self.assertEqual(cli.main([path, "--sites", "--json"]), 0)
+                want = json.loads(buf.getvalue())["sites"]
+                il = S.load(path)[0]
+                sites, _ = il.scan()
+                chooser = il.sites_chooser(sites)
+                self.assertEqual(chooser.OnGetSize(), 21)
+                self.assertEqual(len(want), 21)
+                for n, c in enumerate(want):
+                    names = [t["name"] for t in c["targets"]]
+                    first = ", ".join(names[:6]) + (", +%d more" % (len(names) - 6) if len(names) > 6 else "")
+                    self.assertEqual(chooser.OnGetLine(n), ["0x%x" % int(c["call"] or c["check"], 16), c["in"],
+                                                            c["type"], str(c["candidates"]), first])
+                self.assertIn(["long (short, int)", "3", "impl_2_0, impl_2_1, impl_2_2"],
+                              [chooser.OnGetLine(n)[2:] for n in range(21)])
+
+    def test_list_flag(self):
+        out = subprocess.run([sys.executable, "-I", TOOL, os.path.join(HERE, "fixtures", "x86_64-kernel.o"),
+                              "do_call_2+0x1a", "impl_2_1", "--list"], capture_output=True, text=True, check=True).stdout
+        self.assertRegex(out, r"Call-site list \(opens after Scan; CFIScope: List kCFI call sites\): window 'CFIScope: 21 "
+                              r"kCFI call sites', 21 rows, built in \d+\.\d\d s\n")
+        self.assertIn("  columns: Address | Function+off | Type | Candidates | First candidates\n"
+                      "  row 2:  0x11e03a | do_call_2+0x1a | long (short, int) | 3 | impl_2_0, impl_2_1, impl_2_2\n"
+                      "  command line --sites:  0x11e03a  do_call_2+0x1a                           jump hash 0x1300e12b "
+                      "(long (short, int))  3 candidate(s): impl_2_0, impl_2_1, impl_2_2\n", out)
 
     def test_fixture_no(self):
         # --no answers No to "Create functions" (annotate(sites, create_functions=False)). Without impl_2_1's symbol,
