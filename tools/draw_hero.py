@@ -10,11 +10,12 @@ It runs the command-line tool twice, as `python3 -m cfiscope` does (a subprocess
     python3 -m cfiscope gki.elf --callers <--callee> --json
 
 and draws two panels: the indirect call at --site, with its kCFI hash and C type, fanning out to every candidate;
-and every indirect call that can reach --callee, converging on it.  Every name, address, hash, type and count in the
-picture is a field of that output, written as the text output writes it ("call hash 0x1ebda935", "14 candidate(s)",
-"3 call site(s)").  The instruction (`blr x8`) is decoded from the 4 bytes at the call's address (aarch64 blr and
-br only).  The tool's own words are the two headings and the caption (HEADINGS, CAPTION).  A candidate is drawn blue
-when a call of the second panel is inside it, and that call's function name is blue too.
+and every indirect call that may reach --callee (a call of its kCFI type), converging on it.  Every name, address,
+hash, type and count in the picture is a field of that output, written as the text output writes it ("call hash
+0x1ebda935", "14 candidate(s)", "3 call site(s)").  The instruction (`blr x8`) is decoded from the 4 bytes at the
+call's address (aarch64 blr and br only).  The tool's own words are the two headings and the caption (HEADINGS,
+CAPTION; the caption names the input file).  A candidate is drawn blue when a call of the second panel is inside it,
+and that call's function name is blue too.
 
 Plain Python, standard library only.  The SVG uses the generic monospace and sans-serif fonts and has no external
 font, script, style sheet, image or link.  The same input gives the same bytes.  tests/test_draw_hero.py checks the
@@ -22,10 +23,12 @@ picture against a fresh run of the command line (with CFISCOPE_GKI_ELF=path/to/g
 
 --png OUT also rasterises the SVG at 1.5 times its size: with rsvg-convert if it is on PATH, else with Node and the
 `playwright` package (Chromium; found through NODE_PATH), then stores it with a 256-colour palette (palette_png)
-to stay under 100 KB.  Without either converter it says so and writes the SVG only.
+to stay under 100 KB, with the SVG's name and sha256 in a tEXt chunk.  Without either converter it says so and writes
+the SVG only.
 """
 import argparse
 import collections
+import hashlib
 import json
 import math
 import os
@@ -41,7 +44,8 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from cfiscope import cli  # noqa: E402  (the ELF reader only: the address of --site and the call instructions)
 
-HEADINGS = ("Which functions can this indirect call reach?", "Which indirect calls can reach this function?")
+HEADINGS = ("Which functions may this indirect call reach?",
+            "Which indirect calls may reach this function (same kCFI type)?")
 CAPTION = "Drawn from python3 -m cfiscope %s output, not an IDA screenshot"     # %s: the input file's name
 MAX_CANDIDATES, MAX_CALLERS = 16, 6
 SCALE = 1.5
@@ -302,10 +306,19 @@ def _chunk(kind, body):
     return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xffffffff)
 
 
-def palette_png(path):
+def source_text(svg_path):
+    """The tEXt chunk's text that ties the PNG to the SVG it was rasterised from (tests/test_draw_hero.py checks it)."""
+    with open(svg_path, "rb") as fh:
+        digest = hashlib.sha256(fh.read()).hexdigest()
+    return b"Comment\0rasterised from %s, sha256 %s" % (os.path.basename(svg_path).encode("latin-1"), digest.encode())
+
+
+def palette_png(path, svg_path=None):
     """Rewrite an 8-bit RGB or RGBA PNG as a 256-colour palette PNG (alpha dropped: the picture is opaque): the 256
     most frequent colours, every other colour mapped to the nearest of them (anti-aliased text edges).  About a third
-    of Chromium's size; the same input gives the same bytes."""
+    of Chromium's size; the same input gives the same bytes.  With svg_path, a tEXt chunk names the SVG and its
+    sha256 (source_text), so a test can tell a PNG left over from an older SVG.  False (file unchanged) for any other
+    PNG."""
     with open(path, "rb") as fh:
         d = fh.read()
     pos, idat, ihdr = 8, [], None
@@ -348,7 +361,8 @@ def palette_png(path):
     data = b"".join(b"\0" + bytes(nearest(c) for c in row) for row in pixels)
     with open(path, "wb") as fh:
         fh.write(b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 3, 0, 0, 0))
-                 + _chunk(b"PLTE", b"".join(palette)) + _chunk(b"IDAT", zlib.compress(data, 9)) + _chunk(b"IEND", b""))
+                 + _chunk(b"PLTE", b"".join(palette)) + (_chunk(b"tEXt", source_text(svg_path)) if svg_path else b"")
+                 + _chunk(b"IDAT", zlib.compress(data, 9)) + _chunk(b"IEND", b""))
     return True
 
 
@@ -389,7 +403,7 @@ def main(argv=None):
         how = rasterise(a.output, a.png, w, h)
         if how is None:
             print("no PNG: neither rsvg-convert nor Node with the playwright package was found", file=sys.stderr)
-        elif palette_png(a.png):
+        elif palette_png(a.png, a.output):
             print("wrote %s with %s, 256 colours: %d bytes" % (a.png, how, os.path.getsize(a.png)))
         else:
             print("wrote %s with %s, kept as rendered (not an 8-bit non-interlaced RGB or RGBA PNG): %d bytes"

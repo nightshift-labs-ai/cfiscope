@@ -1,11 +1,14 @@
 """docs/img/hero.svg and hero.png (tools/draw_hero.py): drawn from the command line's output on GKI 6.1, not from IDA.
 
 Always: the SVG parses with xml.etree, loads nothing and has nothing GitHub's sanitiser strips, both files are under
-100 KB, the tool's own words are exactly the two headings and the caption, and the boxes, arrows and blue highlights
-agree with the texts.  With CFISCOPE_GKI_ELF=path/to/gki.elf (the README walkthrough's kernel): every other text
-equals a field of a fresh `python3 -m cfiscope` run, and tools/draw_hero.py redraws the SVG byte for byte.
+100 KB, the tool's own words are exactly the two headings and the caption, the boxes, arrows and blue highlights
+agree with the texts, and the PNG is this SVG rasterised (its tEXt chunk carries the SVG's sha256; inside every
+rectangle of the SVG its pixels have the rectangle's colour).  tools/draw_hero.py on the small aarch64 test fixture:
+the caption names the input file, and a bad offset or a PNG it cannot palettise gives a plain message.
+With CFISCOPE_GKI_ELF=path/to/gki.elf (the README walkthrough's kernel): every other text equals a field of a fresh
+`python3 -m cfiscope` run, and tools/draw_hero.py redraws the SVG byte for byte.
 """
-import contextlib, importlib.util, io, json, os, re, struct, subprocess, sys, tempfile, unittest, zlib
+import contextlib, hashlib, importlib.util, io, json, os, re, struct, subprocess, sys, tempfile, unittest, zlib
 import xml.etree.ElementTree as ET
 from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -21,7 +24,8 @@ SITE, CALLEE = "sock_sendmsg+0xb4", "tcp_sendmsg"
 MAX_BYTES = 100 * 1024
 
 # The tool's own words, typed again here: a changed word must fail.  Every other text is checked against the CLI.
-HEADINGS = ("Which functions can this indirect call reach?", "Which indirect calls can reach this function?")
+HEADINGS = ("Which functions may this indirect call reach?",
+            "Which indirect calls may reach this function (same kCFI type)?")
 CAPTION = "Drawn from python3 -m cfiscope gki.elf output, not an IDA screenshot"
 
 CALL_FIELDS = {"site": ["in", "insn", "call", "hash", "type", "count"],
@@ -92,6 +96,21 @@ def decode(data, ea):
                 return "blr x%d" % ((w >> 5) & 31)
             return "word 0x%08x" % w
     return None
+
+
+def png_chunks(path):
+    """[(kind, body), ...] of a PNG, each chunk's CRC checked."""
+    with open(path, "rb") as fh:
+        d = fh.read()
+    assert d[:8] == b"\x89PNG\r\n\x1a\n", path
+    pos, chunks = 8, []
+    while pos < len(d):
+        n, kind = struct.unpack_from(">I4s", d, pos)
+        body = d[pos + 8:pos + 8 + n]
+        assert struct.unpack_from(">I", d, pos + 8 + n)[0] == zlib.crc32(kind + body) & 0xffffffff, kind
+        chunks.append((kind, body))
+        pos += 12 + n
+    return chunks
 
 
 class Picture(unittest.TestCase):
@@ -188,6 +207,33 @@ class Picture(unittest.TestCase):
         size = (float(self.root.get("width")), float(self.root.get("height")))
         self.assertEqual((w, h), (round(size[0] * 1.5), round(size[1] * 1.5)))
 
+    def test_png_is_this_svg(self):
+        """The README shows hero.png, so it must be hero.svg rasterised: its tEXt chunk carries the sha256 of this
+        hero.svg (a redrawn SVG needs a new PNG), and at two points inside each rectangle of the SVG, times 1.5, its
+        pixel has that rectangle's fill colour (a blank or wrong PNG fails)."""
+        chunks = png_chunks(PNG)
+        self.assertEqual([k for k, _b in chunks], [b"IHDR", b"PLTE", b"tEXt", b"IDAT", b"IEND"])
+        body = dict(chunks)
+        w, h, depth, ctype, _comp, _filt, interlace = struct.unpack(">IIBBBBB", body[b"IHDR"])
+        self.assertEqual((depth, ctype, interlace), (8, 3, 0))           # palette_png's output: 8-bit palette
+        # sha256 of the SVG as tools/draw_hero.py writes it (LF line ends, also after a CRLF checkout).
+        sha = hashlib.sha256(self.raw.replace(b"\r\n", b"\n")).hexdigest()
+        self.assertEqual(body[b"tEXt"], b"Comment\0rasterised from hero.svg, sha256 " + sha.encode(),
+                         "docs/img/hero.png is not hero.svg rasterised: redraw it (docs/img/README.md)")
+        plte = body[b"PLTE"]
+        palette = ["#%02x%02x%02x" % tuple(plte[i:i + 3]) for i in range(0, len(plte), 3)]
+        raw = zlib.decompress(b"".join(b for k, b in chunks if k == b"IDAT"))
+        self.assertEqual(len(raw), h * (w + 1))
+        rows = [raw[y * (w + 1):(y + 1) * (w + 1)] for y in range(h)]
+        self.assertEqual({r[0] for r in rows}, {0})                        # filter 0 on every row, as palette_png
+        rects = list(self.root.iter(NS + "rect"))
+        p1, p2 = panels(self.root)
+        self.assertEqual(len(rects), 1 + 2 + 1 + len(kids(p1, "g", "candidate")) + len(kids(p2, "g", "caller")) + 1)
+        for r in rects:          # the background, the 2 panels, the call, each candidate, each caller, the callee
+            x, y, rw, rh = (float(r.get(k)) for k in ("x", "y", "width", "height"))
+            for px, py in ((x + rw - 6, y + 3), (x + rw - 6, y + rh - 3)):    # clear of the text, edges and corners
+                self.assertEqual(palette[rows[int(py * 1.5)][1 + int(px * 1.5)]], r.get("fill"), (px, py))
+
     def test_readme_snippet(self):
         with open(DOC, encoding="utf-8") as fh:
             doc = fh.read()
@@ -205,7 +251,7 @@ class Picture(unittest.TestCase):
         self.assertIn("`%s` in `%s`" % (site["insn"], site["in"].partition("+")[0]), snippet)
         self.assertIn("the %d functions of that type" % n_cands, snippet)
         callee = texts(kids(p2, "g", "callee")[0])[0][1]
-        self.assertIn("the %d indirect calls that can reach `%s`" % (n_callers, callee), snippet)
+        self.assertIn("the %d indirect calls that may reach `%s` (same kCFI type" % (n_callers, callee), snippet)
         self.assertIn("In blue, %s:" % " and ".join("`%s`" % b for b in blue), snippet)
         # The alt text: every name, hash and type of the picture, and the counts (in words).
         alt = re.search(r'alt="([^"]+)"', snippet).group(1)
@@ -213,9 +259,9 @@ class Picture(unittest.TestCase):
                       alt)
         self.assertIn("%s at %s, %s, type %s," % (site["insn"], site["in"], site["hash"], site["type"]), alt)
         callers = [dict(texts(c)) for c in kids(p2, "g", "caller")]
-        self.assertIn("the %d indirect calls that can reach %s, at %s and %s, each with %s, type %s, %s." % (
-            n_callers, callee, ", ".join(c["in"] for c in callers[:-1]),
-            callers[-1]["in"], callers[0]["hash"], callers[0]["type"], callers[0]["count"].replace("(s)", "s")), alt)
+        self.assertIn("the %d indirect calls that may reach %s (same kCFI type), at %s and %s, each with %s, type %s, "
+                      "%s;" % (n_callers, callee, ", ".join(c["in"] for c in callers[:-1]), callers[-1]["in"],
+                               callers[0]["hash"], callers[0]["type"], callers[0]["count"].replace("(s)", "s")), alt)
         for c in callers:     # "each with": the same hash, type and count for every caller
             self.assertEqual((c["hash"], c["type"], c["count"]), (callers[0]["hash"], callers[0]["type"],
                                                                  callers[0]["count"]))
@@ -287,6 +333,11 @@ class Tool(unittest.TestCase):
                 self.assertNotIn("256 colours" if depth == 16 else "kept as rendered", out.getvalue())
                 with open(png, "rb") as fh:
                     self.assertEqual(fh.read(26)[25], ctype)       # IHDR colour type: 3 = palette, 2 = RGB unchanged
+                if depth == 8:      # main() passes its SVG: the tEXt chunk names x.svg and its sha256
+                    with open(svg, "rb") as fh:
+                        sha = hashlib.sha256(fh.read()).hexdigest()
+                    self.assertEqual([b for k, b in png_chunks(png) if k == b"tEXt"],
+                                     [b"Comment\0rasterised from x.svg, sha256 " + sha.encode()])
 
 
 @unittest.skipUnless(ELF, "set CFISCOPE_GKI_ELF to the README walkthrough's gki.elf to check the picture against it")
@@ -338,7 +389,7 @@ class FreshRun(unittest.TestCase):
         self.assertEqual([texts(c)[0][1] for c in kids(p1, "g", "candidate") if "also-caller" in cls(c)],
                          [n for n in want if n in caller_funcs])
 
-    def test_second_panel_is_every_call_that_can_reach_the_callee(self):
+    def test_second_panel_is_every_call_that_may_reach_the_callee(self):
         _, p2 = panels(self.root)
         sites = self.callers["sites"]
         self.assertEqual(self.callers["callers"], {"call_sites": len(sites), "unlinked_checks": 0})
