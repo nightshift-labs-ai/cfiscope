@@ -48,29 +48,47 @@ class Showcase(unittest.TestCase):
         self.assertIn("// CFIScope: 3 candidates of long (short, int): impl_2_0, impl_2_1, impl_2_2", out)
         self.assertNotIn("Call-site list", out)       # only with --list: the README block stays as it is
 
+    def rows_against_cli(self, path, *cli_args):
+        """The call-site list's rows in the showcase's fake database of path, against `--sites --json` lines (with
+        cli_args): address, function+offset, type, count, first six names. Returns the rows."""
+        S = showcase_module()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(cli.main([path, "--sites", "--json"] + list(cli_args)), 0)
+        want = json.loads(buf.getvalue())["sites"]
+        il = S.load(path)[0]
+        sites, _ = il.scan()
+        chooser = il.sites_chooser(sites)
+        self.assertEqual(chooser.OnGetSize(), len(want))
+        rows = [chooser.OnGetLine(n) for n in range(len(want))]
+        differ = 0
+        for row, c in zip(rows, want):
+            names, count = [t["name"] for t in c["targets"]], c["candidates"]
+            first = (", ".join(names[:6]) + (", +%d more" % (count - 6) if count > 6 else "")) if count else \
+                "no implementation in this image"
+            differ += row != ["0x%x" % int(c["call"] or c["check"], 16), c["in"], c["type"], str(count), first]
+        self.assertEqual(differ, 0)
+        return rows
+
     def test_call_site_list_equals_cli_sites(self):
         # Judge s193 #2: the list Scan opens has one row per `--sites` line, with its address, function+offset, type,
         # count and first names, in the fake database the showcase lays out as the command line does (same addresses).
-        S = showcase_module()
         for name in ("x86_64-kernel.o", "aarch64-kernel.o"):
             with self.subTest(name):
-                path = os.path.join(HERE, "fixtures", name)
-                buf = io.StringIO()
-                with contextlib.redirect_stdout(buf):
-                    self.assertEqual(cli.main([path, "--sites", "--json"]), 0)
-                want = json.loads(buf.getvalue())["sites"]
-                il = S.load(path)[0]
-                sites, _ = il.scan()
-                chooser = il.sites_chooser(sites)
-                self.assertEqual(chooser.OnGetSize(), 21)
-                self.assertEqual(len(want), 21)
-                for n, c in enumerate(want):
-                    names = [t["name"] for t in c["targets"]]
-                    first = ", ".join(names[:6]) + (", +%d more" % (len(names) - 6) if len(names) > 6 else "")
-                    self.assertEqual(chooser.OnGetLine(n), ["0x%x" % int(c["call"] or c["check"], 16), c["in"],
-                                                            c["type"], str(c["candidates"]), first])
-                self.assertIn(["long (short, int)", "3", "impl_2_0, impl_2_1, impl_2_2"],
-                              [chooser.OnGetLine(n)[2:] for n in range(21)])
+                rows = self.rows_against_cli(os.path.join(HERE, "fixtures", name))
+                self.assertEqual(len(rows), 21)
+                self.assertIn(["long (short, int)", "3", "impl_2_0, impl_2_1, impl_2_2"], [r[2:] for r in rows])
+
+    @unittest.skipUnless(os.path.isfile(os.environ.get("CFISCOPE_GKI_ELF", "")),
+                         "set CFISCOPE_GKI_ELF to the gki.elf of the README walkthrough (GKI android14-6.1 2024-01)")
+    def test_call_site_list_on_gki(self):
+        # docs/VERIFICATION.md, "The call-site list": all 13,897 rows equal `--sites --json --max-list 6` (review s194:
+        # this was a manual run only). About 5 s.
+        rows = self.rows_against_cli(os.environ["CFISCOPE_GKI_ELF"], "--max-list", "6")
+        self.assertEqual(len(rows), 13897)
+        self.assertIn(["0xffffffc008cc55ac", "sock_sendmsg+0xb4", "int (struct socket *, struct msghdr *, unsigned long)",
+                       "14", "tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, "
+                       "unix_dgram_sendmsg, +8 more"], rows)
 
     def test_list_flag(self):
         out = subprocess.run([sys.executable, "-I", TOOL, os.path.join(HERE, "fixtures", "x86_64-kernel.o"),

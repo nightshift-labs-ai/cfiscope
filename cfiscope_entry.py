@@ -203,9 +203,11 @@ def scan_sentence(stats, res):
                                                       "all" if named == stats["hashes"] else format(named, ","))
     else:
         kinds = _count(stats["hashes"], "type hash", "type hashes")
-    text = "Scan: %s (%s); %s with candidates (median %d)" % (
+    text = "Scan: %s (%s); %s with candidates" % (
         _count(stats["sites"], "jump-table CFI call site" if jt else "kCFI call site"), kinds,
-        format(stats["resolved"], ","), stats["median_candidates_resolved"])
+        format(stats["resolved"], ","))
+    if stats["resolved"]:       # no "(median 0)" when no site has a candidate
+        text += " (median %d)" % stats["median_candidates_resolved"]
     if stats["unresolved"]:
         text += ", %s with none in this file" % format(stats["unresolved"], ",")
     if stats.get("outside_text"):

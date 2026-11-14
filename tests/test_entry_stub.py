@@ -654,7 +654,8 @@ class Reopen(unittest.TestCase):
         self.unchanged()
 
     def test_lookup_restores(self):
-        for action, at in (("TargetsAction", lambda s: s.call_ea), ("CallersAction", lambda s: s.targets[0])):
+        for action, at in (("TargetsAction", lambda s: s.call_ea), ("CallersAction", lambda s: s.targets[0]),
+                           ("SitesAction", lambda s: s.call_ea)):     # the call-site list too (review s194)
             with self.subTest(action=action):
                 self.setUp()
                 kw = sys.modules["ida_kernwin"]
@@ -954,6 +955,19 @@ class ScanMessage(unittest.TestCase):
         self.assertIn("; 20 comments and 76 cross-references added (1 comment of your own kept).", log["msgs"][0])
         self.assertEqual(w.cmts[sites[0].call_ea], "my note")
 
+    def test_no_candidate_anywhere_gives_no_median(self):
+        # Review s194: a file whose calls all go elsewhere (a module calling only kernel functions) read
+        # "0 with candidates (median 0)"; the median is left out when no site has a candidate.
+        w, E, log = load_entry()
+        stats = {"sites": 1, "hashes": 1, "resolved": 0, "median_candidates_resolved": 0, "unresolved": 1,
+                 "max_candidates": 0}
+        res = {"comments": 1, "runtime_comments": 0, "xrefs": 0, "data_xrefs_inside_function": 0,
+               "xrefs_skipped_no_function": 0, "xrefs_skipped_not_code": 0, "kept_user_comments": 0}
+        self.assertEqual(E.scan_sentence(stats, res) + "\n", "Scan: 1 kCFI call site (1 type hash); 0 with candidates, "
+                         "1 with none in this file; 1 comment and 0 cross-references added." + NEXT)
+        stats.update(sites=2, resolved=1, median_candidates_resolved=4, max_candidates=4)
+        self.assertIn("; 1 with candidates (median 4), 1 with none in this file;", E.scan_sentence(stats, res))
+
     def test_no_site(self):
         msgs = self.scan("kcfi_quirks_a64", "ARM", btf=False)
         self.assertEqual(msgs, ["[CFIScope] Scan: 0 kCFI call sites; the code makes no indirect call (no blr "
@@ -1051,6 +1065,13 @@ class SiteList(unittest.TestCase):
         self.assertEqual(E.SitesAction().activate(None), 1)
         self.assertEqual(len(log["closed"]), 2)
         self.assertEqual(int(log["shown"][-1][2].OnGetLine(0)[0], 16), E.STATE["sites"][0].call_ea)
+
+    def test_title(self):
+        # The docs quote 'CFIScope: 13,897 kCFI call sites' (review s194: a title without the separator went unnoticed)
+        w, E, log = self.scan()
+        site = E.scan_or_warn()[0]
+        self.assertEqual(E.idalayer.sites_title([site] * 1234), "CFIScope: 1,234 kCFI call sites")
+        self.assertEqual(E.idalayer.sites_title([site]), "CFIScope: 1 kCFI call site")
 
     def test_no_site(self):
         w, E, log = load_entry("kcfi_quirks_a64", "ARM")
