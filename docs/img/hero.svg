@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="904" height="896" viewBox="0 0 904 896" font-family="monospace" font-size="13">
+<rect x="0" y="0" width="904" height="896" fill="#ffffff"/>
+<g id="targets">
+<rect x="24" y="24" width="856" height="454" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text class="heading" x="40" y="54" font-size="17" fill="#1f2328" font-weight="bold" font-family="sans-serif">Which functions can this indirect call reach?</text>
+<g class="edge"><path d="M492 268 C567 268 567 86 635 86" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,81.5 642,86 634,90.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 114 635 114" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,109.5 642,114 634,118.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 142 635 142" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,137.5 642,142 634,146.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 170 635 170" fill="none" stroke="#2f6fdd" stroke-width="1.6"/><polygon points="634,165.5 642,170 634,174.5" fill="#2f6fdd"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 198 635 198" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,193.5 642,198 634,202.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 226 635 226" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,221.5 642,226 634,230.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 254 635 254" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,249.5 642,254 634,258.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 282 635 282" fill="none" stroke="#2f6fdd" stroke-width="1.6"/><polygon points="634,277.5 642,282 634,286.5" fill="#2f6fdd"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 310 635 310" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,305.5 642,310 634,314.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 338 635 338" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,333.5 642,338 634,342.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 366 635 366" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,361.5 642,366 634,370.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 394 635 394" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,389.5 642,394 634,398.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 422 635 422" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,417.5 642,422 634,426.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M492 268 C567 268 567 450 635 450" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="634,445.5 642,450 634,454.5" fill="#8c959f"/></g>
+<g class="site">
+<rect x="40" y="213.5" width="452" height="109" rx="5" fill="#fff4e5" stroke="#d4761c"/>
+<text class="in" x="52" y="234.5" font-size="14" fill="#1f2328" font-weight="bold">sock_sendmsg+0xb4</text>
+<text class="insn" x="213.6" y="234.5" font-size="13" fill="#9a4b00">blr x8</text>
+<text class="call" x="52" y="253.5" font-size="13" fill="#59636e">0xffffffc008cc55ac</text>
+<text class="hash" x="52" y="272.5" font-size="13" fill="#1f2328">call hash 0x1ebda935</text>
+<text class="type" x="52" y="291.5" font-size="13" fill="#6639ba">int (struct socket *, struct msghdr *, unsigned long)</text>
+<text class="count" x="52" y="310.5" font-size="13" fill="#1f2328">14 candidate(s)</text>
+</g>
+<g class="candidate">
+<rect x="642" y="74" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="90.5" font-size="13" fill="#1f2328">tun_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="642" y="102" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="118.5" font-size="13" fill="#1f2328">sock_no_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="642" y="130" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="146.5" font-size="13" fill="#1f2328">netlink_sendmsg</text>
+</g>
+<g class="candidate also-caller">
+<rect x="642" y="158" width="222" height="24" rx="4" fill="#e6efff" stroke="#2f6fdd"/>
+<text class="name" x="652" y="174.5" font-size="13" fill="#0b4fc4" font-weight="bold">inet_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="642" y="186" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="202.5" font-size="13" fill="#1f2328">unix_stream_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="642" y="214" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="230.5" font-size="13" fill="#1f2328">unix_dgram_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="642" y="242" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="258.5" font-size="13" fill="#1f2328">unix_seqpacket_sendmsg</text>
+</g>
+<g class="candidate also-caller">
+<rect x="642" y="270" width="222" height="24" rx="4" fill="#e6efff" stroke="#2f6fdd"/>
+<text class="name" x="652" y="286.5" font-size="13" fill="#0b4fc4" font-weight="bold">inet6_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="642" y="298" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="314.5" font-size="13" fill="#1f2328">packet_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="642" y="326" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="342.5" font-size="13" fill="#1f2328">packet_sendmsg_spkt</text>
+</g>
+<g class="candidate">
+<rect x="642" y="354" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="370.5" font-size="13" fill="#1f2328">pfkey_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="642" y="382" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="398.5" font-size="13" fill="#1f2328">vsock_dgram_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="642" y="410" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="426.5" font-size="13" fill="#1f2328">vsock_connectible_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="642" y="438" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="652" y="454.5" font-size="13" fill="#1f2328">xsk_sendmsg</text>
+</g>
+</g>
+<g id="callers">
+<rect x="24" y="498" width="856" height="364" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text class="heading" x="40" y="528" font-size="17" fill="#1f2328" font-weight="bold" font-family="sans-serif">Which indirect calls can reach this function?</text>
+<g class="edge"><path d="M476 593 C559 593 559 690 635 690" fill="none" stroke="#8c959f" stroke-width="1.3"/><polygon points="634,685.5 642,690 634,694.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M476 697 C559 697 559 697 635 697" fill="none" stroke="#8c959f" stroke-width="1.3"/><polygon points="634,692.5 642,697 634,701.5" fill="#8c959f"/></g>
+<g class="edge"><path d="M476 801 C559 801 559 704 635 704" fill="none" stroke="#8c959f" stroke-width="1.3"/><polygon points="634,699.5 642,704 634,708.5" fill="#8c959f"/></g>
+<g class="caller">
+<rect x="40" y="548" width="436" height="90" rx="5" fill="#fff4e5" stroke="#d4761c"/>
+<text class="in" x="52" y="569" font-size="14" fill="#1f2328" font-weight="bold">kernel_sendmsg_locked+0x64</text>
+<text class="insn" x="291.7" y="569" font-size="13" fill="#9a4b00">blr x8</text>
+<text class="call" x="52" y="588" font-size="13" fill="#59636e">0xffffffc008cc5778</text>
+<text class="hash" x="52" y="607" font-size="13" fill="#1f2328">call hash 0x87bcba6f</text>
+<text class="count" x="227.2" y="607" font-size="13" fill="#1f2328">11 candidate(s)</text>
+<text class="type" x="52" y="626" font-size="13" fill="#6639ba">int (struct sock *, struct msghdr *, unsigned long)</text>
+</g>
+<g class="caller">
+<rect x="40" y="652" width="436" height="90" rx="5" fill="#fff4e5" stroke="#d4761c"/>
+<text class="in" x="52" y="673" font-size="14" fill="#0b4fc4" font-weight="bold">inet_sendmsg+0x58</text>
+<text class="insn" x="213.6" y="673" font-size="13" fill="#9a4b00">blr x8</text>
+<text class="call" x="52" y="692" font-size="13" fill="#59636e">0xffffffc008e433c8</text>
+<text class="hash" x="52" y="711" font-size="13" fill="#1f2328">call hash 0x87bcba6f</text>
+<text class="count" x="227.2" y="711" font-size="13" fill="#1f2328">11 candidate(s)</text>
+<text class="type" x="52" y="730" font-size="13" fill="#6639ba">int (struct sock *, struct msghdr *, unsigned long)</text>
+</g>
+<g class="caller">
+<rect x="40" y="756" width="436" height="90" rx="5" fill="#fff4e5" stroke="#d4761c"/>
+<text class="in" x="52" y="777" font-size="14" fill="#0b4fc4" font-weight="bold">inet6_sendmsg+0x58</text>
+<text class="insn" x="222.2" y="777" font-size="13" fill="#9a4b00">blr x8</text>
+<text class="call" x="52" y="796" font-size="13" fill="#59636e">0xffffffc008ead820</text>
+<text class="hash" x="52" y="815" font-size="13" fill="#1f2328">call hash 0x87bcba6f</text>
+<text class="count" x="227.2" y="815" font-size="13" fill="#1f2328">11 candidate(s)</text>
+<text class="type" x="52" y="834" font-size="13" fill="#6639ba">int (struct sock *, struct msghdr *, unsigned long)</text>
+</g>
+<g class="callee">
+<rect x="642" y="681" width="127" height="32" rx="5" fill="#e9f7ec" stroke="#2e8b57"/>
+<text class="name" x="654" y="702" font-size="15" fill="#1f2328" font-weight="bold">tcp_sendmsg</text>
+</g>
+<text class="count" x="642" y="733" font-size="13" fill="#59636e">3 call site(s)</text>
+</g>
+<text class="caption" x="24" y="882" font-size="13" fill="#59636e" font-family="sans-serif">Drawn from python3 -m cfiscope gki.elf output, not an IDA screenshot</text>
+</svg>
