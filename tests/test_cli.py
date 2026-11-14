@@ -506,6 +506,14 @@ class WithKernel(unittest.TestCase):
             self.assertIn("give the kernel as an ELF with symbols", err)
             self.assertNotIn("--raw", err)
 
+    def test_ignored_without_call_sites(self):
+        # review s189 NIT 4: a module with no kCFI call site (GKI zram.ko) ignored --with silently.
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out, err = run(os.path.join(FIX, "kcfi_quirks_a64.o"), "--with", os.path.join(tmp, "missing.elf"))
+            self.assertEqual(rc, 0)
+            self.assertIn("call sites 0", out)
+            self.assertIn("--with ignored: this input has no kCFI call site", err)
+
     def test_ignored_for_jump_table_cfi(self):
         rc, out, err = run(os.path.join(FIX, "aarch64-jtcfi.elf"), "--with", os.path.join(FIX, "aarch64-plain.o"))
         self.assertEqual(rc, 0)

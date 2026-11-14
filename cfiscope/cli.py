@@ -407,6 +407,9 @@ def main(argv=None):
         elif a.with_kernel and sites:
             kernel = Kernel(a.with_kernel, arch, sites)
             stats["kernel"] = kernel.stats(sites)
+        elif a.with_kernel:      # review s189 NIT 4: say so instead of ignoring it silently (the file is not read)
+            print("cfiscope: --with ignored: this input has no kCFI call site (%s not read)" % a.with_kernel,
+                  file=sys.stderr)
         kwant = None      # --callers of a kernel function (--with): its addresses in the kernel
         if a.callers or a.targets:
             try:
