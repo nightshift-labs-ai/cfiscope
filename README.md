@@ -6,6 +6,10 @@ Clang's `-fsanitize=kcfi` (`CONFIG_CFI_CLANG`, enabled on Android GKI) writes a 
 
 The scanner was scored on a real Android GKI kernel for each architecture ([numbers](docs/VERIFICATION.md)); the IDA layer has not been run in IDA yet (see [Status](#status)).
 
+## Without CFIScope
+
+The call at `sock_sendmsg+0xb4` is `blr x8`: the target is loaded from `sock->ops` at run time, so the binary names no callee. The usual fallback is a name search. In the GKI 6.1 kernel below, 31 functions are named `*_sendmsg` (`nm gki.elf | grep -v __ksymtab | grep -c '_sendmsg$'`): 13 have this call's type, the other 18 (such as `tcp_sendmsg`, which takes a `struct sock *`) would fail its kCFI check, and the search misses `packet_sendmsg_spkt`. Source-level call-graph tools need the source and its LLVM IR, which vendor kernels and modules do not ship. CFIScope lists the call's 14 candidates, all of its type, from the binary alone (next block; 2.3 to 2.7 s on the command line here).
+
 ## What you will see (real output, not an IDA screenshot)
 
 We have no IDA, so this is the command-line tool, which runs the same scanner as the plugin, on the public GKI aarch64 kernel from the [walkthrough](#try-it) with its symbols restored by vmlinux-to-elf (57,453 named functions). The plugin puts the same answers in its comments, cross-references and jump lists.
