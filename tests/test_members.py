@@ -228,12 +228,12 @@ class MemberCLI(unittest.TestCase):
         self.assertEqual(len(lines), 8)
         # test_slots.py: send_x is stored at byte 16 of a_tbl (a_ops.send), send_y in no a_ops.send slot
         self.assertIn("0x1000a4  call_a_send+0x2c                         call a_ops.send hash 0xfd39cd44 (int (struct "
-                      "msg *, int))  2 candidate(s): in a a_ops.send slot: send_x; same type only: 1 more", lines)
+                      "msg *, int))  2 candidate(s): in a a_ops.send slot: send_x; same type only: send_y", lines)
         self.assertIn("0x100164  call_c_poll+0x2c                         call one of 2 members (c_ops.poll, "
                       "d_ops.poll) hash 0xd23933cf (long (struct msg *, long))  2 candidate(s): in a slot of one of 2 "
                       "members: poll_x, poll_y", lines)
         self.assertIn("call b_ops.send hash 0xfd39cd44 (int (struct msg *, int))  2 candidate(s): in a b_ops.send slot: "
-                      "send_y; same type only: 1 more", out)
+                      "send_y; same type only: send_x", out)
         self.assertIn("call inner_ops.notify hash", out)
         self.assertIn("call anon_holder.u_cb hash", out)
         # no member load: byte for byte what the code printed before
@@ -297,9 +297,9 @@ class MemberIDA(unittest.TestCase):
         cm = self.w.cmts
         # candidates stored in a slot of the member come first (test_slots.py)
         self.assertEqual(cm[0x1000a4], "kCFI a_ops.send 0xFD39CD44 int (struct msg *, int): 2 candidate(s): in a a_ops.send "
-                                       "slot: send_x; same type only: 1 more")
+                                       "slot: send_x; same type only: send_y")
         self.assertEqual(cm[0x1000e4], "kCFI b_ops.send 0xFD39CD44 int (struct msg *, int): 2 candidate(s): in a b_ops.send "
-                                       "slot: send_y; same type only: 1 more")
+                                       "slot: send_y; same type only: send_x")
         self.assertEqual(cm[0x100164], "kCFI one of 2 members (c_ops.poll, d_ops.poll) 0xD23933CF long (struct msg *, "
                                        "long): 2 candidate(s): in a slot of one of 2 members: poll_x, poll_y")
         self.assertEqual(cm[0x1001ac], "kCFI inner_ops.notify 0xB519E0BC void (struct msg *, unsigned int): 1 candidate(s): "
@@ -313,7 +313,7 @@ class MemberIDA(unittest.TestCase):
     def test_pseudocode_titles_and_lists(self):
         il, a, p = self.il, self.by_call[0x1000a4], self.by_call[0x10024c]
         self.assertEqual(il.pseudocode_text(a), "CFIScope: a_ops.send, 2 candidates of int (struct msg *, int): in a "
-                                                "a_ops.send slot: send_x; same type only: 1 more")
+                                                "a_ops.send slot: send_x; same type only: send_y")
         self.assertEqual(il.pseudocode_text(p), "CFIScope: 2 candidates of int (struct msg *, int): send_x, send_y")
         self.assertEqual(il.targets_title(a), "kCFI candidates for the call at 0x1000A4 (a_ops.send, hash 0xFD39CD44, "
                                               "int (struct msg *, int))")
@@ -323,11 +323,13 @@ class MemberIDA(unittest.TestCase):
         rows = [chooser.OnGetLine(n) for n in range(chooser.OnGetSize())]
         self.assertEqual([c[0] for c in il.SITES_COLUMNS][2], "Member")
         self.assertIn(["0x1000a4", "call_a_send+0x2c", "a_ops.send", "int (struct msg *, int)", "2",
-                       "in a a_ops.send slot: send_x; same type only: 1 more"], rows)
+                       "in a a_ops.send slot: send_x; same type only: send_y"], rows)
         self.assertIn(["0x10024c", "call_param+0x2c", "", "int (struct msg *, int)", "2", "send_x, send_y"], rows)
         self.assertIn("one of 2 members (c_ops.poll, d_ops.poll)", [r[2] for r in rows])
         callers = il.callers_rows(self.sites, 0x100010)                   # send_x
-        self.assertIn((0x1000a4, "call_a_send+0x2c", "a_ops.send, 2 candidate(s)"), callers)
+        # review s197: whether send_x is stored in a slot of each call's member (test_slots.py), those calls first
+        self.assertEqual(callers[0], (0x1000a4, "call_a_send+0x2c", "a_ops.send, 2 candidate(s), stored in a a_ops.send slot"))
+        self.assertIn((0x1000e4, "call_b_send+0x2c", "b_ops.send, 2 candidate(s), same type only"), callers)
         self.assertIn((0x10024c, "call_param+0x2c", "2 candidate(s)"), callers)                # 458eeeb
 
 

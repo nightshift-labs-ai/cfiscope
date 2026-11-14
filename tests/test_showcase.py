@@ -66,13 +66,21 @@ class Showcase(unittest.TestCase):
             names, count = [t["name"] for t in c["targets"]], c["candidates"]
             first = (", ".join(names[:6]) + (", +%d more" % (count - 6) if count > 6 else "")) if count else \
                 "no implementation in this image"
-            slot = c.get("slot_backed_candidates", 0)     # slot-backed candidates first (test_slots.py): the comment's
-            if slot:                                      # words, its first six names from them, the rest counted
-                ms = c["members"]
+            slot = c.get("slot_backed_candidates", 0)     # slot-backed candidates first (test_slots.py), in the
+            if slot:                                      # comment's words: every name when 6 or fewer, else up to 6
+                ms = c["members"]                         # slot-backed ones and the rest of each group counted
+                stride = c["slot_stride_candidates"]
                 label = "in a %s slot" % ms[0] if len(ms) == 1 else "in a slot of one of %d members" % len(ms)
-                first = "%s: %s%s" % (label, ", ".join(names[:min(slot, 6)]), ", +%d more" % (slot - 6) if slot > 6 else "")
-                if count > slot:
-                    first += "; same type only: %d more" % (count - slot)
+                parts, at, budget = [], 0, 6
+                for what, n in ((label, slot - stride), ("by array stride", stride), ("same type only", count - slot)):
+                    shown = n if count <= 6 else 0 if what == "same type only" else min(n, budget)
+                    budget -= shown
+                    if n:
+                        parts.append("%s: %s" % (what, ", ".join(names[at:at + shown]) + (", +%d more" % (n - shown)
+                                                                                          if n > shown else ""))
+                                     if shown else "%s: %d more" % (what, n))
+                    at += n
+                first = "; ".join(parts)
             ms = c.get("members") or []         # the Member column: as --sites prints it, the first 3 of several
             member = ms[0] if len(ms) == 1 else "one of %d members (%s%s)" % (
                 len(ms), ", ".join(ms[:3]), ", +%d more" % (len(ms) - 3) if len(ms) > 3 else "") if ms else ""
