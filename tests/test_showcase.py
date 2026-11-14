@@ -66,6 +66,13 @@ class Showcase(unittest.TestCase):
             names, count = [t["name"] for t in c["targets"]], c["candidates"]
             first = (", ".join(names[:6]) + (", +%d more" % (count - 6) if count > 6 else "")) if count else \
                 "no implementation in this image"
+            slot = c.get("slot_backed_candidates", 0)     # slot-backed candidates first (test_slots.py): the comment's
+            if slot:                                      # words, its first six names from them, the rest counted
+                ms = c["members"]
+                label = "in a %s slot" % ms[0] if len(ms) == 1 else "in a slot of one of %d members" % len(ms)
+                first = "%s: %s%s" % (label, ", ".join(names[:min(slot, 6)]), ", +%d more" % (slot - 6) if slot > 6 else "")
+                if count > slot:
+                    first += "; same type only: %d more" % (count - slot)
             ms = c.get("members") or []         # the Member column: as --sites prints it, the first 3 of several
             member = ms[0] if len(ms) == 1 else "one of %d members (%s%s)" % (
                 len(ms), ", ".join(ms[:3]), ", +%d more" % (len(ms) - 3) if len(ms) > 3 else "") if ms else ""
@@ -91,8 +98,9 @@ class Showcase(unittest.TestCase):
         self.assertEqual(len(rows), 13897)
         self.assertIn(["0xffffffc008cc55ac", "sock_sendmsg+0xb4", "proto_ops.sendmsg",
                        "int (struct socket *, struct msghdr *, unsigned long)",
-                       "14", "tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, "
-                       "unix_dgram_sendmsg, +8 more"], rows)
+                       "14", "in a proto_ops.sendmsg slot: tun_sendmsg, netlink_sendmsg, inet_sendmsg, "
+                       "unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, +7 more; same type only: 1 more"],
+                      rows)
 
     def test_list_flag(self):
         out = subprocess.run([sys.executable, "-I", TOOL, os.path.join(HERE, "fixtures", "x86_64-kernel.o"),

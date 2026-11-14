@@ -15,8 +15,13 @@ assembled word by word below in the shapes Clang uses in Android GKI 5.15 kernel
 jtcfi_truth.json lists every call site with its expected kind, type and candidates, and the checks with no
 linked call (one of them the runtime's own __cfi_check).
 
-    python3 tools/gen_fixtures.py              # both
+Candidates in a matching static slot (needs ziglang): kcfi_slots_a64.o is tests/fixtures/kcfi_slots.c built for
+aarch64 with kCFI, carrying the BTF of the same file (tools/add_btf_section.py); its comment says which candidates of
+each call are stored in a slot of the struct member the call loads.
+
+    python3 tools/gen_fixtures.py              # the kCFI objects of t.c and the jump-table CFI fixture
     python3 tools/gen_fixtures.py --jtcfi-only # only the jump-table CFI fixture
+    python3 tools/gen_fixtures.py --slots-only # only kcfi_slots_a64.o
 """
 import hashlib, json, os, random, struct, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -377,7 +382,22 @@ def write_jtcfi():
         fh.write("\n")
 
 
+def build_slots():
+    """kcfi_slots_a64.o: aarch64 kCFI code of kcfi_slots.c with that file's BTF."""
+    import tempfile
+    src = os.path.join(FIX, "kcfi_slots.c")
+    with tempfile.TemporaryDirectory() as tmp:
+        code, btf = os.path.join(tmp, "code.o"), os.path.join(tmp, "btf.o")
+        subprocess.check_call(ZIG + ["-target", "aarch64-linux-gnu", "-fsanitize=kcfi", "-O1", "-c", src, "-o", code])
+        subprocess.check_call(ZIG + ["-target", "bpfel-freestanding-none", "-g", "-O2", "-c", src, "-o", btf])
+        subprocess.check_call([sys.executable, os.path.join(HERE, "add_btf_section.py"), btf, code,
+                               os.path.join(FIX, "kcfi_slots_a64.o")])
+
+
 if __name__ == "__main__":
+    if "--slots-only" in sys.argv[1:]:
+        build_slots()
+        sys.exit(0)
     if "--jtcfi-only" not in sys.argv[1:]:
         build_kcfi()
     write_jtcfi()

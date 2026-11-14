@@ -414,7 +414,8 @@ class FreshRun(unittest.TestCase):
         want = [t["name"] for t in self.targets["targets"]]
         self.assertEqual(len(want), self.targets["candidates"])
         self.assertEqual([texts(c) for c in kids(p1, "g", "candidate")], [[("name", n)] for n in want])
-        self.assertEqual([ln.split() for ln in self.targets_text[2:]],
+        # candidate lines (4 spaces), under 'in a ... slot:' and 'same type only:' when some are slot-backed
+        self.assertEqual([ln.split() for ln in self.targets_text[2:] if ln.startswith("    ")],
                          [[t["ea"], t["name"]] for t in self.targets["targets"]])
         caller_funcs = {s["in"].partition("+")[0] for s in self.callers["sites"]}
         self.assertEqual([texts(c)[0][1] for c in kids(p1, "g", "candidate") if "also-caller" in cls(c)],
