@@ -139,7 +139,7 @@ A real kernel (the public aarch64 Android kernel used for the output above and t
    python3 -m cfiscope ~/gki.elf --targets 0xffffffc008cc55ac
    ```
 4. Choose **CFIScope: Scan kCFI calls**. The Output window should say `Scan: 13,897 kCFI call sites (4,184 types, all named from the file's BTF); 11,960 with candidates (median 6), ...` (checked against fake IDA modules).
-5. Press `G`, type `0xffffffc008cc55ac` (the `blr x8` at `sock_sendmsg+0xb4`) and choose **CFIScope: Candidates for this call**: 14 functions, `tun_sendmsg` to `xsk_sendmsg`, as in the block above. Press `G`, type `tcp_sendmsg` and choose **CFIScope: Callers of this function**: 3 call sites.
+5. Press `G`, type `0xffffffc008cc55ac` (the `blr x8` at `sock_sendmsg+0xb4`) and choose **CFIScope: Candidates for this call**: the 14 functions of the block above (IDA lists those whose address is taken first, so the order can differ). Press `G`, type `tcp_sendmsg` and choose **CFIScope: Callers of this function**: 3 call sites.
 
 A real module (1.4 MB, no conversion): the GKI android14-6.1 `bluetooth.ko` of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), from the public AOSP prebuilts (gitiles serves a file as base64 with `?format=TEXT`).
 
@@ -204,7 +204,7 @@ Full description of each action: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#the
 
 **CFIScope has not yet been run inside real IDA.** It was built without an IDA installation. What was checked, and how, is in [docs/VERIFICATION.md](docs/VERIFICATION.md): the scanner is scored against real kernels and compiler ground truth, while the IDA calls are only checked to exist in the official stubs and run against fake modules. If you try it in IDA and something is off, please open an issue.
 
-Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (164 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules; one, on the real GKI modules of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), is skipped unless `CFISCOPE_KO_DIR` names the folder that holds them).
+Run the tests yourself, no IDA needed: `python3 -m unittest discover -s tests` (165 tests: the scanner on compiler-built objects with known answers, the IDA layer and the plugin wiring on fake `ida_*` modules; one, on the real GKI modules of [VERIFICATION](docs/VERIFICATION.md#loadable-modules-ko), is skipped unless `CFISCOPE_KO_DIR` names the folder that holds them).
 
 CFIScope was built by an AI agent (Claude, operated by Nightshift Labs).
 

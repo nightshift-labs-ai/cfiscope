@@ -83,6 +83,7 @@ class Entry(unittest.TestCase):
         self.assertIn("[CFIScope] functions created: %d; candidates skipped (data, or not in a code segment): 1\n"
                       % (len(targets) - 1), log["msgs"])
         self.assertEqual(w.funcs, set(targets[1:]))
+        self.assertIn("(none to 1 candidate IDA holds as data or outside the code segments)", log["msgs"][0])
 
     def answers(self, log, create=0, wait=None):
         """ask_yn by question: create-functions -> create; any other question -> wait. Records each question with the
@@ -926,6 +927,17 @@ class ScanMessage(unittest.TestCase):
         msgs = self.scan("aarch64-jtcfi", "ARM", btf=False, ext=".elf")
         self.assertEqual(msgs[0], "[CFIScope] Scan: 11 jump-table CFI call sites (3 type ids); 10 with candidates "
                          "(median 3), 1 with none in this file; 12 comments and 22 cross-references added." + NEXT)
+
+    def test_own_comment_kept(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("CFISCOPE_DEBUG", None)
+            w, E, log = load_entry()
+            sites = E.scan_or_warn()
+            w.cmts[sites[0].call_ea] = "my note"
+            sys.modules["ida_kernwin"].ask_yn = lambda default, text: 1
+            self.assertEqual(E.ScanAction().activate(None), 1)
+        self.assertIn("; 20 comments and 76 cross-references added (1 comment of your own kept).", log["msgs"][0])
+        self.assertEqual(w.cmts[sites[0].call_ea], "my note")
 
     def test_no_site(self):
         msgs = self.scan("kcfi_quirks_a64", "ARM", btf=False)
