@@ -1033,13 +1033,17 @@ class SiteList(unittest.TestCase):
         p.term()
 
     def test_a_list_from_another_scan_is_closed(self):
-        # IDA only brings an open chooser of the same title to the front, so a list of an older scan is closed first.
+        # A list of an older scan is closed first (close_chooser, by title). For the same scan the same chooser object
+        # is shown again: IDAPython tells choosers apart by their Python object (get_obj_id, review s194), so a new
+        # object of the same title might open a second window; the same one is brought to the front or reopened.
         w, E, log = self.scan()
         self.assertEqual(E.SitesAction().activate(None), 1)
         self.assertEqual(E.SitesAction().activate(None), 1)        # same scan: nothing closed
         self.assertEqual((len(log["shown"]), log["closed"]), (2, []))
+        self.assertIs(log["shown"][0][2], log["shown"][1][2])       # ... and the same chooser object
         self.assertEqual(E.ScanAction().activate(None), 1)          # Scan scans again
         self.assertEqual(log["closed"], ["CFIScope: 21 kCFI call sites"])
+        self.assertIsNot(log["shown"][-1][2], log["shown"][0][2])   # a new list for the new scan
         self.assertEqual(log["shown"][-1][2].OnGetSize(), 21)
         seg = w.segs[0]                                              # a rebase: the lookups scan again
         w.mem[seg.start_ea + 0x1000] = w.mem.pop(seg.start_ea)

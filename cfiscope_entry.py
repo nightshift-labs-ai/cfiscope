@@ -27,7 +27,7 @@ from cfiscope import __version__, idalayer  # noqa: E402
 
 # pseudo: call address -> site, set by Scan and cleared by Remove annotations; hx: the decompiler hook;
 # restored: the database's scan marker was looked at (restore_scan), or Remove annotations made it moot;
-# listed: (title, sites) of the call-site list last opened (show_sites).
+# listed: (title, sites, chooser) of the call-site list last opened (show_sites).
 STATE = {"sites": None, "stats": None, "layout": None, "pseudo": None, "hx": None, "hx_error": False, "restored": False,
          "listed": None}
 
@@ -39,10 +39,14 @@ def reset_state():
 
 
 def show_sites(sites):
-    """Open the non-modal list of every call site. A list still open from another scan is closed first: IDA would
-    only bring it to the front (Show() returns ALREADY_EXISTS for an open chooser of the same title)."""
+    """Open the non-modal list of every call site. A list from an earlier scan is closed first; for the same scan the
+    same chooser object is shown again (IDAPython identifies a chooser by its Python object, get_obj_id), so IDA can
+    bring it to the front, or reopen it if it was closed (not checked in IDA)."""
     listed = STATE["listed"]
-    if listed is not None and listed[1] is not sites:
+    if listed is not None and listed[1] is sites:
+        listed[2].Show()
+        return
+    if listed is not None:
         ida_kernwin.close_chooser(listed[0])
     # Rows are built at once (13,897 on GKI 6.1), so that IDA can sort and filter them; behind a box, as the scan is.
     ida_kernwin.show_wait_box("HIDECANCEL\nCFIScope: listing call sites")
@@ -50,7 +54,7 @@ def show_sites(sites):
         chooser = idalayer.sites_chooser(sites)
     finally:
         ida_kernwin.hide_wait_box()
-    STATE["listed"] = (idalayer.sites_title(sites), sites)
+    STATE["listed"] = (idalayer.sites_title(sites), sites, chooser)
     chooser.Show()
 
 
