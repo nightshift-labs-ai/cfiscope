@@ -126,6 +126,20 @@ def input_type_names():
     return None
 
 
+def input_has_split_btf():
+    """Does the input file (still where it was loaded from) carry a module's split BTF, which input_type_names()
+    cannot read without its kernel's BTF?"""
+    try:
+        from . import kcfi_types
+        path = ida_nalt.get_input_file_path()
+        if path and os.path.isfile(path):
+            with open(path, "rb") as fh:
+                return kcfi_types.has_split_btf(fh.read())
+    except Exception:  # noqa: BLE001  a hint only
+        pass
+    return False
+
+
 def typeid_names(elf=False):
     """(address, name) of the __typeid_<type>_global_addr names (kallsyms keeps them).
 
@@ -203,6 +217,11 @@ def scan():
             from . import kcfi_types
             named, total = kcfi_types.name_sites(sites, names)
             stats = dict(stats, kcfi_hashes_named=named, btf_prototypes=names.protos)
+        elif input_has_split_btf():  # review s189 NIT 6: say why a module's hashes are not named, once per scan
+            ida_kernwin.msg("[CFIScope] this module's BTF is split BTF (it continues its kernel's BTF), which the IDA "
+                            "plugin does not read: kCFI hashes are not named by C type here; the command line names "
+                            "them: python3 -m cfiscope MODULE.ko --sites --btf KERNEL (a vmlinux or raw Image of the "
+                            "same build)\n")
     jt = JT["table"]
     JT["runtime_fn"] = {}
     CALLS.clear()
