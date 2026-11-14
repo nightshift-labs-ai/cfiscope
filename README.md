@@ -31,7 +31,7 @@ $ python3 -m cfiscope gki.elf --callers tcp_sendmsg --max-list 3
 
 (Long lines wrapped by hand; spacing condensed.)
 
-The type after each hash comes from the kernel's own BTF (new in 0.1.22, see [Features](#features)). The struct member before it (unreleased, aarch64) is the field the call loads its pointer from: `sock->ops->sendmsg` is a load from byte 136, and BTF has exactly one member of this type there. So the three answers for `tcp_sendmsg` are a `proto_ops.sendmsg_locked` call and two `proto.sendmsg` calls; `tcp_sendmsg` is listed for the first only because it has the same type. This is the output of the code on `gki.elf`, re-run 2026-11-14.
+The type after each hash comes from the kernel's own BTF (new in 0.1.22, see [Features](#features)). The struct member before `hash` (unreleased, aarch64) is the field the call loads its pointer from: `sock->ops->sendmsg` is a load from byte 136, and BTF has exactly one member of this type there. So the three answers for `tcp_sendmsg` are a `proto_ops.sendmsg_locked` call and two `proto.sendmsg` calls; the first reaches `tcp_sendmsg` only if a `proto_ops.sendmsg_locked` slot holds it, and the list shows it because the type matches. This is the output of the code on `gki.elf`, re-run 2026-11-14.
 
 ## What the plugin writes into IDA (fake IDA, not a screenshot)
 
