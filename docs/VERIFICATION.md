@@ -108,7 +108,7 @@ The walk gives no offset when:
 - it leaves straight-line code (`ret`, `b`, `bti c` and the like within 16 words);
 - `xN` comes from anything but those loads (`ldp`, a register offset, an index writeback, a call that clobbers it);
 - the base is `sp` or `x29` (a pointer spilled to the stack);
-- the base was set by `adrp` (the immediate is then the low 12 bits of a global's address);
+- the base was set by `adrp` on the straight path walked back from the load (the immediate is then the low 12 bits of a global's address). An `adrp` further back, or behind a branch, is not seen: a linear scan back to the nearest `bti c` or `paciasp` finds an `adrp` as the base's last write for 20 decoded offsets on GKI 6.1 (23 on 6.6, 34 on 6.12), for example `__delay+0x84` at 1592 (its `adrp x21` is in the function's first block, behind a `b`). 1 of them on each kernel matches a member: `tracing_set_tracer+0x1d0` (`tracer.init`, offset 8) on 6.1, and on 6.6 and 6.12 a `__kvm_nvhe_handle_trap` call with several members;
 - a `b`, `b.cond`, `cbz`/`cbnz` or `tbz`/`tbnz` in the same code lands between the load and the check (another path may load the pointer from elsewhere). A `br` through a register, as in a switch table, is not followed.
 
 Reproduce with the summary of `python3 -m cfiscope gki.elf`, line `kCFI calls through a struct member: ...` (re-run 2026-11-14 on each kernel's `gki.elf`, symbols restored by vmlinux-to-elf; the 6.6 and 6.12 kernels of the tables above):
@@ -122,7 +122,7 @@ Reproduce with the summary of `python3 -m cfiscope gki.elf`, line `kCFI calls th
 | (hash, offset) pairs in the member map | 15,660 | 17,190 | 17,765 |
 | Time: member map / walk and lookup (best of 3, in-process) | 0.10 s / 0.29 s | 0.11 s / 0.30 s | 0.13 s / 0.31 s |
 
-The whole `--callers tcp_sendmsg` command on 6.1 took 2.94 to 3.11 s, and 2.31 to 2.68 s with the code before this change (three runs each, alternating; load average about 2.5 on the machine named above). Maximum resident memory of the summary command (GNU `time`): 301,772 KB, 236,504 KB before (6.6: 319,264 / 249,752 KB; 6.12: 340,944 / 273,992 KB).
+The whole `--callers tcp_sendmsg` command on 6.1 took 2.94 to 3.11 s, and 2.31 to 2.68 s with the code before this change (three runs each, alternating; load average about 2.5 on the machine named above). Re-run in review s195 (load average 0.7 to 1.0): 3.03 to 3.27 s, against 2.30 to 2.44 s for 458eeeb, 0.70 to 0.83 s longer run for run. Maximum resident memory of the summary command (GNU `time`): 301,772 KB, 236,504 KB before (6.6: 319,264 / 249,752 KB; 6.12: 340,944 / 273,992 KB).
 
 Known answers (`tests/test_members.py`, run when `CFISCOPE_GKI_ELF` names the 6.1 `gki.elf`):
 
@@ -140,6 +140,7 @@ The judge's prototype of review s193 found 7,608 offsets, 5,222 matches and 4,89
 What a name means: BTF has exactly one function-pointer member of the call's type at the loaded offset. That the call really goes through it is not proven, because the base register's type is not known:
 - A load at offset 0 from a pointer to a lone function pointer (`(*pp)()`) looks like a struct's first member. On 6.1, 844 named calls load from offset 0, 771 of them with one member.
 - A pointer cast from another type, or a constant index into an array of function pointers, is matched like a member too.
+- A pointer the compiler has already moved into the struct is read from the wrong origin: `gic_enable_of_quirks+0x54` (GKI 6.6, 6.12) keeps a pointer to `gic_quirk.init` (byte 24 of the 40-byte `struct gic_quirk`) in a loop (`add x22, x1, #24`) and loads `[x22, #0]`, so it is named `vhost_task.fn` (the one member of the call's type, `_Bool (void *)`, at offset 0). On 6.12 `gic_enable_quirks+0x80` gets the same name the same way.
 
 Modules: `bluetooth.ko --btf kernel-6.1` (the files of the next section) decodes 222 of 253 load offsets and names 216 calls, each with exactly one member, for example `bt_sock_recvmsg+0x10c` -> `bt_sock.skb_msg_name`. The IDA plugin does not read a module's split BTF, so it shows no member there.
 
@@ -153,6 +154,7 @@ The IDA side was checked against fake IDA modules only, never in IDA:
 
 No new IDA API name is used. Tests in `tests/test_members.py`:
 - the walk on hand-made instruction words;
+- the member map on crafted BTF: an array of function pointers, an array of 24-byte structs (each element at its own offset), a named member of anonymous type (`S.ops.fn`), a struct nested in itself, a pointer to a function pointer;
 - the member map on a new fixture, `tests/fixtures/kcfi_members.c`, built by `zig cc -fsanitize=kcfi` for aarch64 with its own BTF. `a_ops.send`, `b_ops.send` and `b_ops.recv` share a type at offsets 16, 0 and 24; `c_ops.poll` and `d_ops.poll` share one at the same offset. It also has an embedded struct, an anonymous union, a call through a parameter and one through a global. The true offsets are read from `offsetof` constants compiled into the object;
 - the command line, JSON and fake-IDA strings;
 - that calls with no decoded load or no member print exactly what the code before printed (golden lines from it on the fixture and on GKI 6.1, and the `--sites` output of four older fixtures by sha256).

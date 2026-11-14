@@ -1032,7 +1032,7 @@ def _check_site(jt, chk, call_ea, tail):
 # `sock->ops->sendmsg(...)` compiles to `ldr x8, [x9, #136]` (the member at byte 136 of struct proto_ops), then the kCFI
 # check `ldur w16, [x8, #-4]` ... `blr x8`. The offset of that load, with the call's type hash, names the member in BTF
 # (kcfi_types.TypeNames.members). Straight-line code only: the walk back from the check gives up at anything it cannot
-# follow, rather than guess.
+# follow.
 
 _BRANCH_TOP = re.compile(rb"[\x14-\x17\x34-\x37\x54\xb4-\xb7]")   # top byte of b, cbz/cbnz, tbz/tbnz, b.cond
 
@@ -1064,8 +1064,9 @@ def _member_load(c, i, limit=MEMBER_WALK):
     """(word, byte offset) of the 64-bit load (ldr xN, [xM, #imm], or ldur) that put the called pointer in xN before the
     kCFI check at word i (ldur wT, [xN, #-4]), through mov copies; None when the walk back leaves straight-line code,
     xN comes from anything else (ldp, a register offset, an index writeback, a call), the base is the stack (sp, x29)
-    or the base was set by adrp (the offset is then the low 12 bits of a global's address). The caller still checks
-    that no branch lands between the load and the check (member_offsets())."""
+    or the base was set by adrp on the straight path walked back from the load (the offset is then the low 12 bits of a
+    global's address; an adrp further back, or behind a branch, is not seen). The caller still checks that no branch
+    lands between the load and the check (member_offsets())."""
     W = c.w
     r = (W[i] >> 5) & 31
     for k in range(i - 1, max(i - limit, 0) - 1, -1):
