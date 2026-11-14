@@ -89,6 +89,9 @@ def slot_ranking(sites, image, elf_path):
     t0 = time.time()
     names = kcfi_types.load_type_names(image)
     t1 = time.time()
+    if names is None:
+        print("slots: no BTF in the Image, so no struct members and no ranking")
+        return
     kcfi_types.name_sites(sites, names)
     kcfi_types.name_members(sites, [(BASE, image)], "aarch64", names)
     t2 = time.time()

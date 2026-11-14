@@ -4,53 +4,53 @@ What was checked, and how. The summary is in the [README](../README.md#status). 
 
 ## What the plugin writes into IDA (fake IDA, not a screenshot)
 
-`tools/showcase_ida_stub.py` loads the same kernel's code segments and symbol names into the fake IDA modules of the stub tests, runs the plugin's own IDA layer (Scan, the two lists, the pseudocode comment) and prints what it wrote. These are the exact strings the plugin hands to IDA; real IDA has not run them and draws its own listing around them. The fake database puts every address inside the function of the symbol before it, so the count is 44718 after Yes to "Create functions"; after No (add `--no` to the command below) it is 44695 call and 23 data cross-references, the 23 to 8 candidates inside the function of the symbol before them, and none skipped. In IDA the split after No depends on the functions IDA found. The fake database has no data cross-references of its own (CFIScope's from call sites never count), so no candidate is marked "address taken" here; in IDA, candidates whose address is stored in data are marked and listed first, so the first names in a comment can differ.
+`tools/showcase_ida_stub.py` loads the same kernel's code segments and symbol names into the fake IDA modules of the stub tests, runs the plugin's own IDA layer (Scan, the two lists, the pseudocode comment) and prints what it wrote. These are the exact strings the plugin hands to IDA; real IDA has not run them and draws its own listing around them. The fake database puts every address inside the function of the symbol before it, so the count is 50048 after Yes to "Create functions"; after No (add `--no` to the command below) it is 50025 call and 23 data cross-references, the 23 to 8 candidates inside the function of the symbol before them, and none skipped (re-run 2026-11-14 with the slot ranking: 44718, and 44695 and 23, before it; the 5,330 more go to the slot-backed candidates of 1,155 lists of more than 16, see [Candidates stored in a matching slot](#candidates-stored-in-a-matching-slot)). In IDA the split after No depends on the functions IDA found. The fake database has no data cross-references of its own (CFIScope's from call sites never count), so no candidate is marked "address taken" here. The candidates stored in a slot of the call's member come first in both (the plugin reads the slots from the input file); in IDA, the address-taken ones would come next within each group, so the first names in a comment can differ.
 
 ```
 $ python3 -I tools/showcase_ida_stub.py gki.elf sock_sendmsg+0xb4 tcp_sendmsg
 BEFORE (no CFIScope): 0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8
   comment: none; code xrefs from this call: none (indirect)
 
-AFTER Scan kCFI calls (Alt-Shift-K): 13897 sites, 13897 comments, 44718 cross-references in the whole database
-0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI proto_ops.sendmsg 0x1EBDA935 int (struct socket *, struct msghdr *, unsigned long): 14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
+AFTER Scan kCFI calls (Alt-Shift-K): 13897 sites, 13897 comments, 50048 cross-references in the whole database
+0xffffffc008cc55ac  sock_sendmsg+0xb4  blr x8    ; kCFI proto_ops.sendmsg 0x1EBDA935 int (struct socket *, struct msghdr *, unsigned long): 14 candidate(s): in a proto_ops.sendmsg slot: tun_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, +7 more; same type only: 1 more
   code xrefs from this call (14): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, packet_sendmsg_spkt, pfkey_sendmsg, vsock_dgram_sendmsg, vsock_connectible_sendmsg, xsk_sendmsg
 
 Candidates for this call (Alt-Shift-T): window 'kCFI candidates for the call at 0xFFFFFFC008CC55AC (proto_ops.sendmsg, hash 0x1EBDA935, int (struct socket *, struct msghdr *, unsigned long))'
-  0xffffffc00897842c  tun_sendmsg
+  0xffffffc00897842c  tun_sendmsg  stored in a proto_ops.sendmsg slot
+  0xffffffc008d8cd98  netlink_sendmsg  stored in a proto_ops.sendmsg slot
+  0xffffffc008e43370  inet_sendmsg  stored in a proto_ops.sendmsg slot
+  0xffffffc008ea71dc  unix_stream_sendmsg  stored in a proto_ops.sendmsg slot
+  0xffffffc008ea9910  unix_dgram_sendmsg  stored in a proto_ops.sendmsg slot
+  0xffffffc008eaa360  unix_seqpacket_sendmsg  stored in a proto_ops.sendmsg slot
+  0xffffffc008ead7c8  inet6_sendmsg  stored in a proto_ops.sendmsg slot
+  0xffffffc008f24f88  packet_sendmsg  stored in a proto_ops.sendmsg slot
+  0xffffffc008f2a988  packet_sendmsg_spkt  stored in a proto_ops.sendmsg slot
+  0xffffffc008f2dc00  pfkey_sendmsg  stored in a proto_ops.sendmsg slot
+  0xffffffc008f6b58c  vsock_dgram_sendmsg  stored in a proto_ops.sendmsg slot
+  0xffffffc008f6cc48  vsock_connectible_sendmsg  stored in a proto_ops.sendmsg slot
+  0xffffffc008f72e10  xsk_sendmsg  stored in a proto_ops.sendmsg slot
   0xffffffc008cd2ac4  sock_no_sendmsg
-  0xffffffc008d8cd98  netlink_sendmsg
-  0xffffffc008e43370  inet_sendmsg
-  0xffffffc008ea71dc  unix_stream_sendmsg
-  0xffffffc008ea9910  unix_dgram_sendmsg
-  0xffffffc008eaa360  unix_seqpacket_sendmsg
-  0xffffffc008ead7c8  inet6_sendmsg
-  0xffffffc008f24f88  packet_sendmsg
-  0xffffffc008f2a988  packet_sendmsg_spkt
-  0xffffffc008f2dc00  pfkey_sendmsg
-  0xffffffc008f6b58c  vsock_dgram_sendmsg
-  0xffffffc008f6cc48  vsock_connectible_sendmsg
-  0xffffffc008f72e10  xsk_sendmsg
 
 Callers of this function (Alt-Shift-X) on tcp_sendmsg: 3 row(s)
   0xffffffc008cc5778  kernel_sendmsg_locked+0x64  proto_ops.sendmsg_locked, 11 candidate(s)
   0xffffffc008e433c8  inet_sendmsg+0x58  proto.sendmsg, 11 candidate(s)
   0xffffffc008ead820  inet6_sendmsg+0x58  proto.sendmsg, 11 candidate(s)
 
-Pseudocode line of the call (with Hex-Rays):  // CFIScope: proto_ops.sendmsg, 14 candidates of int (struct socket *, struct msghdr *, unsigned long): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
+Pseudocode line of the call (with Hex-Rays):  // CFIScope: proto_ops.sendmsg, 14 candidates of int (struct socket *, struct msghdr *, unsigned long): in a proto_ops.sendmsg slot: tun_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg and 8 more; same type only: 1 more
 ```
 
 ### The call-site list
 
-Scan ends by opening a list of every call site (also **CFIScope: List kCFI call sites**; unreleased). Add `--list` to the command above for its row count, the time its rows took to build and the row of the call next to the command line's `--sites` line for it (re-run 2026-11-14 with the Member column; spacing of the last line condensed):
+Scan ends by opening a list of every call site (also **CFIScope: List kCFI call sites**; unreleased). Add `--list` to the command above for its row count, the time its rows took to build and the row of the call next to the command line's `--sites` line for it (re-run 2026-11-14 with the slot ranking, byte for byte):
 
 ```
-Call-site list (opens after Scan; CFIScope: List kCFI call sites): window 'CFIScope: 13,897 kCFI call sites', 13897 rows, built in 0.10 s
+Call-site list (opens after Scan; CFIScope: List kCFI call sites): window 'CFIScope: 13,897 kCFI call sites', 13897 rows, built in 0.12 s
   columns: Address | Function+off | Member | Type | Candidates | First candidates
-  row 11703:  0xffffffc008cc55ac | sock_sendmsg+0xb4 | proto_ops.sendmsg | int (struct socket *, struct msghdr *, unsigned long) | 14 | tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
-  command line --sites:  0xffffffc008cc55ac  sock_sendmsg+0xb4  call proto_ops.sendmsg hash 0x1ebda935 (int (struct socket *, struct msghdr *, unsigned long))  14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg ...
+  row 11703:  0xffffffc008cc55ac | sock_sendmsg+0xb4 | proto_ops.sendmsg | int (struct socket *, struct msghdr *, unsigned long) | 14 | in a proto_ops.sendmsg slot: tun_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, +7 more; same type only: 1 more
+  command line --sites:  0xffffffc008cc55ac  sock_sendmsg+0xb4                        call proto_ops.sendmsg hash 0x1ebda935 (int (struct socket *, struct msghdr *, unsigned long))  14 candidate(s): in a proto_ops.sendmsg slot: tun_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg, packet_sendmsg, +5 more; same type only: 1 more
 ```
 
-All 13,897 rows were also compared with `python3 -m cfiscope gki.elf --sites --json --max-list 6` (address, function and offset, member, type, count, first six names): 0 differ (with the Member column, which is filled in 9,764 rows, the calls of the [struct-member table](#struct-members-aarch64) with at least one member). `tests/test_showcase.py` does the same for the 21 rows of each Quick-try fixture, and for all 13,897 rows of GKI 6.1 when `CFISCOPE_GKI_ELF` names `gki.elf` (skipped otherwise; 6.1 s and 363 MB here with the Member column, re-run 2026-11-14; its Member check is the `--sites` text: the member, or `one of N members (...)` with the first three). The rows are built at once, so that IDA can sort and filter them: 0.12 to 0.15 s over three runs (load average about 2 on 4 cores), 0.09 to 0.10 s over three runs with the Member column (review s195, load average about 1.3), since each candidate's "address taken" test is asked once per list (30,561 distinct candidates in 403,385 list entries). In real IDA those tests and the names are IDA API calls; that time was not measured. As in the comments, the fake database marks no candidate "address taken", so the first names here are in address order; in IDA, address-taken candidates would come first in both (by design; not run in IDA).
+All 13,897 rows were also compared with `python3 -m cfiscope gki.elf --sites --json --max-list 6` (address, function and offset, member, type, count, first six names): 0 differ (with the Member column, which is filled in 9,764 rows, the calls of the [struct-member table](#struct-members-aarch64) with at least one member). `tests/test_showcase.py` does the same for the 21 rows of each Quick-try fixture, and for all 13,897 rows of GKI 6.1 when `CFISCOPE_GKI_ELF` names `gki.elf` (skipped otherwise; 6.1 s and 363 MB here with the Member column, 7.2 s and 426 MB with the slot ranking, which reads the input file once more, re-run 2026-11-14; its Member check is the `--sites` text: the member, or `one of N members (...)` with the first three). The rows are built at once, so that IDA can sort and filter them: 0.12 to 0.15 s over three runs (load average about 2 on 4 cores), 0.09 to 0.10 s over three runs with the Member column (review s195, load average about 1.3), 0.11 to 0.12 s with the slot ranking (three runs, load average about 0.5 to 1.1), since each candidate's "address taken" test is asked once per list (30,561 distinct candidates in 403,385 list entries). In real IDA those tests and the names are IDA API calls; that time was not measured. As in the comments, the fake database marks no candidate "address taken", so within each group the first names here are in address order; in IDA, address-taken candidates would come first within each group (by design; not run in IDA). The test's expected First candidates follow the command line's `slot_backed` flags: the slot-backed names, then `same type only: N more`.
 
 ## kCFI on real kernels
 
@@ -159,6 +159,52 @@ No new IDA API name is used. Tests in `tests/test_members.py`:
 - the command line, JSON and fake-IDA strings;
 - that calls with no decoded load or no member print exactly what the code before printed (golden lines from it on the fixture and on GKI 6.1, and the `--sites` output of four older fixtures by sha256).
 
+## Candidates stored in a matching slot
+
+Unreleased; aarch64, for the calls with a struct member of the [previous section](#struct-members-aarch64). How it works: [HOW_IT_WORKS.md](HOW_IT_WORKS.md#candidates-stored-in-a-matching-slot). A candidate is slot-backed for a call when the image's static data stores its address at the call's member offset inside an object (the nearest `OBJECT` symbol at or below the word; kallsyms names them on GKI), or at that offset modulo the size of a struct with that member there (an array of such structs; not an 8-byte struct, which every aligned word would match; leaving it out took 4 of 5,605 calls on GKI 6.1 out of the slot-backed ones). Slot-backed candidates are listed first; no candidate is removed.
+
+Reproduce with `python3 tools/eval_gki.py Image gki.elf` (6.1) and `python3 tools/eval_gki.py --base 0xffffffc080000000 Image gki.elf` (6.6, 6.12), the lines from `slots:` on (re-run 2026-11-14; the kernels of [kCFI on real kernels](#kcfi-on-real-kernels)). The script names the members from the `Image`'s code and BTF and reads the slots from `gki.elf`; the command line's summary line `kCFI calls with a candidate stored in a slot of their struct member: ...` on `gki.elf` gives the same first counts.
+
+| Measure | GKI 6.1 | GKI 6.6 | GKI 6.12 |
+|---|---|---|---|
+| Distinct kCFI candidates stored in a static object (any offset) | 17,959 of 30,561 | 20,739 of 33,960 | 21,350 of 35,480 |
+| Calls with a struct member and at least one candidate | 8,600 | 8,511 | 8,729 |
+| ... with at least one slot-backed candidate | 5,601 | 5,598 | 5,837 |
+| ... of them also with candidates of the same type only (the first part is shorter) | 3,818 | 3,863 | 4,037 |
+| ... of them with every candidate slot-backed | 1,783 | 1,735 | 1,800 |
+| ... of them whose slot-backed candidates all match only modulo a struct size | 395 | 381 | 222 |
+| Median list / median slot-backed part (calls with one) | 6 / 2 | 7 / 2 | 6 / 2 |
+| Lists of more than 16 / of them with 16 or fewer slot-backed | 1,625 / 1,155 | 1,669 / 1,177 | 1,698 / 1,204 |
+| Largest list (its slot-backed part) | 1,458 (25) | 1,536 (26) | 1,580 (33) |
+| Largest slot-backed part | 1,318 | 1,301 | 766 |
+| Time: slot scan of `gki.elf` / ranking (in-process, one run) | 0.24 s / 0.06 s | 0.24 s / 0.06 s | 0.53 s / 0.08 s |
+
+Known answers (`tests/test_slots.py`, run when `CFISCOPE_GKI_ELF` names the 6.1 `gki.elf`; the same on 6.6 and 6.12 by the script):
+
+| Call | Member | Candidates | Slot-backed |
+|---|---|---|---|
+| `sock_sendmsg+0xb4` | `proto_ops.sendmsg` | 14 | 13: all but `sock_no_sendmsg`, which is stored nowhere in the image (module ops tables use it) |
+| `kernel_sendmsg_locked+0x64` | `proto_ops.sendmsg_locked` | 11 | 1: `tcp_sendmsg_locked` (at byte 216 of `inet_stream_ops` and `inet6_stream_ops`) |
+| `inet_sendmsg+0x58`, `inet6_sendmsg+0x58` | `proto.sendmsg` | 11 | 7: `tcp_sendmsg`, `raw_sendmsg`, `udp_sendmsg`, `ping_v4_sendmsg`, `udpv6_sendmsg`, `rawv6_sendmsg`, `ping_v6_sendmsg` |
+
+`tcp_sendmsg` is stored at byte 104 of `tcp_prot` and `tcpv6_prot` only, so it is slot-backed for the two `proto.sendmsg` calls and of the same type only for `kernel_sendmsg_locked+0x64`. The largest slot-backed part on 6.1 is `dev_attr_show+0x34` (`device_attribute.show`): 1,318 of its 1,359 candidates, the `show` functions of the kernel's static device attributes. The 711-candidate `trace_event_functions.trace` calls (such as `print_trace_fmt+0x120`) keep 695.
+
+Cost on the command line: `python3 -m cfiscope gki.elf --callers tcp_sendmsg` took 3.22 to 3.42 s, against 2.92 to 3.16 s for the code before (cfi193 `8e2089f`; three runs each, alternating, load average 1.7 to 2.7), and 310,476 to 310,696 KB maximum resident memory against 301,780 to 301,824 KB (GNU `time`). The ranking runs only when some call has a struct member (aarch64 with BTF); x86-64 output is unchanged.
+
+Modules: a `.ko`'s data holds zeros where pointers go, so its 64-bit absolute relocations (`R_AARCH64_ABS64`, `R_X86_64_64`) into allocated data sections are read instead, each in the `OBJECT` symbol of its section that holds it. `bluetooth.ko --btf kernel-6.1` (the files of the next section): 128 calls with a slot-backed candidate, 82 of them with candidates of the same type only too; 314 of its 603 distinct candidates are stored in a static object of the module (1.98 s, 207,708 KB for the summary). For example `hci_conn_failed+0xbc` (`hci_cb.connect_cfm`, 12 candidates) lists `l2cap_connect_cfm`, `sco_connect_cfm` and `iso_connect_cfm` first. `bt_sock_recvmsg+0x10c` keeps `l2cap_skb_msg_name` without a slot: L2CAP sets that pointer at run time. The IDA plugin does not read a module's split BTF, so it names no member and ranks nothing there.
+
+An earlier prototype from our own internal review (s193; not in this repository) measured on 6.1 the same 17,959 of 30,561 stored candidates, but 3,168 calls with a slot-backed candidate, 2,071 shorter lists, a median slot-backed part of 3 (lists of 6), 575 lists going from more than 16 to 16 or fewer, and a largest slot-backed part of 695. It ranked only the calls its own member walk named (5,222, against 9,764 here, see the previous section), took the struct size from the member's declaring struct, and counted 8-byte structs for the modulo.
+
+The IDA side (fake IDA modules only, never in IDA): the order of `ranked()` (slot-backed, then address taken), the comment and pseudocode comment (`... 14 candidate(s): in a proto_ops.sendmsg slot: tun_sendmsg, ..., +7 more; same type only: 1 more`), the Candidates notes (`stored in a proto_ops.sendmsg slot`), the call-site list's First candidates, and the 16-cross-reference cap: a list of more than 16 now gets cross-references to its slot-backed candidates when there are at most 16 of them (1,155 lists on GKI 6.1, 50,048 cross-references in all against 44,718; Scan's sentence says `none for lists of more than 16, except to their candidates stored in a slot of the call's member in 1,155 of them`). Remove annotations now looks at the lists of more than 16 too. The plugin reads the slots from the input file, and only when the database has the file's layout (each code range of the file starts with the same bytes at the same address); for a `.o` or `.ko` that depends on where IDA puts its sections, which was not checked in IDA. No new IDA API name.
+
+Tests in `tests/test_slots.py` (20; 3 need `CFISCOPE_GKI_ELF`). 19 were written before the code: on the code before, the run reported 11 failures and 9 errors (subtests counted; the GKI class failed in its setup), and the two that check that nothing is dropped and that nothing is ranked without the input file passed there, as they should. The 20th (an 8-byte struct) came with that rule and fails without it:
+- a new fixture, `tests/fixtures/kcfi_slots.c` (`python3 tools/gen_fixtures.py --slots-only`, zig cc kCFI for aarch64 with its own BTF): `net_ops.xmit`, `file_ops.write` and `file_ops.read` share a type, so each call has the same 6 candidates, and only the functions stored in a slot of the member it loads come first (`net_xmit_c` only through the modulo: byte 40 of `net_tbl`, `struct net_ops` being 24 bytes); `runtime_only` is stored by code at run time and stays in every list;
+- nothing is dropped: on the fixture the same candidates as with `--no-btf`, and on GKI 6.1 every site's list unchanged and `slot_first()` a permutation of it;
+- the command line (`--sites`, `--targets`, `--json`, summary), the matching on hand-made offsets (equal, modulo, an 8-byte struct, the order inside each group), the containing object, and the fake-IDA order, comment, notes, call-site list and cross-reference cap;
+- the GKI 6.1 known answers above.
+
+Mutations of commit `3a0c728`, each run against `tests/test_slots.py`: comparing with the member offset plus 8 (18 failures, with `CFISCOPE_GKI_ELF` set), filtering instead of ranking in `core.slot_first()` (8 failures and 1 error, with it set), and the same in the IDA layer's `ranked()` (6 failures, without it). Each was caught. The existing `tests/test_members.py`, `test_showcase.py` and `test_draw_hero.py` expectations were updated to the new order and text; `docs/img/hero.svg` and `hero.png` were redrawn (the top panel lists `sock_no_sendmsg` last now).
+
 ## Loadable modules (.ko)
 
 Real modules: three GKI `system_dlkm` modules from the public prebuilts repository [kernel/prebuilts/6.1/arm64](https://android.googlesource.com/kernel/prebuilts/6.1/arm64) at commit `ad5f1ad22dd4` (head of `android14-qpr3-release`; kernel build 11484633, `6.1.68-android14-11-ga7f647f49daf-ab11484633`, the vermagic of all three), with the kernel of the same build from the same commit (`kernel-6.1`, a raw `Image`; symbols restored with vmlinux-to-elf as `kernel-6.1.elf`). This is a later build of the same android14-6.1 branch than the 2024-01 kernel above. Each file is `https://android.googlesource.com/kernel/prebuilts/6.1/arm64/+/ad5f1ad22dd47c7b244ec697c5e61f90783a06c2/<name>?format=TEXT` (base64 of the file):
@@ -203,7 +249,7 @@ The IDA layer on a module: `tools/showcase_ida_stub.py` runs it on the real `blu
 
 ## Known-answer objects and the test suite
 
-Known-answer objects: `tests/test_members.py` checks the struct member of each call on `tests/fixtures/kcfi_members_a64.o` against `offsetof` (see [Struct members](#struct-members-aarch64)). `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the table of signatures and implementations that `tools/gen_fixtures.py` wrote into the source; function offsets come from the compiled objects. `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the known candidate sets for the same objects, and that bad input gives a clear error.
+Known-answer objects: `tests/test_members.py` checks the struct member of each call on `tests/fixtures/kcfi_members_a64.o` against `offsetof` (see [Struct members](#struct-members-aarch64)). `tests/test_slots.py` checks which candidates of each call on `tests/fixtures/kcfi_slots_a64.o` come first (see [Candidates stored in a matching slot](#candidates-stored-in-a-matching-slot)). `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the table of signatures and implementations that `tools/gen_fixtures.py` wrote into the source; function offsets come from the compiled objects. `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the known candidate sets for the same objects, and that bad input gives a clear error.
 
 Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer and `tests/test_entry_stub.py` the plugin wiring (menus, right-click hooks, the call-site list, rescan after a rebase, pseudocode comments and the pseudocode-line lookups on a fake decompiler, restoring the scan after the database is reopened on a fake netnode) against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 113 IDA API names used, including the decompiler methods the pseudocode hook and lookups call, `func_t.tailqty`, the `netnode` methods of the scan marker, the `UI_Hooks` events that hook a decompiler loaded later and, for the call-site list, `Choose.CHCOL_DEC`, `Choose.OnSelectLine` and `close_chooser`, exist in the official stubs; `python3 tests/check_ida_names.py <stub dir>...` checks that the 74 `ida_*` / `idc` names alone also exist in older stubs (0 missing in those of IDA 9.1, 9.2, 9.3 and 9.4: PyPI `idapro` 0.0.5, 0.0.7, 0.0.9, 0.0.11). None of these is a test in real IDA.
 

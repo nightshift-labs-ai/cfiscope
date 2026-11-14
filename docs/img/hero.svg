@@ -5,12 +5,12 @@
 <text class="heading" x="40" y="54" font-size="17" fill="#1f2328" font-weight="bold" font-family="sans-serif">Which functions may this indirect call reach?</text>
 <g class="edge"><path d="M492 268 C602 268 602 86 705 86" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="704,81.5 712,86 704,90.5" fill="#8c959f"/></g>
 <g class="edge"><path d="M492 268 C602 268 602 114 705 114" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="704,109.5 712,114 704,118.5" fill="#8c959f"/></g>
-<g class="edge"><path d="M492 268 C602 268 602 142 705 142" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="704,137.5 712,142 704,146.5" fill="#8c959f"/></g>
-<g class="edge"><path d="M492 268 C602 268 602 170 705 170" fill="none" stroke="#2f6fdd" stroke-width="1.6"/><polygon points="704,165.5 712,170 704,174.5" fill="#2f6fdd"/></g>
+<g class="edge"><path d="M492 268 C602 268 602 142 705 142" fill="none" stroke="#2f6fdd" stroke-width="1.6"/><polygon points="704,137.5 712,142 704,146.5" fill="#2f6fdd"/></g>
+<g class="edge"><path d="M492 268 C602 268 602 170 705 170" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="704,165.5 712,170 704,174.5" fill="#8c959f"/></g>
 <g class="edge"><path d="M492 268 C602 268 602 198 705 198" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="704,193.5 712,198 704,202.5" fill="#8c959f"/></g>
 <g class="edge"><path d="M492 268 C602 268 602 226 705 226" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="704,221.5 712,226 704,230.5" fill="#8c959f"/></g>
-<g class="edge"><path d="M492 268 C602 268 602 254 705 254" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="704,249.5 712,254 704,258.5" fill="#8c959f"/></g>
-<g class="edge"><path d="M492 268 C602 268 602 282 705 282" fill="none" stroke="#2f6fdd" stroke-width="1.6"/><polygon points="704,277.5 712,282 704,286.5" fill="#2f6fdd"/></g>
+<g class="edge"><path d="M492 268 C602 268 602 254 705 254" fill="none" stroke="#2f6fdd" stroke-width="1.6"/><polygon points="704,249.5 712,254 704,258.5" fill="#2f6fdd"/></g>
+<g class="edge"><path d="M492 268 C602 268 602 282 705 282" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="704,277.5 712,282 704,286.5" fill="#8c959f"/></g>
 <g class="edge"><path d="M492 268 C602 268 602 310 705 310" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="704,305.5 712,310 704,314.5" fill="#8c959f"/></g>
 <g class="edge"><path d="M492 268 C602 268 602 338 705 338" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="704,333.5 712,338 704,342.5" fill="#8c959f"/></g>
 <g class="edge"><path d="M492 268 C602 268 602 366 705 366" fill="none" stroke="#8c959f" stroke-width="1.1"/><polygon points="704,361.5 712,366 704,370.5" fill="#8c959f"/></g>
@@ -32,55 +32,55 @@
 </g>
 <g class="candidate">
 <rect x="712" y="102" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
-<text class="name" x="722" y="118.5" font-size="13" fill="#1f2328">sock_no_sendmsg</text>
-</g>
-<g class="candidate">
-<rect x="712" y="130" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
-<text class="name" x="722" y="146.5" font-size="13" fill="#1f2328">netlink_sendmsg</text>
+<text class="name" x="722" y="118.5" font-size="13" fill="#1f2328">netlink_sendmsg</text>
 </g>
 <g class="candidate also-caller">
-<rect x="712" y="158" width="222" height="24" rx="4" fill="#e6efff" stroke="#2f6fdd"/>
-<text class="name" x="722" y="174.5" font-size="13" fill="#0b4fc4" font-weight="bold">inet_sendmsg</text>
+<rect x="712" y="130" width="222" height="24" rx="4" fill="#e6efff" stroke="#2f6fdd"/>
+<text class="name" x="722" y="146.5" font-size="13" fill="#0b4fc4" font-weight="bold">inet_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="712" y="158" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="722" y="174.5" font-size="13" fill="#1f2328">unix_stream_sendmsg</text>
 </g>
 <g class="candidate">
 <rect x="712" y="186" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
-<text class="name" x="722" y="202.5" font-size="13" fill="#1f2328">unix_stream_sendmsg</text>
+<text class="name" x="722" y="202.5" font-size="13" fill="#1f2328">unix_dgram_sendmsg</text>
 </g>
 <g class="candidate">
 <rect x="712" y="214" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
-<text class="name" x="722" y="230.5" font-size="13" fill="#1f2328">unix_dgram_sendmsg</text>
-</g>
-<g class="candidate">
-<rect x="712" y="242" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
-<text class="name" x="722" y="258.5" font-size="13" fill="#1f2328">unix_seqpacket_sendmsg</text>
+<text class="name" x="722" y="230.5" font-size="13" fill="#1f2328">unix_seqpacket_sendmsg</text>
 </g>
 <g class="candidate also-caller">
-<rect x="712" y="270" width="222" height="24" rx="4" fill="#e6efff" stroke="#2f6fdd"/>
-<text class="name" x="722" y="286.5" font-size="13" fill="#0b4fc4" font-weight="bold">inet6_sendmsg</text>
+<rect x="712" y="242" width="222" height="24" rx="4" fill="#e6efff" stroke="#2f6fdd"/>
+<text class="name" x="722" y="258.5" font-size="13" fill="#0b4fc4" font-weight="bold">inet6_sendmsg</text>
+</g>
+<g class="candidate">
+<rect x="712" y="270" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
+<text class="name" x="722" y="286.5" font-size="13" fill="#1f2328">packet_sendmsg</text>
 </g>
 <g class="candidate">
 <rect x="712" y="298" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
-<text class="name" x="722" y="314.5" font-size="13" fill="#1f2328">packet_sendmsg</text>
+<text class="name" x="722" y="314.5" font-size="13" fill="#1f2328">packet_sendmsg_spkt</text>
 </g>
 <g class="candidate">
 <rect x="712" y="326" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
-<text class="name" x="722" y="342.5" font-size="13" fill="#1f2328">packet_sendmsg_spkt</text>
+<text class="name" x="722" y="342.5" font-size="13" fill="#1f2328">pfkey_sendmsg</text>
 </g>
 <g class="candidate">
 <rect x="712" y="354" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
-<text class="name" x="722" y="370.5" font-size="13" fill="#1f2328">pfkey_sendmsg</text>
+<text class="name" x="722" y="370.5" font-size="13" fill="#1f2328">vsock_dgram_sendmsg</text>
 </g>
 <g class="candidate">
 <rect x="712" y="382" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
-<text class="name" x="722" y="398.5" font-size="13" fill="#1f2328">vsock_dgram_sendmsg</text>
+<text class="name" x="722" y="398.5" font-size="13" fill="#1f2328">vsock_connectible_sendmsg</text>
 </g>
 <g class="candidate">
 <rect x="712" y="410" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
-<text class="name" x="722" y="426.5" font-size="13" fill="#1f2328">vsock_connectible_sendmsg</text>
+<text class="name" x="722" y="426.5" font-size="13" fill="#1f2328">xsk_sendmsg</text>
 </g>
 <g class="candidate">
 <rect x="712" y="438" width="222" height="24" rx="4" fill="#ffffff" stroke="#8c959f"/>
-<text class="name" x="722" y="454.5" font-size="13" fill="#1f2328">xsk_sendmsg</text>
+<text class="name" x="722" y="454.5" font-size="13" fill="#1f2328">sock_no_sendmsg</text>
 </g>
 </g>
 <g id="callers">
