@@ -89,35 +89,45 @@ The other 622 candidates: 244 sit at weak (`W`) symbols in the map, mostly sysca
 
 ## Loadable modules (.ko)
 
-Real modules: three GKI `system_dlkm` modules from the public prebuilts repository [kernel/prebuilts/6.1/arm64](https://android.googlesource.com/kernel/prebuilts/6.1/arm64) at commit `ad5f1ad22dd4` (head of `android14-qpr3-release`; kernel build 11484633, `6.1.68-android14-11-ga7f647f49daf-ab11484633`, the vermagic of all three). This is a later build of the same android14-6.1 branch than the 2024-01 kernel above. Each file is `https://android.googlesource.com/kernel/prebuilts/6.1/arm64/+/ad5f1ad22dd47c7b244ec697c5e61f90783a06c2/<name>?format=TEXT` (base64 of the file):
+Real modules: three GKI `system_dlkm` modules from the public prebuilts repository [kernel/prebuilts/6.1/arm64](https://android.googlesource.com/kernel/prebuilts/6.1/arm64) at commit `ad5f1ad22dd4` (head of `android14-qpr3-release`; kernel build 11484633, `6.1.68-android14-11-ga7f647f49daf-ab11484633`, the vermagic of all three), with the kernel of the same build from the same commit (`kernel-6.1`, a raw `Image`; symbols restored with vmlinux-to-elf as `kernel-6.1.elf`). This is a later build of the same android14-6.1 branch than the 2024-01 kernel above. Each file is `https://android.googlesource.com/kernel/prebuilts/6.1/arm64/+/ad5f1ad22dd47c7b244ec697c5e61f90783a06c2/<name>?format=TEXT` (base64 of the file):
 
-| Module | sha256 |
+| File | sha256 |
 |---|---|
 | `zram.ko` (62,073 bytes) | `e87f95a05a5f3517c9179dcc27d9402e3f3c824032fbca4a690f818b4f2c488c` |
 | `8021q.ko` (127,785 bytes) | `57acf7dff06168d04bcd616eb314e199e8ddb8125150fe540eccd021299a57c4` |
 | `bluetooth.ko` (1,405,257 bytes) | `d9beb2a2c000bebfb7cdec2a1374364f5339d5541e4bee182314d62299f3b0e9` |
+| `kernel-6.1` (34,699,776 bytes) | `8bba13cac33e7c2cf8dcd3b2b2d3bff350c975a4b754b59c6b57289ebee8c08a` |
 
-`python3 -m cfiscope <module>.ko` (and `--sites`, `--json --sites`) with v0.1.20 plus the unreleased changes up to this section, before any module-specific change:
+```
+python3 -m cfiscope bluetooth.ko                      # summary
+python3 -m cfiscope bluetooth.ko --sites              # every call site, candidates in the module
+python3 -m cfiscope bluetooth.ko --sites --btf kernel-6.1 --with kernel-6.1.elf   # + C types, + the kernel's functions
+python3 -m cfiscope bluetooth.ko --callers ecdh_compute_value --with kernel-6.1.elf
+```
 
 | Measure | `zram.ko` | `8021q.ko` | `bluetooth.ko` |
 |---|---|---|---|
-| Loads (ET_REL, executable sections laid out from 0x100000) | yes | yes | yes |
+| Loads (ET_REL; executable sections laid out from 0x100000, names from `.symtab`) | yes | yes | yes |
 | Named functions (`STT_FUNC` in `.symtab`) | 41 | 56 | 1,255 |
 | kCFI call sites (distinct hashes) | 0 (0) | 6 (5) | 253 (48) |
-| `blr` in the module's code (counted separately, all sections) | 0 | 6 | 253 |
-| Sites with an in-module candidate / with none | 0 / 0 | 5 / 1 | 234 / 19 |
-| Sites with exactly one candidate | 0 | 3 | 16 |
-| Median / largest list (sites with candidates) | - | 1 / 2 | 12 / 95 |
-| Hashes named by C type with `--btf kernel-6.1` (the module's own kernel, raw `Image`) | - | 5 of 5 | 7 of 48 |
+| `blr` in the module's code (counted separately) | 0 | 6 | 253 |
+| Sites with a candidate in the module / with none | - | 5 / 1 | 234 / 19 |
+| Sites with exactly one candidate in the module | - | 3 | 16 |
+| Median / largest list in the module (sites with candidates) | - | 1 / 2 | 12 / 95 |
+| `--with kernel-6.1.elf` (unreleased): sites with candidates in the kernel | - | 4 | 23 |
+| `--with`: sites with none in the module but some in the kernel / in neither | - | 0 / 1 | 6 / 13 |
+| Hashes named by C type, `--btf kernel-6.1` (the module's split BTF on the kernel's, unreleased) | - | 5 of 5 | 48 of 48 (7 of 48 from the kernel's BTF alone) |
 
-Every `blr` in the two modules that have any is a kCFI-checked call, and the scan finds each one (the remaining `br` are switch jump tables, not checked by kCFI). What the in-module lists mean: a module calls mostly through operation tables filled by the kernel or by other modules, and the scan only sees the module's own functions, so a list holds the module's functions of that type, not the kernel's. In `8021q.ko`, 5 of the 6 lists include the calling function itself (`vlan_dev_ioctl+0xd8` calls `ndo_eth_ioctl` of the device under the VLAN, whose only in-module candidate is `vlan_dev_ioctl`: right for a VLAN stacked on a VLAN, but a real Ethernet driver's ioctl lives elsewhere). A site with no in-module candidate calls a function that lives in vmlinux or in another module: in `bluetooth.ko`, 6 sites (in `hci_conn_add`, `hci_conn_cleanup` and four event handlers) share hash `0x4306bc2d`, which no function in the module has, and `compute_ecdh_secret+0x160` calls through `int (struct kpp_request *)`, a kernel crypto operation.
+Every `blr` in the two modules that have any is a kCFI-checked call, and the scan finds each one (their `br` are switch jump tables, which kCFI does not check). No relocation touches a check or a type hash: of the 382, 467 and 10,583 relocations in the three modules' code, none falls inside a check sequence or on a candidate's hash word (the 1, 1 and 49 that fall on the word before a function symbol are `R_AARCH64_CALL26` on the `bl` ending the function before, which has no hash), so the scan reads them from the file as they are. Each module scans in under 0.1 s; with `--with` about 0.6 s and 100 MB, with `--btf` 1.7 to 3.6 s and about 170 MB (whole command, wall clock).
 
-Problems found on these modules (before the fixes listed in the [changelog](../CHANGELOG.md)):
-- `zram.ko` was reported as "probably built without Clang kCFI ... for example by GCC", which is wrong: it is the same Clang kCFI build, it just makes no indirect call (0 `blr`/`br` in its code).
-- A module's BTF is split BTF (it continues vmlinux's), so the scan said "the input's BTF is unreadable" and `--btf <kernel>` alone names only the hashes of types that the kernel's BTF has (7 of 48 in `bluetooth.ko`).
-- Calls whose callee lives in vmlinux show 0 or misleadingly few candidates, since the kernel's functions are not in the file.
+What the lists mean on a module: a module calls mostly through operation tables that the kernel or other modules fill, so its own functions are only part of the answer. In `8021q.ko`, 5 of the 6 lists include the calling function itself: `vlan_dev_hard_header+0x120` calls the `header_ops->create` of the device under the VLAN, and the module's candidates are `vlan_passthru_hard_header` and `vlan_dev_hard_header` (right for a VLAN on a VLAN); `--with` adds the kernel's `eth_header`, `ipgre_header` and `ip6gre_header`. In `bluetooth.ko`, `compute_ecdh_secret+0x160` (type `int (struct kpp_request *)`) has no candidate in the module and one in the kernel, `ecdh_compute_value`. Of the 13 sites with no candidate in either, 6 share hash `0x4306bc2d`, `void (struct hci_dev *, unsigned int)`, whose BTF example is `hci_dev.notify`, a callback that HCI drivers such as `btusb` set; they are separate modules and were not scanned. The kernel candidates are the same with the 2024-01 `gki.elf` of the walkthrough (another build of the same branch): all 2,507 kernel entries of the 253 `bluetooth.ko` sites, and the same counts for both modules. The module's split BTF is refused on the 2024-01 `Image` (another build: its names land inside the other kernel's strings), with a warning, and the hashes are then named from that kernel's BTF alone.
 
-Each module scans in under 0.1 s (wall clock, whole command).
+Problems found on these modules, fixed (unreleased; each with a test that failed first):
+- `zram.ko` (0 `blr`) was reported as "probably built without Clang kCFI ... for example by GCC". Now: "the code makes no indirect call (no blr instruction) ... this does not tell whether it was built with kCFI". The Scan warning and the headless runner say the same (fake IDA modules only).
+- A module's BTF is split BTF (it continues its kernel's), so the scan said "the input's BTF is unreadable", and `--btf <kernel>` named only the types in the kernel's BTF (7 of 48 in `bluetooth.ko`). Now the module's BTF is read on top of `--btf` (48 of 48), and without `--btf` the scan says to add it.
+- A call whose callee is in the kernel had no way to show it. Now `--with VMLINUX` (command line only) lists the kernel's functions of each call's type next to the module's.
+
+The IDA layer on a module: `tools/showcase_ida_stub.py` runs it on the real `bluetooth.ko` and `8021q.ko` through the fake `ida_*` modules of the tests: 253 sites, 253 comments and 1,176 cross-references for `bluetooth.ko`, 6 / 6 / 7 for `8021q.ko`, all to the module's own functions; a call with none says "no implementation in this image". It has not run in real IDA. Inside IDA there is no `--with`, and a module's split BTF is not read (no types shown).
 
 ## Known-answer objects and the test suite
 
