@@ -333,7 +333,8 @@ class FunctionHash(unittest.TestCase):
 @unittest.skipUnless(os.path.isfile(GKI), "set CFISCOPE_GKI_ELF to the gki.elf of the README walkthrough")
 class GKIKnownAnswers(unittest.TestCase):
     """The judge's numbers on GKI 6.1 (s193): 136 functions of long (struct file *, unsigned int, unsigned long), 134 of
-    them named *_ioctl, plus memfd_fcntl and pipe_fcntl; proto_ops.sendmsg: the 14 candidates of sock_sendmsg+0xb4."""
+    them ioctl handlers (118 named *_ioctl, 16 such as snd_pcm_ioctl_compat), plus memfd_fcntl and pipe_fcntl;
+    proto_ops.sendmsg: the 14 candidates of sock_sendmsg+0xb4."""
 
     SENDMSG = ["tun_sendmsg", "sock_no_sendmsg", "netlink_sendmsg", "inet_sendmsg", "unix_stream_sendmsg",
                "unix_dgram_sendmsg", "unix_seqpacket_sendmsg", "inet6_sendmsg", "packet_sendmsg", "packet_sendmsg_spkt",

@@ -68,7 +68,7 @@ $ python3 -m cfiscope gki.elf --implements file_operations.unlocked_ioctl --max-
     ... 132 more
 ```
 
-Every function with that member's type hash in front of it: 134 ioctl handlers (118 of the 272 functions named `*_ioctl`, the rest of those have other types, plus names such as `snd_pcm_ioctl_compat`) and `memfd_fcntl` and `pipe_fcntl`, of the same type. A C type, a hash or a function's name works too, and in a module, where such handlers have no call site, this is the only list that shows them ([Try it](#try-it)).
+Every function with that member's type hash in front of it: 134 ioctl handlers (118 of the 261 functions named `*_ioctl`, plus 16 such as `snd_pcm_ioctl_compat` and `video_ioctl2`; of the other 143 `*_ioctl`, 124 have another type and 19 no kCFI hash in front of them) and `memfd_fcntl` and `pipe_fcntl`, of the same type. A C type, a hash or a function's name works too, and in a module, where such handlers have no call site, this is the only list that shows them ([Try it](#try-it)).
 
 The type after each hash comes from the kernel's own BTF (new in 0.1.22, see [Features](#features)). The struct member before `hash` (unreleased, aarch64) is the one BTF member of the call's type at the byte offset the call loads its pointer from: a match, not proof (see [Limitations](#limitations)). Here it is right: `sock->ops->sendmsg` is a load from byte 136 of `struct proto_ops`. The slot groups and tags (unreleased) come from a scan of the image's static data for the candidates' addresses (see [Features](#features)). This is the output of the code on `gki.elf`, re-run 2026-11-14 (review s197), byte for byte.
 
