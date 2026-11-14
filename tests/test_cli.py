@@ -457,6 +457,13 @@ class WithKernel(unittest.TestCase):
             self.assertIn("x86_64", err)
             rc, _, err = run(module, "--with", os.path.join(tmp, "missing.elf"))
             self.assertEqual(rc, 2)
+            raw = os.path.join(tmp, "Image")
+            with open(raw, "wb") as fh:
+                fh.write(b"\0" * 4096)
+            rc, _, err = run(module, "--with", raw)
+            self.assertEqual(rc, 2)
+            self.assertIn("give the kernel as an ELF with symbols", err)
+            self.assertNotIn("--raw", err)
 
     def test_ignored_for_jump_table_cfi(self):
         rc, out, err = run(os.path.join(FIX, "aarch64-jtcfi.elf"), "--with", os.path.join(FIX, "aarch64-plain.o"))

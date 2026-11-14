@@ -173,6 +173,9 @@ class Kernel:
         with open(path, "rb") as fh:
             data = fh.read()
         bounds = {}
+        if data[:4] != b"\x7fELF":
+            raise InputError("--with %s: not an ELF file; give the kernel as an ELF with symbols (a vmlinux, or the "
+                             "output of vmlinux-to-elf)" % path)
         try:
             karch, kranges, symbols = load_elf(data, None, bounds)
         except (InputError, struct.error) as e:
@@ -308,13 +311,18 @@ def _print_jt_summary(st):
           % (st["median_candidates_resolved"], st["median_candidates"], st["max_candidates"]))
 
 
+def _relocatable(a, data):
+    """Is the input a relocatable ELF (.o, .ko), the only kind that carries split BTF?"""
+    return not a.raw and data[:4] == b"\x7fELF" and len(data) >= 18 and struct.unpack_from("<H", data, 16)[0] == 1
+
+
 def _type_names(a, data):
     """kcfi_types.TypeNames from --btf, else from the input's own BTF; None if there is none.  A module's own split
     BTF is read on top of --btf (its kernel's BTF), which it continues."""
     if a.btf:
         with open(a.btf, "rb") as fh:
             btf_data = fh.read()
-        if not a.raw and not a.no_btf:
+        if _relocatable(a, data) and not a.no_btf:
             try:
                 names = kcfi_types.load_split_type_names(data, btf_data)
             except (kcfi_types.BTFError, struct.error) as e:
@@ -332,7 +340,7 @@ def _type_names(a, data):
         return names
     if a.no_btf:
         return None
-    if not a.raw and kcfi_types.has_split_btf(data):
+    if _relocatable(a, data) and kcfi_types.has_split_btf(data):
         print("cfiscope: this module's BTF is split BTF (it continues its kernel's BTF): add --btf with its kernel "
               "(a vmlinux or raw Image of the same build) to name kCFI hashes by C type", file=sys.stderr)
         return None
