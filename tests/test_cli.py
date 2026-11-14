@@ -310,6 +310,44 @@ class UnreadableBTFNoSites(unittest.TestCase):
             self.assertIn("BTF is unreadable", err)
 
 
+class NoIndirectCall(unittest.TestCase):
+    """ko189: a kCFI module that makes no indirect call (GKI zram.ko: 0 blr) was reported as "probably built without
+    Clang kCFI ... for example by GCC". kcfi_quirks_a64.o is such an object: Clang -fsanitize=kcfi, type hashes in
+    front of its functions, no blr."""
+
+    def test_no_blr_is_not_called_gcc(self):
+        path = os.path.join(FIX, "kcfi_quirks_a64.o")
+        rc, out, _ = run(path)
+        self.assertEqual(rc, 0)
+        self.assertIn("call sites 0", out)
+        self.assertNotIn("GCC", out)
+        self.assertIn("no indirect call (no blr instruction)", out)
+        rc, out, _ = run(path, "--json")
+        self.assertEqual(json.loads(out)["stats"]["blr_instructions"], 0)
+
+    def test_blr_without_checks_keeps_the_gcc_hint(self):
+        # The same object with one of its words made a blr: no kCFI check guards it, so the old message stays.
+        with open(os.path.join(FIX, "kcfi_quirks_a64.o"), "rb") as fh:
+            d = bytearray(fh.read())
+        arch, ranges, _ = cli.load_elf(bytes(d))
+        sec = next(s for s in cli._sections(bytes(d)) if s[2] & 4 and s[5])
+        struct.pack_into("<I", d, sec[4] + sec[5] - 4, 0xd63f0100)      # blr x8 as the last word of .text
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "blr.o")
+            with open(path, "wb") as fh:
+                fh.write(d)
+            rc, out, _ = run(path)
+            self.assertEqual(rc, 0)
+            self.assertIn("probably built without Clang kCFI", out)
+            self.assertNotIn("no indirect call", out)
+            rc, out, _ = run(path, "--json")
+            self.assertEqual(json.loads(out)["stats"]["blr_instructions"], 1)
+
+    def test_key_only_without_sites(self):
+        rc, out, _ = run(os.path.join(FIX, "aarch64-plain.o"), "--json")
+        self.assertNotIn("blr_instructions", json.loads(out)["stats"])
+
+
 class QuickTryFixtureBTF(unittest.TestCase):
     """s176: the Quick-try fixtures carry the BTF of t.c (tools/add_btf_section.py), so the first try names types."""
 

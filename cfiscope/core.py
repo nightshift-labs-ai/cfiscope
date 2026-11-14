@@ -268,6 +268,9 @@ def _resolve_kcfi(ranges, arch, text=None):
     }
     if text is not None:
         stats["outside_text"] = len(outside)   # distinct candidates left out: not in kernel code
+    if not n and arch == "aarch64":
+        # No check: say whether the code makes an indirect call at all (a kCFI module may make none, GKI zram.ko)
+        stats["blr_instructions"] = sum(count_blr(mem) for _base, mem in ranges)
     return sites, stats
 
 
@@ -1190,6 +1193,14 @@ def type_label(site):
 # ---- callers of a function ----
 
 RUNTIME_CHECK_FUNCTION = "__cfi_check"   # jump-table CFI: the runtime's check function (kernel and each module)
+
+
+_BLR = re.compile(rb"[\x00\x20\x40\x60\x80\xa0\xc0\xe0][\x00-\x03]\x3f\xd6")   # blr xN
+
+
+def count_blr(mem):
+    """Number of blr instructions (4-byte aligned) in this aarch64 code: its indirect calls."""
+    return sum(1 for _m in _aligned(_BLR, bytes(mem)))
 
 
 def has_indirect_call(mem):

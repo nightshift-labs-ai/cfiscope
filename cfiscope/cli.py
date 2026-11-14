@@ -385,6 +385,10 @@ def main(argv=None):
                   "(it contains .cfi_jt / __cfi_check), but CFIScope found no aarch64 jump table of 8-byte "
                   "`bti c; b` entries with checks that use it; it reads that form (as in Android 13 GKI 5.15), "
                   "not x86-64 or jump tables without BTI")
+        elif not st["sites"] and st.get("blr_instructions") == 0:
+            print("no kCFI checks found, and the code makes no indirect call (no blr instruction): kCFI has nothing "
+                  "to check here, so this does not tell whether it was built with kCFI (a loadable module may "
+                  "simply make no indirect call)" + (", or --arch/--base is wrong" if a.raw else ""))
         elif not st["sites"]:
             print("no kCFI checks found: this kernel was probably built without Clang kCFI "
                   "(CONFIG_CFI_CLANG on Linux 6.1 or later), for example by GCC; no aarch64 jump-table CFI "
