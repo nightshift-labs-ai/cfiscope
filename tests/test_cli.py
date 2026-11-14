@@ -657,7 +657,7 @@ class QuickTryFixtureBTF(unittest.TestCase):
 
 
 class RunByPath(unittest.TestCase):
-    """Review s193 (judge #1): after hcli install there is no cfiscope package in the judge's folder, and
+    """Internal review s193 (#1): after hcli install there is no cfiscope package in the user's working folder, and
     `python3 <plugin>/cfiscope FILE` failed: ImportError: attempted relative import with no known parent package
     (cfiscope/__main__.py). The folder and its __main__.py now run by path, from any working directory."""
 

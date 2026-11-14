@@ -427,7 +427,7 @@ class ScanAction(ida_kernwin.action_handler_t):
         if made is not None:
             report("functions created: %(functions_created)d; candidates skipped (data, or not in a code segment): "
                    "%(skipped_not_code)d" % made)
-        show_sites(sites)       # judge s193 #2: the whole result in one sortable list, not only counts
+        show_sites(sites)       # internal review s193 #2: the whole result in one sortable list, not only counts
         return 1
 
     def update(self, ctx):

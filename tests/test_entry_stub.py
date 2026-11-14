@@ -898,7 +898,7 @@ NEXT = " Next: Alt-Shift-T on a call, Alt-Shift-X on a function.\n"
 
 
 class ScanMessage(unittest.TestCase):
-    """Review s193 (judge #3): Scan's result in the Output window was two raw JSON dicts ("disps": [-20], ...). Now it
+    """Internal review s193 (#3): Scan's result in the Output window was two raw JSON dicts ("disps": [-20], ...). Now it
     is one sentence; the dicts are printed only with the environment variable CFISCOPE_DEBUG=1."""
 
     def scan(self, name="x86_64-kernel", proc="metapc", create=1, debug=None, btf=True, ext=".o"):

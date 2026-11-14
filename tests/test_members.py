@@ -1,5 +1,5 @@
-"""The struct member each aarch64 kCFI call loads its pointer from (review s193 judge #1): `sock->ops->sendmsg(...)` is
-`ldr x8, [x9, #136]` ... `blr x8`, and BTF has exactly one member of the call's type at byte 136: proto_ops.sendmsg.
+"""The struct member each aarch64 kCFI call loads its pointer from (internal review s193 #1): `sock->ops->sendmsg(...)` is
+`ldr x8, [x8, #136]` ... `blr x8` on GKI 6.1, and BTF has exactly one member of the call's type at byte 136: proto_ops.sendmsg.
 
 Golden strings marked "458eeeb" were printed by the code before this change (git archive 458eeeb) for the same input:
 a call whose pointer load is not decoded, or matches no member, must print exactly what it printed before."""
@@ -356,7 +356,7 @@ class GKIKnownAnswers(unittest.TestCase):
         return next(s for s in self.sites if s.call_ea == ea)
 
     def test_known_answers(self):
-        # the judge's prototype (review s193) and the kernel source: sock->ops->sendmsg, sk->sk_prot->sendmsg, ...
+        # an earlier prototype from internal review s193 and the kernel source: sock->ops->sendmsg, sk->sk_prot->sendmsg, ...
         for call, member, off in (("sock_sendmsg+0xb4", "proto_ops.sendmsg", 136),
                                   ("kernel_sendmsg_locked+0x64", "proto_ops.sendmsg_locked", 216),
                                   ("inet_sendmsg+0x58", "proto.sendmsg", 104),

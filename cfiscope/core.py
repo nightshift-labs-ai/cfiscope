@@ -1030,7 +1030,7 @@ def _check_site(jt, chk, call_ea, tail):
 
 
 # ---- the struct member a kCFI call loads its pointer from (aarch64) ----
-# `sock->ops->sendmsg(...)` compiles to `ldr x8, [x9, #136]` (the member at byte 136 of struct proto_ops), then the kCFI
+# `sock->ops->sendmsg(...)` compiles to `ldr x8, [x8, #136]` (the member at byte 136 of struct proto_ops), then the kCFI
 # check `ldur w16, [x8, #-4]` ... `blr x8`. The offset of that load, with the call's type hash, names the member in BTF
 # (kcfi_types.TypeNames.members). Straight-line code only: the walk back from the check gives up at anything it cannot
 # follow.
