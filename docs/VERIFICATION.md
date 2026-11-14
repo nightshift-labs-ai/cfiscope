@@ -39,6 +39,19 @@ Callers of this function (Alt-Shift-X) on tcp_sendmsg: 3 row(s)
 Pseudocode line of the call (with Hex-Rays):  // CFIScope: 14 candidates of int (struct socket *, struct msghdr *, unsigned long): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg and 9 more
 ```
 
+### The call-site list
+
+Scan ends by opening a list of every call site (also **CFIScope: List kCFI call sites**; unreleased). Add `--list` to the command above for its row count, the time its rows took to build and the row of the call next to the command line's `--sites` line for it (re-run 2026-11-14; spacing of the last line condensed):
+
+```
+Call-site list (opens after Scan; CFIScope: List kCFI call sites): window 'CFIScope: 13,897 kCFI call sites', 13897 rows, built in 0.13 s
+  columns: Address | Function+off | Type | Candidates | First candidates
+  row 11703:  0xffffffc008cc55ac | sock_sendmsg+0xb4 | int (struct socket *, struct msghdr *, unsigned long) | 14 | tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, +8 more
+  command line --sites:  0xffffffc008cc55ac  sock_sendmsg+0xb4  call hash 0x1ebda935 (int (struct socket *, struct msghdr *, unsigned long))  14 candidate(s): tun_sendmsg, sock_no_sendmsg, netlink_sendmsg, inet_sendmsg, unix_stream_sendmsg, unix_dgram_sendmsg, unix_seqpacket_sendmsg, inet6_sendmsg ...
+```
+
+All 13,897 rows were also compared with `python3 -m cfiscope gki.elf --sites --json --max-list 6` (address, function and offset, type, count, first six names): 0 differ. `tests/test_showcase.py` does the same for the 21 rows of each Quick-try fixture. The rows are built at once, so that IDA can sort and filter them: 0.12 to 0.15 s over three runs (load average about 2 on 4 cores), since each candidate's "address taken" test is asked once per list (30,561 distinct candidates in 403,385 list entries). In real IDA those tests and the names are IDA API calls; that time was not measured. As in the comments, the fake database marks no candidate "address taken", so the first names here are in address order; in IDA, address-taken candidates come first in both.
+
 ## kCFI on real kernels
 
 Real kernel: `gki-certified-boot-android14-6.1-2024-01_r1` (public Google download), aarch64, stripped. Reproduce with `python3 tools/eval_gki.py Image gki.elf` (`Image` and `gki.elf` as in the [walkthrough](../README.md#try-it)). The script scans `Image` with the kernel-code bounds that `gki.elf` names (`_etext`, `_sinittext` and the code areas between them, as described in [HOW_IT_WORKS.md](HOW_IT_WORKS.md)), so it leaves out what the command line leaves out on `gki.elf` and the plugin with those names, and it also prints the numbers for `Image` alone.
@@ -133,6 +146,6 @@ The IDA layer on a module: `tools/showcase_ida_stub.py` runs it on the real `blu
 
 Known-answer objects: `tests/test_core.py` scores the scanner on objects built with clang kCFI for x86-64 and aarch64, with and without frame pointers and patchable function entries, against the table of signatures and implementations that `tools/gen_fixtures.py` wrote into the source; function offsets come from the compiled objects. `tests/test_cli.py` checks that `python3 -m cfiscope` lists, by symbol name, exactly the known candidate sets for the same objects, and that bad input gives a clear error.
 
-Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer and `tests/test_entry_stub.py` the plugin wiring (menus, right-click hooks, rescan after a rebase, pseudocode comments and the pseudocode-line lookups on a fake decompiler, restoring the scan after the database is reopened on a fake netnode) against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 109 IDA API names used, including the decompiler methods the pseudocode hook and lookups call, `func_t.tailqty`, the `netnode` methods of the scan marker and the `UI_Hooks` events that hook a decompiler loaded later, exist in the official stubs; `python3 tests/check_ida_names.py <stub dir>...` checks that the 73 `ida_*` / `idc` names alone also exist in older stubs (0 missing in those of IDA 9.1, 9.2, 9.3 and 9.4: PyPI `idapro` 0.0.5, 0.0.7, 0.0.9, 0.0.11). None of these is a test in real IDA.
+Run all of these with `python3 -m unittest discover -s tests` (no IDA needed). `tests/test_plugin_stub.py` runs the IDA layer and `tests/test_entry_stub.py` the plugin wiring (menus, right-click hooks, the call-site list, rescan after a rebase, pseudocode comments and the pseudocode-line lookups on a fake decompiler, restoring the scan after the database is reopened on a fake netnode) against fake `ida_*` modules, and `python3 tests/check_ida_api.py <dir with ida_*.pyi>` (the stubs ship in the `idapro` pip package) confirms all 113 IDA API names used, including the decompiler methods the pseudocode hook and lookups call, `func_t.tailqty`, the `netnode` methods of the scan marker, the `UI_Hooks` events that hook a decompiler loaded later and, for the call-site list, `Choose.CHCOL_DEC`, `Choose.OnSelectLine` and `close_chooser`, exist in the official stubs; `python3 tests/check_ida_names.py <stub dir>...` checks that the 74 `ida_*` / `idc` names alone also exist in older stubs (0 missing in those of IDA 9.1, 9.2, 9.3 and 9.4: PyPI `idapro` 0.0.5, 0.0.7, 0.0.9, 0.0.11). None of these is a test in real IDA.
 
 Not verified: behaviour inside real IDA.
