@@ -249,12 +249,15 @@ class Matching(unittest.TestCase):
         self.assertEqual((s.slot_backed, s.slot_stride), ({0x10, 0x20}, {0x10, 0x20}))
         self.assertEqual((st["slot_calls"], st["slot_calls_stride_only"]), (1, 1))
 
-    def test_eight_byte_struct_is_no_evidence(self):
-        # struct { fn_t fn; } (8 bytes): every 8-aligned slot is at offset 0 modulo 8, so only equality counts for it
+    def test_small_structs_are_no_evidence(self):
+        # struct { fn_t fn; } (8 bytes): every 8-aligned slot is at offset 0 modulo 8; a 16-byte one: every other slot,
+        # and an ops table with many members of one type passes for an array of it (review s197: on GKI 6.1, 0 of 10
+        # sampled 16-byte stride matches were in an array of the struct). Only a larger stride counts, or equality.
         class Names:
-            member_sizes = {(0x1234, 0): [8, 16]}
-        s = self.site([0x10, 0x20, 0x30, 0x40], off=0)
-        K.rank_slots([s], {0x10: {(self.A, 0)}, 0x20: {(self.A, 8)}, 0x30: {(self.B, 32)}, 0x40: {(self.B, 0)}}, Names())
+            member_sizes = {(0x1234, 0): [8, 16, 32]}
+        s = self.site([0x10, 0x20, 0x30, 0x40, 0x50], off=0)
+        K.rank_slots([s], {0x10: {(self.A, 0)}, 0x20: {(self.A, 16)}, 0x50: {(self.A, 8)}, 0x30: {(self.B, 32)},
+                           0x40: {(self.B, 0)}}, Names())
         self.assertEqual((s.slot_backed, s.slot_stride), ({0x10, 0x30, 0x40}, {0x30}))
 
     def test_every_candidate_slot_backed(self):

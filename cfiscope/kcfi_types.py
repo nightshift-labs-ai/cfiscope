@@ -772,7 +772,9 @@ def rank_slots(sites, offsets, names):
     (slot_stride, listed after those), those stored at that offset modulo the size of a struct that has the member there
     in an object that holds another candidate of the call at such an offset (an array of such structs has several
     elements; one word proves nothing, as kallsyms gives no object size, so a word is charged to whatever object lies
-    below it; a struct of 8 bytes is not used, as every 8-aligned slot would match it). offsets: {function address:
+    below it; a struct of 16 bytes or less is not used: every 8-aligned slot, or every other one, would match it, and
+    an ops table with many members of one type, such as a dev_pm_ops, would pass for an array of them). offsets:
+    {function address:
     {(object address, offset in it)}} (core.object_offsets()); names: the TypeNames that named the members
     (member_sizes). The candidate lists are not changed: core.slot_first() puts these first. A slot is evidence, not
     proof: a function stored there may be called through another table, and a pointer set at run time or in a module's
@@ -791,7 +793,7 @@ def rank_slots(sites, offsets, names):
         off = s.member_offset
         if not s.members or off is None:
             continue
-        sizes = [z for z in sizes_of.get((s.hash, off), ()) if z > max(off, 8)]
+        sizes = [z for z in sizes_of.get((s.hash, off), ()) if z > max(off, 16)]
         exact, held = set(), defaultdict(set)       # held: object -> {(offset, candidate)} of this call's candidates
         for t in s.targets:
             for obj, o in offsets.get(t, ()):

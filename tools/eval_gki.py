@@ -13,8 +13,9 @@ gives the Image alone, as with --raw).
 --base: where the kernel image starts (default 0xffffffc008000000, the 6.1 GKI; 6.6 and later GKI
 kernels start at 0xffffffc080000000). With a wrong base the precision line drops to about 0%.
 With vmlinux.elf, the last lines rank by static slots (kcfi_types.rank_slots(), unreleased): the Image's BTF names
-each call's struct member, vmlinux.elf's words and OBJECT symbols say which candidates are stored in a slot of it;
-the counts and the time of each step.
+each call's struct member, vmlinux.elf's words and OBJECT symbols say which candidates are stored in a slot of it (at
+its offset, or by array stride); the counts, the counts under the rule before review s197 (one word at the offset
+modulo a struct size was enough), and the time of each step.
 """
 import os, statistics, struct, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -107,14 +108,30 @@ def slot_ranking(sites, image, elf_path):
     named = [s for s in sites if s.kind == "kcfi" and s.members and s.targets]
     hit = [s for s in named if s.slot_backed]
     full, part = [len(s.targets) for s in hit], [len(s.slot_backed) for s in hit]
-    modulo_only = sum(1 for s in hit if not any(o == s.member_offset for t in s.slot_backed for o in offsets.get(t, ())))
+    exact = [len(s.slot_backed) - len(s.slot_stride) for s in hit]
     print("calls with a member and candidates %d; with a slot-backed candidate %d (shorter first part %d, all of the "
-          "list %d); calls whose slot-backed candidates all match only modulo a struct size %d"
-          % (len(named), len(hit), st["slot_calls_shorter"], len(hit) - st["slot_calls_shorter"], modulo_only))
+          "list %d); calls whose slot-backed candidates are all by array stride %d"
+          % (len(named), len(hit), st["slot_calls_shorter"], len(hit) - st["slot_calls_shorter"],
+             st["slot_calls_stride_only"]))
+    print("slot-backed (call, candidate) pairs %d, of them by array stride only %d"
+          % (sum(part), sum(len(s.slot_stride) for s in hit)))
+    # the rule before review s197: any one word at the member's offset modulo a struct size (8-byte structs left out)
+    old_calls = old_pairs = old_modulo = 0
+    for s in named:
+        sizes = [z for z in names.member_sizes.get((s.hash, s.member_offset), ()) if z > max(s.member_offset, 8)]
+        got = {t for t in s.targets for _obj, o in offsets.get(t, ())
+               if o == s.member_offset or any(o % z == s.member_offset for z in sizes)}
+        old_calls += bool(got)
+        old_pairs += len(got)
+        old_modulo += len(got - {t for t in s.targets for _obj, o in offsets.get(t, ()) if o == s.member_offset})
+    print("with the rule before (one word at the offset modulo a struct size is enough): %d calls, %d pairs, %d of them "
+          "only modulo" % (old_calls, old_pairs, old_modulo))
     print("those calls: median list %s, median slot-backed part %s; lists over 16: %d, of them slot-backed part of 16 or "
-          "fewer %d; largest list %d (its slot-backed part %d); largest slot-backed part %d"
+          "fewer %d, with 1 to 16 at the member's offset (IDA cross-references) %d; largest list %d (its slot-backed "
+          "part %d); largest slot-backed part %d"
           % (statistics.median(full), statistics.median(part), sum(1 for n in full if n > 16),
-             sum(1 for n, k in zip(full, part) if n > 16 and k <= 16), max(full),
+             sum(1 for n, k in zip(full, part) if n > 16 and k <= 16),
+             sum(1 for n, k in zip(full, exact) if n > 16 and 1 <= k <= 16), max(full),
              max(len(s.slot_backed) for s in hit if len(s.targets) == max(full)), max(part)))
     by_name = {}
     _a, _r, syms = cli.load_elf(elf)
@@ -128,8 +145,10 @@ def slot_ranking(sites, image, elf_path):
                and (off is None or s.call_ea == ea + off) and s.members and s.members[0].endswith("sendmsg"
                if fn == "sock_sendmsg" else "sendmsg_locked" if fn == "kernel_sendmsg_locked" else "sendmsg")]
         for s in got[:1]:
-            print("  %s+0x%x %s: %d -> %d (%s)" % (fn, s.call_ea - ea, s.members[0], len(s.targets), len(s.slot_backed),
-                                                ", ".join(nm(t) for t in s.targets if t in s.slot_backed)))
+            print("  %s+0x%x %s: %d -> %d (%s)%s" % (fn, s.call_ea - ea, s.members[0], len(s.targets),
+                                                  len(s.slot_backed),
+                                                  ", ".join(nm(t) for t in s.targets if t in s.slot_backed),
+                                                  " by array stride: %d" % len(s.slot_stride) if s.slot_stride else ""))
 
 
 if funcs is not None:
