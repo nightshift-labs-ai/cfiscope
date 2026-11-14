@@ -32,7 +32,7 @@
    - **Result:** 9,921 bytes, 904 x 896.
 3. **PNG:**
    - **Command:** `--png docs/img/hero.png` rasterises the SVG at 1.5 times its size. It uses `rsvg-convert` if that is on PATH, else Node with the `playwright` package (Chromium). Then `palette_png` stores the PNG with a 256-colour palette: the 256 most frequent colours, the anti-aliased edges mapped to the nearest of them.
-   - **Here:** there is no `rsvg-convert`, so it was Playwright's Chromium headless shell (`chromium_headless_shell-1155`). The system's monospace font is DejaVu Sans Mono. This sandbox's memory limit stops Chromium from starting under Python, so the same three steps that `--png` runs were run one by one: `draw_hero.py` for the SVG, then `node -e` with `draw_hero.PNG_JS`, then `draw_hero.palette_png`.
+   - **Here:** there is no `rsvg-convert` (so that path was never tried), and it was Playwright's Chromium headless shell (`chromium_headless_shell-1155`). The system's monospace font is DejaVu Sans Mono. The Python runs here had a virtual-memory limit (`ulimit -v`) under which Chromium does not start, so the three steps that `--png` runs were run one by one: `draw_hero.py` for the SVG, then `node -e` with `draw_hero.PNG_JS`, then `draw_hero.palette_png`.
    - **Result:** 1356 x 1344 px, 86,456 bytes (Chromium's own PNG was 244,894 bytes).
 
 To redraw after a change to the scanner or to its output: run step 2, then step 3, then `tests/test_draw_hero.py` with the kernel (below).
