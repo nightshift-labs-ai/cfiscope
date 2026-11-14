@@ -3,6 +3,7 @@
 Edit > Plugins > CFIScope actions:
   * Scan kCFI calls: comment every check, add xrefs for short candidate lists.
   * Candidates for this call / Callers of this function: jump lists.
+  * Functions of this type: every function with the kCFI type hash of the function under the cursor.
   * List kCFI call sites: every scanned call site in one list (also opened at the end of Scan).
   * Remove annotations.
 With the Hex-Rays decompiler, scanned call sites also get a comment in pseudocode (display only). Scan leaves a
@@ -492,6 +493,35 @@ class CallersAction(ida_kernwin.action_handler_t):
         return ida_kernwin.AST_ENABLE_ALWAYS
 
 
+class TypeAction(ida_kernwin.action_handler_t):
+    """Every function with the kCFI type hash of the function under the cursor (in pseudocode, the decompiled one),
+    whether or not a call site checks that hash: the command line's --implements. Read-only, as the other lookups."""
+    @guarded
+    def activate(self, ctx):
+        sites = scan_or_warn()
+        if sites is None:
+            return 0
+        restore_scan()          # first lookup after the database is reopened: reuses this scan
+        problem = idalayer.type_problem(sites, STATE["stats"])
+        if problem:
+            ida_kernwin.warning(problem)
+            return 0
+        vu = pseudocode_view(ctx)
+        ea = vu.cfunc.entry_ea if vu is not None else ida_kernwin.get_screen_ea()   # pseudocode: the decompiled function
+        found = idalayer.type_entry(sites, ea)
+        if found is None:
+            ida_kernwin.warning("No kCFI type hash in front of this function: a function whose address is never taken "
+                                "(a static one) has none.")
+            return 0
+        entry, h = found
+        rows = idalayer.type_rows(entry, idalayer.type_functions(sites, h))
+        idalayer.Chooser(idalayer.type_title(entry, h, len(rows)), rows).Show()
+        return 1
+
+    def update(self, ctx):
+        return ida_kernwin.AST_ENABLE_ALWAYS
+
+
 class SitesAction(ida_kernwin.action_handler_t):
     """The list of every call site; before any Scan it runs the read-only scan the lookups run (writes nothing)."""
     @guarded
@@ -533,14 +563,15 @@ ACTIONS = [
     ("cfiscope:scan", "CFIScope: Scan kCFI calls", ScanAction, "Alt-Shift-K"),
     ("cfiscope:targets", "CFIScope: Candidates for this call", TargetsAction, "Alt-Shift-T"),
     ("cfiscope:callers", "CFIScope: Callers of this function", CallersAction, "Alt-Shift-X"),
+    ("cfiscope:type", "CFIScope: Functions of this type", TypeAction, ""),
     ("cfiscope:sites", "CFIScope: List kCFI call sites", SitesAction, ""),
     ("cfiscope:remove", "CFIScope: Remove annotations", RemoveAction, ""),
 ]
-POPUP = ACTIONS[:4]     # right-click CFIScope submenu: all but Remove annotations
+POPUP = ACTIONS[:5]     # right-click CFIScope submenu: all but Remove annotations
 
 
 class PopupHooks(ida_kernwin.UI_Hooks):
-    """Adds Scan, the two lookups and the call-site list to the right-click menu of disassembly and pseudocode views,
+    """Adds Scan, the three lookups and the call-site list to the right-click menu of disassembly and pseudocode views,
     and hooks the decompiler if it loads after this plugin (so the first decompile after reopening restores the scan)."""
 
     def plugin_loaded(self, plugin_info):
