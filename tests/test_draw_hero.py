@@ -5,8 +5,9 @@ Always: the SVG parses with xml.etree, loads nothing and has nothing GitHub's sa
 agree with the texts.  With CFISCOPE_GKI_ELF=path/to/gki.elf (the README walkthrough's kernel): every other text
 equals a field of a fresh `python3 -m cfiscope` run, and tools/draw_hero.py redraws the SVG byte for byte.
 """
-import json, os, re, struct, subprocess, sys, tempfile, unittest
+import contextlib, importlib.util, io, json, os, re, struct, subprocess, sys, tempfile, unittest, zlib
 import xml.etree.ElementTree as ET
+from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 sys.path.insert(0, ROOT)
@@ -218,6 +219,74 @@ class Picture(unittest.TestCase):
         for c in callers:     # "each with": the same hash, type and count for every caller
             self.assertEqual((c["hash"], c["type"], c["count"]), (callers[0]["hash"], callers[0]["type"],
                                                                  callers[0]["count"]))
+
+
+FIXTURE = os.path.join(ROOT, "tests", "fixtures", "aarch64-kernel.o")
+FIXTURE_ARGS = ["--site", "do_call_2+0x24", "--callee", "impl_2_0"]
+
+
+_TOOL_MODULE = []
+
+
+def tool_module():
+    """tools/draw_hero.py as a module, loaded by its path (once)."""
+    if not _TOOL_MODULE:
+        spec = importlib.util.spec_from_file_location("draw_hero", TOOL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _TOOL_MODULE.append(module)
+    return _TOOL_MODULE[0]
+
+
+def png_file(path, depth):
+    """A 2 x 2 white RGB PNG of the given bit depth (filter 0 rows)."""
+    draw_hero = tool_module()
+    row = b"\0" + b"\xff" * (2 * 3 * depth // 8)
+    with open(path, "wb") as fh:
+        fh.write(b"\x89PNG\r\n\x1a\n" + draw_hero._chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, depth, 2, 0, 0, 0))
+                 + draw_hero._chunk(b"IDAT", zlib.compress(row * 2)) + draw_hero._chunk(b"IEND", b""))
+
+
+class Tool(unittest.TestCase):
+    """tools/draw_hero.py on the small aarch64 test fixture (no kernel needed): the caption and the messages."""
+
+    def run_tool(self, *args):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "x.svg")
+            p = subprocess.run([sys.executable, "-I", TOOL, FIXTURE, "-o", out] + list(args), capture_output=True,
+                               text=True)
+            svg = None
+            if os.path.exists(out):
+                with open(out, "rb") as fh:
+                    svg = fh.read()
+        return p, svg
+
+    def test_caption_names_the_input_file(self):
+        p, svg = self.run_tool(*FIXTURE_ARGS)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual([t.text for t in kids(ET.fromstring(svg), "text")],
+                         ["Drawn from python3 -m cfiscope aarch64-kernel.o output, not an IDA screenshot"])
+
+    def test_bad_offset_is_a_message(self):
+        p, svg = self.run_tool("--site", "do_call_2+zz", "--callee", "impl_2_0")
+        self.assertEqual((p.returncode, p.stderr), (1, "draw_hero: do_call_2+zz: bad offset 'zz'\n"))
+        self.assertIsNone(svg)
+
+    def test_png_message_says_what_palette_png_did(self):
+        """main() says '256 colours' only when palette_png rewrote the PNG; a 16-bit PNG is kept as rendered."""
+        draw_hero = tool_module()
+        for depth, said, ctype in ((8, "256 colours", 3), (16, "kept as rendered", 2)):
+            with tempfile.TemporaryDirectory() as tmp:
+                svg, png = os.path.join(tmp, "x.svg"), os.path.join(tmp, "x.png")
+                out = io.StringIO()
+                with mock.patch.object(draw_hero, "rasterise",
+                                       lambda s, p, w, h, d=depth: png_file(p, d) or "a test converter"), \
+                        contextlib.redirect_stdout(out):
+                    self.assertEqual(draw_hero.main([FIXTURE, "-o", svg, "--png", png] + FIXTURE_ARGS), 0)
+                self.assertIn("wrote %s with a test converter, %s" % (png, said), out.getvalue())
+                self.assertNotIn("256 colours" if depth == 16 else "kept as rendered", out.getvalue())
+                with open(png, "rb") as fh:
+                    self.assertEqual(fh.read(26)[25], ctype)       # IHDR colour type: 3 = palette, 2 = RGB unchanged
 
 
 @unittest.skipUnless(ELF, "set CFISCOPE_GKI_ELF to the README walkthrough's gki.elf to check the picture against it")

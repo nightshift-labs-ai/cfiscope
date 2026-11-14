@@ -42,7 +42,7 @@ sys.path.insert(0, ROOT)
 from cfiscope import cli  # noqa: E402  (the ELF reader only: the address of --site and the call instructions)
 
 HEADINGS = ("Which functions can this indirect call reach?", "Which indirect calls can reach this function?")
-CAPTION = "Drawn from python3 -m cfiscope gki.elf output, not an IDA screenshot"
+CAPTION = "Drawn from python3 -m cfiscope %s output, not an IDA screenshot"     # %s: the input file's name
 MAX_CANDIDATES, MAX_CALLERS = 16, 6
 SCALE = 1.5
 
@@ -90,7 +90,10 @@ def address(text, names):
     eas = names.by_name.get(base)
     if not eas or len(eas) > 1:
         raise SystemExit("draw_hero: %s: %s functions named %r; give an address" % (text, len(eas or ()), base))
-    return eas[0] + (int(off, 0) if plus else 0)
+    try:
+        return eas[0] + (int(off, 0) if plus else 0)
+    except ValueError:
+        raise SystemExit("draw_hero: %s: bad offset %r" % (text, off)) from None
 
 
 def instruction(arch, ranges, ea):
@@ -186,8 +189,9 @@ def draw_call(g, cls, x, y, rows, w, h, blue_name=False):
     g.add("</g>")
 
 
-def draw(site, callers_doc, callee, insns):
-    """The SVG text, from the --targets site, the --callers document and the instruction of each call."""
+def draw(site, callers_doc, callee, insns, source="gki.elf"):
+    """The SVG text, from the --targets site, the --callers document and the instruction of each call; source is the
+    input file's name, for the caption."""
     callers = callers_doc["sites"]
     cands = [t["name"] for t in site["targets"]]
     caller_funcs = {c["in"].partition("+")[0] for c in callers}
@@ -263,7 +267,7 @@ def draw(site, callers_doc, callee, insns):
     g.text("count", col_x, tcy + 32 + 20, count_text(callers_doc["callers"]["call_sites"], "call site(s)"), FS, GREY)
     g.add("</g>")
 
-    g.text("caption", PAD, H - 14, CAPTION, FS_CAPTION, GREY, False, "sans-serif")
+    g.text("caption", PAD, H - 14, CAPTION % source, FS_CAPTION, GREY, False, "sans-serif")
     g.add("</svg>")
     return "\n".join(g.out) + "\n", (W, H)
 
@@ -377,7 +381,7 @@ def main(argv=None):
                          % (len(callers["sites"]), a.callee, MAX_CALLERS))
     insns = {s["call"]: instruction(arch, ranges, int(s["call"], 16)) for s in [site] + callers["sites"]}
     del ranges
-    svg, (w, h) = draw(site, callers, a.callee, insns)
+    svg, (w, h) = draw(site, callers, a.callee, insns, os.path.basename(a.elf))
     with open(a.output, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(svg)
     print("wrote %s: %d bytes, %s x %s" % (a.output, len(svg.encode()), num(w), num(h)))
@@ -385,9 +389,11 @@ def main(argv=None):
         how = rasterise(a.output, a.png, w, h)
         if how is None:
             print("no PNG: neither rsvg-convert nor Node with the playwright package was found", file=sys.stderr)
-        else:
-            palette_png(a.png)
+        elif palette_png(a.png):
             print("wrote %s with %s, 256 colours: %d bytes" % (a.png, how, os.path.getsize(a.png)))
+        else:
+            print("wrote %s with %s, kept as rendered (not an 8-bit non-interlaced RGB or RGBA PNG): %d bytes"
+                  % (a.png, how, os.path.getsize(a.png)))
     return 0
 
 
