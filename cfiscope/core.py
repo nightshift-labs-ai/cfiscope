@@ -230,6 +230,9 @@ def resolve(ranges, arch, text=None):
         old = resolve_jump_table_cfi(ranges)
         if old is not None:
             return old
+        # No check and no jump-table CFI: say whether the code makes an indirect call at all (a kCFI module may make
+        # none, GKI zram.ko). Counted only here, so a jump-table CFI kernel does not pay for it (review s189 NIT 5).
+        stats["blr_instructions"] = sum(count_blr(mem) for _base, mem in ranges)
     return sites, stats
 
 
@@ -276,9 +279,6 @@ def _resolve_kcfi(ranges, arch, text=None):
     }
     if text is not None:
         stats["outside_text"] = len(outside)   # distinct candidates left out: not in kernel code
-    if not n and arch == "aarch64":
-        # No check: say whether the code makes an indirect call at all (a kCFI module may make none, GKI zram.ko)
-        stats["blr_instructions"] = sum(count_blr(mem) for _base, mem in ranges)
     return sites, stats
 
 
@@ -1203,12 +1203,19 @@ def type_label(site):
 RUNTIME_CHECK_FUNCTION = "__cfi_check"   # jump-table CFI: the runtime's check function (kernel and each module)
 
 
-_BLR = re.compile(rb"[\x00\x20\x40\x60\x80\xa0\xc0\xe0][\x00-\x03]\x3f\xd6")   # blr xN
+_BLR = re.compile(rb"..\x3f[\xd6\xd7]", re.DOTALL)   # blr xN and the PAuth blraa(z) / blrab(z), checked by _is_blr
+
+
+def _is_blr(w):
+    """blr xN, blraaz / blrabz xN, or blraa / blrab xN, xM."""
+    return (w & 0xfffffc1f == 0xd63f0000 or w & 0xfffff81f == 0xd63f081f or w & 0xfffff800 == 0xd73f0800)
 
 
 def count_blr(mem):
-    """Number of blr instructions (4-byte aligned) in this aarch64 code: its indirect calls."""
-    return sum(1 for _m in _aligned(_BLR, bytes(mem)))
+    """Number of blr instructions (4-byte aligned; blr and the PAuth blraa(z) / blrab(z)) in this aarch64 code: its
+    indirect calls."""
+    mem = bytes(mem)
+    return sum(1 for m in _aligned(_BLR, mem) if _is_blr(struct.unpack_from("<I", mem, m.start())[0]))
 
 
 def has_indirect_call(mem):

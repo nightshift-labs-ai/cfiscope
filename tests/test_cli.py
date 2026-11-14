@@ -347,6 +347,26 @@ class NoIndirectCall(unittest.TestCase):
         rc, out, _ = run(os.path.join(FIX, "aarch64-plain.o"), "--json")
         self.assertNotIn("blr_instructions", json.loads(out)["stats"])
 
+    def test_pauth_calls_count(self):
+        # review s189 NIT 5: blraa / blrab / blraaz / blrabz are indirect calls too; br, ret and braa are not.
+        from cfiscope import core
+        words = [0xd63f0100,                 # blr x8
+                 0xd63f091f, 0xd63f0d1f,     # blraaz x8, blrabz x8
+                 0xd73f0911, 0xd73f0d11,     # blraa x8, x17; blrab x8, x17
+                 0xd61f0100, 0xd65f03c0,     # br x8, ret
+                 0xd71f0911]                 # braa x8, x17
+        self.assertEqual(core.count_blr(struct.pack("<%dI" % len(words), *words)), 5)
+        self.assertEqual(core.count_blr(b"\0\0" + struct.pack("<I", 0xd63f0100) + b"\0\0"), 0)   # misaligned
+
+    def test_not_counted_on_jump_table_cfi(self):
+        # review s189 NIT 5: the count was made (and thrown away) on every 5.x jump-table CFI kernel too.
+        from unittest import mock
+        from cfiscope import core
+        with mock.patch.object(core, "count_blr", side_effect=AssertionError("count_blr called")):
+            rc, out, err = run(os.path.join(FIX, "aarch64-jtcfi.elf"), "--json")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(out)["stats"]["scheme"], "jump-table CFI")
+
 
 def module_and_kernel(tmp, unhash=("impl_2_0", "impl_2_1", "impl_2_2")):
     """A stand-in for a module (.ko) and its kernel, from aarch64-plain.o (ET_REL, one section per function):
