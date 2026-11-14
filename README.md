@@ -101,7 +101,7 @@ More: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
 hcli plugin install cfiscope
 ```
 
-Or copy this folder into your IDA `plugins` directory. IDA 9.0 or later.
+Or copy this folder into your IDA `plugins` directory. IDA 9.1 or later.
 
 The plugin index can lag a day or more behind the [GitHub releases](https://github.com/nightshift-labs-ai/cfiscope/releases). If `hcli plugin status` shows an older version than the latest release, install the release zip directly:
 
@@ -137,7 +137,7 @@ A real kernel:
 - **kCFI hashes named by C function type** (0.1.22): when the kernel carries BTF (`CONFIG_DEBUG_INFO_BTF`), or with `--btf PATH`, each hash is shown as its type, e.g. `hash 0x4f4ccb9d (int (struct file *, int))` (CFIScope mangles every BTF prototype the way Clang does and hashes it: `cfiscope/kcfi_types.py`). Named: all 4,184 hashes on GKI 6.1, all 4,466 on GKI 6.6, 4,621 of 4,626 on the Rust-enabled GKI 6.12 (the 5 left are inside Rust code); details in [VERIFICATION](docs/VERIFICATION.md). The IDA layer does the same from the input file's BTF, checked only against fake IDA modules.
 - **Loadable modules (.ko)** (unreleased): a module is read as it is (no relocation touches a check or a hash). On the GKI android14-6.1 `bluetooth.ko` from the public prebuilts ([details](docs/VERIFICATION.md#loadable-modules-ko)): 253 call sites, 234 with candidates among the module's own functions. On the command line, `--with vmlinux` adds the kernel's functions of each call's type (23 sites have some, e.g. `compute_ecdh_secret` -> `ecdh_compute_value`) and `--btf` with the module's own kernel names all 48 hashes from the module's split BTF; 13 sites have no candidate in the module or the kernel (12 of them take a `struct hci_dev *`: callbacks that driver modules set, which were not scanned). In IDA, Scan on a `.ko` lists the module's functions only, without types (the plugin does not read split BTF; the Output window says so and gives the `--btf` command; checked only against fake IDA modules).
 - **Linux 5.x jump-table CFI** (aarch64, Android 12/13 GKI 5.10 and 5.15, since v0.1.17): reads each call's candidates from the compiler's jump table. See [docs/JTCFI.md](docs/JTCFI.md).
-- **Command line and headless**: the scanner is plain Python 3 with no dependencies; `tools/cfiscope_headless.py` adds the same comments and cross-references as Scan, headless with idalib (IDA 9.0 or newer). See [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#without-ida-scripts-other-tools-ci).
+- **Command line and headless**: the scanner is plain Python 3 with no dependencies; `tools/cfiscope_headless.py` adds the same comments and cross-references as Scan, headless with idalib (IDA 9.1 or newer). See [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md#without-ida-scripts-other-tools-ci).
 
 ```
 python3 -m cfiscope vmlinux                         # summary
