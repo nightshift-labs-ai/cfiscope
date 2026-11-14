@@ -361,7 +361,10 @@ def main(argv=None):
     ap.add_argument("--base", type=lambda v: int(v, 0), help="load address for --raw, e.g. 0xffffffc008000000")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--sites", action="store_true", help="list every call site with its candidates")
-    mode.add_argument("--callers", metavar="FUNC", help="call sites that can reach FUNC (name or address)")
+    mode.add_argument("--callers", metavar="FUNC",
+                      help="call sites that can reach FUNC (name or address); with --with, a name that is not the "
+                           "module's is looked up in the kernel (the module's own symbol wins; an address is the "
+                           "module's)")
     mode.add_argument("--targets", metavar="ADDR", help="candidates for the call or check at ADDR")
     ap.add_argument("--max-list", type=int, default=None,
                     help="candidates shown per site (default: 8 in text, all with --json)")
@@ -438,6 +441,8 @@ def main(argv=None):
         label = a.callers if len(want) > 1 else names(min(want))
         if len(want) > 1:
             label += " (%d functions of that name)" % len(want)
+        if kernel is not None and a.callers in kernel.names.by_name:  # review s189 MINOR 3: the module's name wins
+            label += " (in this module; %s also has a function of that name, not searched)" % kernel.label
         header = core.callers_header(len(calls), len(checks), label)
     elif a.targets:
         chosen = [s for s in sites if want & {s.call_ea, s.check_ea}]
@@ -455,6 +460,8 @@ def main(argv=None):
         out = {"stats": stats}
         if a.callers:
             out["callers"] = {"call_sites": len(calls), "unlinked_checks": len(checks)}
+            if kernel is not None:   # --with: where the name was found (the module's own symbol wins)
+                out["callers"]["target_in"] = "kernel" if kwant is not None else "module"
         if chosen is not None:
             limit = 1 << 30 if a.targets or a.max_list is None else a.max_list
             out["sites"] = [_site_dict(s, names, limit, type_names, kernel) for s in chosen]

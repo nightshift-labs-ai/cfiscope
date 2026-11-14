@@ -448,6 +448,30 @@ class WithKernel(unittest.TestCase):
             self.assertEqual([x.split()[1] for x in lines[-3:]], ["k_impl_2_0", "k_impl_2_1", "k_impl_2_2"])
             self.assertTrue(lines[-1].split()[0].startswith("0xffffffc008"))
 
+    def test_callers_json_says_where_the_name_was_found(self):
+        # review s189 MINOR 3: with --with, JSON says whether the target was the module's or the kernel's; a name in
+        # both is the module's (said in the text header too).
+        with tempfile.TemporaryDirectory() as tmp:
+            module, kernel = module_and_kernel(tmp)
+            rc, out, _ = run(module, "--callers", "k_impl_2_1", "--with", kernel, "--json")
+            self.assertEqual(json.loads(out)["callers"], {"call_sites": 1, "unlinked_checks": 0, "target_in": "kernel"})
+            rc, out, _ = run(module, "--callers", "impl_3_1", "--with", kernel, "--json")
+            self.assertEqual(json.loads(out)["callers"]["target_in"], "module")
+            rc, out, _ = run(module, "--callers", "impl_3_1", "--json")      # no --with: unchanged
+            self.assertNotIn("target_in", json.loads(out)["callers"])
+            # A kernel that also has impl_3_1: the module's symbol wins, and the header says so.
+            k2 = os.path.join(tmp, "kernel2.elf")
+            with open(kernel, "rb") as fh:
+                d = fh.read()
+            with open(k2, "wb") as fh:
+                fh.write(d.replace(b"k_impl_3_1\0", b"impl_3_1\0\0\0"))
+            rc, out, err = run(module, "--callers", "impl_3_1", "--with", k2)
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(out.splitlines()[0], "1 call site(s) can reach impl_3_1 (in this module; kernel2.elf "
+                                                  "also has a function of that name, not searched)")
+            rc, out, _ = run(module, "--callers", "impl_3_1", "--with", k2, "--json")
+            self.assertEqual(json.loads(out)["callers"]["target_in"], "module")
+
     def test_unknown_callers_name_hint(self):
         # review s189 MINOR 2: a kernel function asked of a module without --with gets a hint to add --with; with
         # --with, an unknown name says that the kernel was searched too. A vmlinux gets no --with hint.
