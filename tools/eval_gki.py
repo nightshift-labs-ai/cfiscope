@@ -12,9 +12,13 @@ bound .rodata: candidates there, outside the code areas named there, are left ou
 gives the Image alone, as with --raw).
 --base: where the kernel image starts (default 0xffffffc008000000, the 6.1 GKI; 6.6 and later GKI
 kernels start at 0xffffffc080000000). With a wrong base the precision line drops to about 0%.
+With vmlinux.elf, the last lines rank by static slots (kcfi_types.rank_slots(), unreleased): the Image's BTF names
+each call's struct member, vmlinux.elf's words and OBJECT symbols say which candidates are stored in a slot of it;
+the counts and the time of each step.
 """
-import os, struct, sys, time
+import os, statistics, struct, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from cfiscope import cli, kcfi_types
 from cfiscope.core import kernel_text, resolve, CODE_AREAS, TEXT_BOUND_NAMES
 
 BASE = 0xffffffc008000000
@@ -78,3 +82,52 @@ if funcs is not None:
         print("the Image alone (no text bounds, as --raw): resolved %d, exactly one %d; distinct targets %d, at a "
               "kallsyms function %d" % (raw["resolved"], raw["single_target"], len(raw_targets),
                                         sum(1 for t in raw_targets if t in funcs)))
+
+
+def slot_ranking(sites, image, elf_path):
+    """Candidates stored in a slot of the call's struct member, listed first: counts on this kernel."""
+    t0 = time.time()
+    names = kcfi_types.load_type_names(image)
+    t1 = time.time()
+    kcfi_types.name_sites(sites, names)
+    kcfi_types.name_members(sites, [(BASE, image)], "aarch64", names)
+    t2 = time.time()
+    with open(elf_path, "rb") as fh:
+        elf = fh.read()
+    offsets = cli.slot_offsets(elf, {t for s in sites if s.kind == "kcfi" for t in s.targets})
+    t3 = time.time()
+    st = kcfi_types.rank_slots(sites, offsets, names)
+    t4 = time.time()
+    print("slots: BTF type names %.2f s, members %.2f s, slot scan of %s %.2f s, ranking %.2f s"
+          % (t1 - t0, t2 - t1, os.path.basename(elf_path), t3 - t2, t4 - t3))
+    print(kcfi_types.slot_summary(st))
+    named = [s for s in sites if s.kind == "kcfi" and s.members and s.targets]
+    hit = [s for s in named if s.slot_backed]
+    full, part = [len(s.targets) for s in hit], [len(s.slot_backed) for s in hit]
+    modulo_only = sum(1 for s in hit if not any(o == s.member_offset for t in s.slot_backed for o in offsets.get(t, ())))
+    print("calls with a member and candidates %d; with a slot-backed candidate %d (shorter first part %d, all of the "
+          "list %d); calls whose slot-backed candidates all match only modulo a struct size %d"
+          % (len(named), len(hit), st["slot_calls_shorter"], len(hit) - st["slot_calls_shorter"], modulo_only))
+    print("those calls: median list %s, median slot-backed part %s; lists over 16: %d, of them slot-backed part of 16 or "
+          "fewer %d; largest list %d (its slot-backed part %d); largest slot-backed part %d"
+          % (statistics.median(full), statistics.median(part), sum(1 for n in full if n > 16),
+             sum(1 for n, k in zip(full, part) if n > 16 and k <= 16), max(full),
+             max(len(s.slot_backed) for s in hit if len(s.targets) == max(full)), max(part)))
+    by_name = {}
+    _a, _r, syms = cli.load_elf(elf)
+    for ea, nm in syms.items():
+        by_name.setdefault(nm, ea)
+    nm = cli.Names(syms)
+    for fn, off in (("sock_sendmsg", None), ("kernel_sendmsg_locked", None), ("inet_sendmsg", 0x58),
+                    ("inet6_sendmsg", 0x58)):
+        ea = by_name.get(fn)
+        got = [s for s in named if s.call_ea and nm.function(s.call_ea) and nm.function(s.call_ea)[0] == ea
+               and (off is None or s.call_ea == ea + off) and s.members and s.members[0].endswith("sendmsg"
+               if fn == "sock_sendmsg" else "sendmsg_locked" if fn == "kernel_sendmsg_locked" else "sendmsg")]
+        for s in got[:1]:
+            print("  %s+0x%x %s: %d -> %d (%s)" % (fn, s.call_ea - ea, s.members[0], len(s.targets), len(s.slot_backed),
+                                                ", ".join(nm(t) for t in s.targets if t in s.slot_backed)))
+
+
+if funcs is not None:
+    slot_ranking(sites, image, sys.argv[2])

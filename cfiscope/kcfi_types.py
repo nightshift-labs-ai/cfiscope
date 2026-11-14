@@ -769,7 +769,8 @@ def name_members(sites, ranges, arch, names):
 def rank_slots(sites, offsets, names):
     """Set slot_backed (core.Site) of each kCFI site with a struct member (name_members()): its candidates that the
     image's static data stores at the member's offset inside an object, or at that offset modulo the size of a struct
-    that has the member there (an array of such structs). offsets: {function address: {offset in the object holding
+    that has the member there (an array of such structs; not for a struct of 8 bytes, which every 8-aligned slot
+    would match). offsets: {function address: {offset in the object holding
     it}} (core.object_offsets()); names: the TypeNames that named the members (member_sizes). The candidate lists are
     not changed: core.slot_first() puts these first. A slot is evidence, not proof: a function stored there may be
     called through another table, and a pointer set at run time or in a module's table is in no slot here.
@@ -786,7 +787,8 @@ def rank_slots(sites, offsets, names):
         off = s.member_offset
         if not s.members or off is None:
             continue
-        sizes = [z for z in sizes_of.get((s.hash, off), ()) if z > off]
+        # modulo a struct's size: an array of such structs; not an 8-byte one (every aligned slot would match)
+        sizes = [z for z in sizes_of.get((s.hash, off), ()) if z > max(off, 8)]
         hit = set()
         for t in s.targets:
             for o in offsets.get(t, ()):

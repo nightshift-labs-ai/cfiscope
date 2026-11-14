@@ -121,6 +121,14 @@ class Matching(unittest.TestCase):
         self.assertEqual(core.slot_first(s), [0x10, 0x20, 0x30, 0x40])
         self.assertEqual((st["slot_calls"], st["slot_calls_shorter"]), (1, 1))
 
+    def test_eight_byte_struct_is_no_evidence(self):
+        # struct { fn_t fn; } (8 bytes): every 8-aligned slot is at offset 0 modulo 8, so only equality counts
+        class Names:
+            member_sizes = {(0x1234, 0): [8, 16]}
+        s = self.site([0x10, 0x20, 0x30], off=0)
+        K.rank_slots([s], {0x10: {0}, 0x20: {8}, 0x30: {32}}, Names())
+        self.assertEqual(s.slot_backed, {0x10, 0x30})
+
     def test_order_inside_each_group_is_kept(self):
         s = self.site([0x10, 0x20, 0x30, 0x40])
         K.rank_slots([s], {0x40: {16}, 0x20: {16}}, self.Names())
