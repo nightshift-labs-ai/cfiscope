@@ -12,7 +12,7 @@ bound .rodata: candidates there, outside the code areas named there, are left ou
 gives the Image alone, as with --raw).
 --base: where the kernel image starts (default 0xffffffc008000000, the 6.1 GKI; 6.6 and later GKI
 kernels start at 0xffffffc080000000). With a wrong base the precision line drops to about 0%.
-With vmlinux.elf, the last lines rank by static slots (kcfi_types.rank_slots(), unreleased): the Image's BTF names
+With vmlinux.elf, the last lines rank by static slots (kcfi_types.rank_slots(), new in 0.1.23): the Image's BTF names
 each call's struct member, vmlinux.elf's words and OBJECT symbols say which candidates are stored in a slot of it (at
 its offset, or by array stride); the counts, the counts under the rule before review s197 (one word at the offset
 modulo a struct size was enough), and the time of each step.
