@@ -2,7 +2,7 @@
 
 Taken from the GitHub release notes. Newest first.
 
-## Unreleased
+## v0.1.23 (2026-11-19)
 
 - **Candidates stored in a matching static slot are listed first, never instead of the others** (internal review s193; aarch64, calls with a struct member; the IDA side checked against fake IDA modules only, never in IDA). With `--max-list 3`, `kernel_sendmsg_locked+0x64` printed `11 candidate(s): sock_no_sendmsg_locked, tcp_sendmsg_locked, tcp_sendmsg ...`; it now prints `11 candidate(s): in a proto_ops.sendmsg_locked slot: tcp_sendmsg_locked; same type only: 10 more`, since of its 11 candidates only `tcp_sendmsg_locked` is stored at byte 216 (the member's offset) of an object in the image (`inet_stream_ops`, `inet6_stream_ops`). CFIScope reads the 8-aligned words of the image's loaded segments (of a `.o`/`.ko`: its 64-bit absolute relocations into data sections), keeps those holding a candidate's address, places each in the nearest `OBJECT` symbol at or below it, and marks a candidate slot-backed when its offset there equals the member offset, or does modulo the size of a struct with that member there (arrays of structs; not 8-byte structs). Slot-backed candidates come first, each group in its old order. Where it shows:
   - the command line: `--sites` and `--callers` (as above), `--targets` (both groups, every candidate), `--json` (`slot_backed` per candidate, `slot_backed_candidates` per site) and a summary line;
