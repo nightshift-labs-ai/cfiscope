@@ -585,7 +585,8 @@ def _spec_hashes(spec, names, ranges, arch, sites, disps, type_names, kernel=Non
 def _check_form(spec, h, groups):
     """InputError when h, a function's hash taken by its form only (core.function_hash() "preamble"), also stands in
     front of an address that is no function symbol: an instruction word or a literal then has that form (review s201:
-    GKI 6.1 init_kernel_el, 0xffffffc0, in front of 24,876 mid-function addresses). groups: [(addresses, Names)]."""
+    GKI 6.1 init_kernel_el, 0xffffffc0, in front of 24,877 addresses, 24,875 of them no function symbol's start).
+    groups: [(addresses, Names)]."""
     bad = [(t, nm) for group, nm in groups for t in group if t not in nm.by_ea]
     if bad:
         raise InputError("--implements: the word in front of %s, 0x%08x, is no type hash that a check or BTF knows, and "
