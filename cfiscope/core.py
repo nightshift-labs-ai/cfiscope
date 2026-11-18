@@ -265,6 +265,125 @@ def preamble_index(ranges, arch, wanted, disps, text=None):
     return by_hash, outside
 
 
+# Where kCFI keeps a function's type hash when no check of the input says (Site.disp): aarch64 kCFI stores it in the word
+# before the function (GKI 6.1, 6.6 and 6.12 check at -4), unless the build puts patchable-entry NOPs between them
+# (aarch64-kernel.o: -36), which a kernel with no check cannot show. x86-64 kernels differ (-4, -15; -20 in
+# x86_64-kernel.o), so there an input with no check has no default.
+DEFAULT_DISPS = {"aarch64": [-4]}
+
+
+def _hash_at(mem, at, arch):
+    """The 32-bit word at mem[at] in find_preambles()'s form (aligned on aarch64; the imm32 of a `mov r32, imm32` on
+    x86-64), else None."""
+    if at < 0 or at + 4 > len(mem):
+        return None
+    if arch == "aarch64" and at % 4:
+        return None
+    if arch == "x86_64" and (at < 1 or not 0xb8 <= mem[at - 1] <= 0xbf):
+        return None
+    return struct.unpack_from("<I", mem, at)[0]
+
+
+def _nop_padding(mem, arch):
+    """Are these bytes (between a kCFI hash and its function) only the NOPs of a patchable function entry: 0x90 on
+    x86-64, nop or another hint (bti, paciasp) on aarch64? True for none."""
+    if arch == "x86_64":
+        return all(b == 0x90 for b in mem)
+    return len(mem) % 4 == 0 and all(w & 0xfffff01f == 0xd503201f for (w,) in struct.iter_unpack("<I", mem))
+
+
+def _a64_padding_or_end(w):
+    """The aarch64 instruction w when it is one that ends or pads a function, or a system instruction (so not taken for a
+    kCFI hash by its form alone), else None: ret, b, bl (a call that does not return), br/blr, brk, nop or another hint
+    (bti, paciasp), udf; review s201: the system class (msr, mrs, isb and the other barriers, sys), eret, eretaa,
+    eretab, drps, svc, hvc and smc, which GKI 6.1 has in front of do_nanosleep (mrs), ret_to_user (isb) and cpu_resume
+    (eret). A kCFI hash with such an encoding is still taken when a check or BTF knows it."""
+    if w & 0xfffffc1f == 0xd65f0000 or w & 0xfffffbff == 0xd65f0bff:
+        return "ret"
+    if w >> 26 == 0b000101:
+        return "b"
+    if w >> 26 == 0b100101:
+        return "bl"
+    if w & 0xff9ffc1f == 0xd61f0000 or w & 0xfe9ff800 == 0xd61f0800:
+        return "br/blr"
+    if w & 0xffe0001f == 0xd4200000:
+        return "brk"
+    if w & 0xfffff01f == 0xd503201f:
+        return "nop/hint"
+    if w >> 16 == 0:
+        return "udf"
+    if w & 0xffc00000 == 0xd5000000:
+        return "a system instruction: msr, mrs, a barrier or sys"
+    if w in (0xd69f03e0, 0xd69f0bff, 0xd69f0fff, 0xd6bf03e0):
+        return "eret/drps"
+    if w & 0xffe0001f in (0xd4000001, 0xd4000002, 0xd4000003):
+        return "svc/hvc/smc"
+    return None
+
+
+def function_hash(ranges, arch, ea, disps, checked=(), named=(), form=True):
+    """(hash, why) for the function entry at ea (looks_like_entry()): the word where kCFI keeps its type hash, at ea +
+    disp for a disp in disps (Site.disp; the first that qualifies), in the same range, taken as the hash when a call site
+    checks it (why "checked", h in checked), BTF names it ("named", h in named), or, with form, its place has the form
+    of a kCFI preamble ("preamble": only patchable-entry NOPs between it and ea, and on aarch64 a word that is no
+    instruction ending or padding a function, nor a system one). None otherwise: a function with no hash (a static one
+    whose address is never taken) has some other word there, on aarch64 mostly the last instruction of the code before
+    it. A "preamble" hash is a guess: an instruction word or a literal can have that form too (review s201), so the
+    caller checks that every function implementations() gives for it starts a function."""
+    for base, mem in ranges:
+        if not base <= ea < base + len(mem):
+            continue
+        off = ea - base
+        if not looks_like_entry(mem, off, arch):
+            return None
+        for d in disps:
+            h = _hash_at(mem, off + d, arch)
+            if h is None:
+                continue
+            if h in checked:
+                return h, "checked"
+            if h in named:
+                return h, "named"
+            if (form and _nop_padding(mem[off + d + 4:off], arch)
+                    and not (arch == "aarch64" and _a64_padding_or_end(h))):
+                return h, "preamble"
+        return None
+    return None
+
+
+def why_no_hash(ranges, arch, ea, disps):
+    """When function_hash() finds no hash at ea: (the word where it would be, why its form does not pass: 'decodes as an
+    instruction (bl)' or 'has code between it and the function'), from the first disp that has a word in its form;
+    None when there is no such word (no aligned word, or on x86-64 no `mov r32, imm32`, at any disp)."""
+    for base, mem in ranges:
+        if not base <= ea < base + len(mem):
+            continue
+        off = ea - base
+        if not looks_like_entry(mem, off, arch):
+            return None
+        for d in disps:
+            h = _hash_at(mem, off + d, arch)
+            if h is None:
+                continue
+            if not _nop_padding(mem[off + d + 4:off], arch):
+                return h, "has code between it and the function"
+            kind = _a64_padding_or_end(h) if arch == "aarch64" else None
+            return h, "decodes as an instruction (%s)" % kind if kind else "is not in the form of a kCFI hash"
+        return None
+    return None
+
+
+def implementations(ranges, arch, h, disps, sites=(), text=None):
+    """Sorted addresses of every function with the kCFI type hash h in front of it, found as resolve() finds candidates
+    (preamble_index(), with its text filter): the candidates of a kCFI site that checks h, when there is one (the same
+    list), else a scan of ranges for h."""
+    for s in sites:
+        if s.kind == "kcfi" and s.hash == h:
+            return sorted(s.targets)
+    by_hash, _ = preamble_index(ranges, arch, {h}, disps, text)
+    return sorted(by_hash.get(h, ()))
+
+
 def _resolve_kcfi(ranges, arch, text=None):
     sites = []
     for base, mem in ranges:

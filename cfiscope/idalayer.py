@@ -216,12 +216,17 @@ JT = {"table": None, "entry_of": {}, "runtime_fn": {}}
 # Call addresses of the scanned sites. A data xref from one of them is CFIScope's own (annotate, after No), not a
 # stored pointer: an indirect call takes no function's address.
 CALLS = set()
+# The last kCFI scan's kernel text bounds (core.kernel_text(); None without them), the offsets of its checks' hashes
+# (Site.disp) and the input's BTF type names (kcfi_types.TypeNames, or None): Functions of this type finds functions as
+# Scan finds candidates, and names their type.
+KCFI = {"text": None, "disps": [], "names": None}
 
 
 def forget():
     """Drop what the last scan left in this module (the plugin's term: the module may outlive its database)."""
     JT.update(table=None, entry_of={}, runtime_fn={})
     CALLS.clear()
+    KCFI.update(text=None, disps=[], names=None)
 
 
 def scan():
@@ -231,13 +236,15 @@ def scan():
     ranges = code_ranges()
     elf = input_elf()
     # With the kernel's text bounds named, kCFI candidates outside kernel code (a hash value in .rodata) are left out.
-    sites, stats = core.resolve(ranges, arch, core.kernel_text(text_bounds(ranges, elf)))
+    text = core.kernel_text(text_bounds(ranges, elf))
+    sites, stats = core.resolve(ranges, arch, text)
+    KCFI.update(text=text, disps=list(stats.get("disps") or []), names=None)
     JT["table"] = None
     if stats.get("scheme") == "jump-table CFI":
         stats = dict(stats, named_checks=core.name_jt_types(sites, typeid_names(elf)))
         JT["table"] = core.find_jump_table(ranges)    # so that a foo.cfi_jt entry can stand for foo (callers_rows)
     elif sites:
-        names = input_type_names()
+        names = KCFI["names"] = input_type_names()
         if names is not None:      # kCFI hashes named by C function type from the input file's BTF
             from . import kcfi_types
             named, total = kcfi_types.name_sites(sites, names)
@@ -714,3 +721,130 @@ def callers_title(sites, ea, rows):
     """Title of the callers list: counts call sites only, as the command line does."""
     checks = sum(1 for r in rows if r[2].startswith(core.UNLINKED))
     return "%s callers: %s" % (scheme_name(sites), core.callers_header(len(rows) - checks, checks, target_name(ea)))
+
+
+# ---- Functions of this type: every function with the kCFI hash of the function under the cursor ----
+
+def _window(ea, size=64):
+    """[(start, bytes)] of the code within size bytes of ea, in ea's segment: enough for core.function_hash()."""
+    seg = ida_segment.getseg(ea)
+    if seg is None:
+        return []
+    lo, hi = max(seg.start_ea, ea - size), min(seg.end_ea, ea + size)
+    data = ida_bytes.get_bytes(lo, hi - lo) if hi > lo else None
+    return [(lo, data)] if data else []
+
+
+def _type_disps():
+    """Where the type hash sits in front of a function: the scan's checks say; with none, aarch64 kCFI's default."""
+    return KCFI["disps"] or core.DEFAULT_DISPS.get(current_arch(), [])
+
+
+def type_problem(sites, stats):
+    """Why Functions of this type cannot answer in this database (as the command line's --implements refuses), or
+    None."""
+    if scheme_name(sites) != "kCFI":
+        return ("Functions of this type is for kCFI: this database uses the jump-table CFI of Linux 5.x, whose "
+                "functions carry no type hash in front of them.")
+    if not sites and (stats or {}).get("blr_instructions"):
+        return ("No kCFI check guards the %d indirect calls (blr) of this database: it is not built with kCFI, so its "
+                "functions carry no type hash." % stats["blr_instructions"])
+    if not _type_disps():
+        return ("No kCFI check in this database: on x86-64 where a function's type hash sits in front of it is read "
+                "from the checks (kernels differ).")
+    return None
+
+
+def _after_preamble(func, disps):
+    """x86-64: the entries after a __cfi_ preamble that IDA made the start of func: for each `mov r32, imm32` in its
+    first 16 bytes, the address whose hash its imm32 would be (at each offset in disps)."""
+    head = ida_bytes.get_bytes(func.start_ea, 16) or b""
+    out = []
+    for i, byte in enumerate(head):
+        if 0xb8 <= byte <= 0xbf:
+            for d in disps:
+                e = func.start_ea + i + 1 - d
+                if func.start_ea < e < func.end_ea and e not in out:
+                    out.append(e)
+    return out
+
+
+NO_TYPE_HASH = ("No kCFI type hash in front of this function: a function whose address is never taken (a static one) "
+                "has none.")
+
+
+def _starts_function(t, disps):
+    """Does t start a function of the database: IDA's function starts there or, on x86-64, at a __cfi_ preamble in
+    front of t (_after_preamble())?"""
+    func = ida_funcs.get_func(t)
+    if func is None:
+        return False
+    return func.start_ea == t or (current_arch() == "x86_64" and t in _after_preamble(func, disps))
+
+
+def type_entry(sites, ea):
+    """(entry, kCFI hash, functions) for Functions of this type at ea, or the warning to show instead (a str). The hash
+    is the one in front of the start of IDA's function holding ea (or of ea, outside a function), when
+    core.function_hash() takes the word there (a call site checks it, BTF names it, or its form); else, only when a
+    call site checks it or BTF names it, the one in front of ea itself, of a scanned candidate inside the function or,
+    on x86-64, of the entry after a __cfi_ preamble that IDA made the function's start. A hash by its form only is
+    refused when one of its functions (type_functions()) starts no function of the database: an instruction word or a
+    literal had that form (review s201). A static function whose address is never taken has no hash."""
+    arch, disps = current_arch(), _type_disps()
+    checked = {s.hash for s in sites if s.kind == "kcfi"}
+    named = KCFI["names"].by_hash if KCFI["names"] is not None else ()
+    func = ida_funcs.get_func(ea)
+    first = func.start_ea if func is not None else ea
+    later = [ea] if ea != first else []
+    if func is not None:
+        later += sorted({t for s in sites for t in s.targets if func.start_ea < t < func.end_ea})
+        if arch == "x86_64":
+            later += _after_preamble(func, disps)
+    refused = None
+    for e, form in [(first, True)] + [(e, False) for e in later]:
+        got = core.function_hash(_window(e), arch, e, disps, checked, named, form)
+        if got is None:
+            continue
+        functions = type_functions(sites, got[0])
+        bad = [t for t in functions if not _starts_function(t, disps)] if got[1] == "preamble" else []
+        if not bad:
+            return e, got[0], functions
+        refused = refused or ("The word in front of %s, 0x%08X, is no type hash that a check or BTF knows, and %d of "
+                              "the %d places it stands in front of do not start a function in this database (such as "
+                              "%s): it is taken for an instruction or data, not a kCFI hash. If auto-analysis has not "
+                              "finished, try again after it." % (target_name(e), got[0], len(bad), len(functions),
+                                                                 target_name(bad[0])))
+    if refused:
+        return refused
+    why = core.why_no_hash(_window(first), arch, first, disps)
+    if why is None:
+        return NO_TYPE_HASH
+    return ("No kCFI type hash that a check or BTF knows in front of %s: the word there, 0x%08X, %s. %s"
+            % (target_name(first), why[0], why[1], "A function whose address is never taken (a static one) has none."
+               if KCFI["names"] is not None else "With no BTF type names in this database a real kCFI hash of that "
+               "form is missed too (the command line's --implements with --btf reads it)."))
+
+
+def type_functions(sites, h):
+    """Sorted addresses of every function with the kCFI hash h in front of it, as the command line's --implements finds
+    them (core.implementations(), with the scan's text bounds): the candidates of a call site that checks h, else the
+    code segments read again and searched for h."""
+    known = any(s.kind == "kcfi" and s.hash == h for s in sites)
+    return core.implementations([] if known else code_ranges(), current_arch(), h, _type_disps(), sites, KCFI["text"])
+
+
+def type_title(entry, h, count):
+    """'kCFI functions of the type of impl_2_1 (hash 0x1300E12B, long (short, int)): 3' (the type from BTF)."""
+    label = KCFI["names"].label(h) if KCFI["names"] is not None else None
+    return "kCFI functions of the type of %s (hash 0x%08X%s): %d" % (target_name(entry), h, ", " + label if label else "",
+                                                                    count)
+
+
+def type_rows(entry, functions):
+    """(address, name, note) of each function: note 'this function' for the entry, 'address taken' when IDA has a data
+    reference to it (is_address_taken())."""
+    rows = []
+    for t in functions:
+        notes = (["this function"] if t == entry else []) + (["address taken"] if is_address_taken(t) else [])
+        rows.append((t, target_name(t), ", ".join(notes)))
+    return rows
