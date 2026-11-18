@@ -293,10 +293,11 @@ def _nop_padding(mem, arch):
 
 
 def _a64_padding_or_end(w):
-    """The aarch64 instruction w when it is one that ends or pads a function (so the word in front of a function with no
-    kCFI hash), else None: ret, b, bl (a call that does not return), br/blr, brk, nop or another hint (bti, paciasp),
-    udf. On GKI 6.1 these are 9,354 of the 9,431 words in front of a named function that BTF does not name as a type
-    hash, and 2,229 of the 48,021 that it does (measured for impl200)."""
+    """The aarch64 instruction w when it is one that ends or pads a function, or a system instruction (so not taken for a
+    kCFI hash by its form alone), else None: ret, b, bl (a call that does not return), br/blr, brk, nop or another hint
+    (bti, paciasp), udf; review s201: the system class (msr, mrs, isb and the other barriers, sys), eret, eretaa,
+    eretab, drps, svc, hvc and smc, which GKI 6.1 has in front of do_nanosleep (mrs), ret_to_user (isb) and cpu_resume
+    (eret). A kCFI hash with such an encoding is still taken when a check or BTF knows it."""
     if w & 0xfffffc1f == 0xd65f0000 or w & 0xfffffbff == 0xd65f0bff:
         return "ret"
     if w >> 26 == 0b000101:
@@ -311,6 +312,12 @@ def _a64_padding_or_end(w):
         return "nop/hint"
     if w >> 16 == 0:
         return "udf"
+    if w & 0xffc00000 == 0xd5000000:
+        return "a system instruction: msr, mrs, a barrier or sys"
+    if w in (0xd69f03e0, 0xd69f0bff, 0xd69f0fff, 0xd6bf03e0):
+        return "eret/drps"
+    if w & 0xffe0001f in (0xd4000001, 0xd4000002, 0xd4000003):
+        return "svc/hvc/smc"
     return None
 
 
@@ -319,8 +326,10 @@ def function_hash(ranges, arch, ea, disps, checked=(), named=(), form=True):
     disp for a disp in disps (Site.disp; the first that qualifies), in the same range, taken as the hash when a call site
     checks it (why "checked", h in checked), BTF names it ("named", h in named), or, with form, its place has the form
     of a kCFI preamble ("preamble": only patchable-entry NOPs between it and ea, and on aarch64 a word that is no
-    instruction ending or padding a function). None otherwise: a function with no hash (a static one whose address is
-    never taken) has some other word there, on aarch64 mostly the last instruction of the code before it."""
+    instruction ending or padding a function, nor a system one). None otherwise: a function with no hash (a static one
+    whose address is never taken) has some other word there, on aarch64 mostly the last instruction of the code before
+    it. A "preamble" hash is a guess: an instruction word or a literal can have that form too (review s201), so the
+    caller checks that every function implementations() gives for it starts a function."""
     for base, mem in ranges:
         if not base <= ea < base + len(mem):
             continue
@@ -338,6 +347,28 @@ def function_hash(ranges, arch, ea, disps, checked=(), named=(), form=True):
             if (form and _nop_padding(mem[off + d + 4:off], arch)
                     and not (arch == "aarch64" and _a64_padding_or_end(h))):
                 return h, "preamble"
+        return None
+    return None
+
+
+def why_no_hash(ranges, arch, ea, disps):
+    """When function_hash() finds no hash at ea: (the word where it would be, why its form does not pass: 'decodes as an
+    instruction (bl)' or 'has code between it and the function'), from the first disp that has a word in its form;
+    None when there is no such word (no aligned word, or on x86-64 no `mov r32, imm32`, at any disp)."""
+    for base, mem in ranges:
+        if not base <= ea < base + len(mem):
+            continue
+        off = ea - base
+        if not looks_like_entry(mem, off, arch):
+            return None
+        for d in disps:
+            h = _hash_at(mem, off + d, arch)
+            if h is None:
+                continue
+            if not _nop_padding(mem[off + d + 4:off], arch):
+                return h, "has code between it and the function"
+            kind = _a64_padding_or_end(h) if arch == "aarch64" else None
+            return h, "decodes as an instruction (%s)" % kind if kind else "is not in the form of a kCFI hash"
         return None
     return None
 

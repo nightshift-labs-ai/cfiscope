@@ -1237,6 +1237,38 @@ class FunctionsOfType(unittest.TestCase):
         rc, (title, _, chooser) = self.show(E, log, addr["n_noproto"])
         self.assertEqual(title, "kCFI functions of the type of n_noproto (hash 0xB5B3935C): 1")       # long ()
 
+    def test_form_only_spread(self):
+        # review s201 MAJOR: a word that no check or BTF knows counts by its form only, which an instruction or a
+        # literal can have: it is refused when it also stands in front of an address that starts no IDA function (here
+        # the hash of n_void_params, also written over the first instruction of n_noproto_int, as test_implements does)
+        w, E, log, addr = self.open("kcfi_quirks_a64", "ARM", btf=False)
+        base = next(b for b in w.mem if b <= addr["n_noproto_int"] < b + len(w.mem[b]))
+        mem = bytearray(w.mem[base])
+        struct.pack_into("<I", mem, addr["n_noproto_int"] - base, 0x72923c8f)
+        w.mem[base] = bytes(mem)
+        rc, shown = self.show(E, log, addr["n_void_params"])
+        self.assertEqual((rc, shown), (0, None))
+        self.assertIn("WARN The word in front of n_void_params, 0x72923C8F, is no type hash that a check or BTF knows, "
+                      "and 1 of the 2 places it stands in front of do not start a function in this database (such as "
+                      "n_noproto_int+0x4): it is taken for an instruction or data, not a kCFI hash. If auto-analysis "
+                      "has not finished, try again after it.", log["msgs"])
+        rc, (title, _, chooser) = self.show(E, log, addr["n_noproto"])        # another hash: listed as before
+        self.assertEqual(title, "kCFI functions of the type of n_noproto (hash 0xB5B3935C): 1")
+
+    def test_why_no_hash(self):
+        # review s201: an instruction word in front of the function (the system class here) is no hash by its form
+        w, E, log, addr = self.open("kcfi_quirks_a64", "ARM", btf=False)
+        base = next(b for b in w.mem if b <= addr["n_void_params"] < b + len(w.mem[b]))
+        mem = bytearray(w.mem[base])
+        struct.pack_into("<I", mem, addr["n_void_params"] - 4 - base, 0xd5033fdf)          # isb
+        w.mem[base] = bytes(mem)
+        rc, shown = self.show(E, log, addr["n_void_params"])
+        self.assertEqual((rc, shown), (0, None))
+        self.assertIn("WARN No kCFI type hash that a check or BTF knows in front of n_void_params: the word there, "
+                      "0xD5033FDF, decodes as an instruction (a system instruction: msr, mrs, a barrier or sys). With "
+                      "no BTF type names in this database a real kCFI hash of that form is missed too (the command "
+                      "line's --implements with --btf reads it).", log["msgs"])
+
     def test_preamble_inside_the_function(self):
         # x86-64: IDA may start a function at its __cfi_ preamble (here 32 bytes before do_call_2, whose type no call
         # site checks and BTF names): the entry after it is found
@@ -1257,19 +1289,24 @@ class FunctionsOfType(unittest.TestCase):
         self.assertIn("(hash 0x1300E12B, long (short, int)): 3", title)
 
     def test_no_hash(self):
-        # IDA has no function at the br of do_call_2's call: the word where this fixture keeps hashes (36 bytes before,
-        # as patchable-entry NOPs stand between) is code, and the word in front of it is the check's brk: no hash
-        # (core.function_hash()), so no list
+        # IDA has no function at the br of do_call_2's call. This fixture's checks read the hash 36 bytes before the
+        # target (stats disps [-36]: patchable-entry NOPs stand between), so core.function_hash() reads the word at
+        # call_ea-36 and needs NOPs only from call_ea-32 on; there the check's code stands (review s201 NIT): no hash,
+        # so no list, and the warning says why
         w, E, log, addr = self.open("aarch64-kernel", "ARM")
-        site = next(s for s in E.scan_or_warn() if s.call_ea and s.call_ea - addr["do_call_2"] < 0x40
+        sites = E.scan_or_warn()
+        self.assertEqual(E.STATE["stats"]["disps"], [-36])
+        site = next(s for s in sites if s.call_ea and s.call_ea - addr["do_call_2"] < 0x40
                     and s.call_ea > addr["do_call_2"])
-        word = struct.unpack("<I", sys.modules["ida_bytes"].get_bytes(site.call_ea - 4, 4))[0]
-        self.assertEqual(word & 0xffe0001f, 0xd4200000)                   # brk #imm
+        between = struct.unpack("<8I", sys.modules["ida_bytes"].get_bytes(site.call_ea - 32, 32))
+        self.assertFalse(all(x & 0xfffff01f == 0xd503201f for x in between))        # not all NOPs or hints
+        word = struct.unpack("<I", sys.modules["ida_bytes"].get_bytes(site.call_ea - 36, 4))[0]
         sys.modules["ida_funcs"].get_func = lambda ea: None
         rc, shown = self.show(E, log, site.call_ea)
         self.assertEqual((rc, shown), (0, None))
-        self.assertIn("WARN No kCFI type hash in front of this function: a function whose address is never taken "
-                      "(a static one) has none.", log["msgs"])
+        self.assertIn("WARN No kCFI type hash that a check or BTF knows in front of 0x%x: the word there, 0x%08X, has "
+                      "code between it and the function. A function whose address is never taken (a static one) has "
+                      "none." % (site.call_ea, word), log["msgs"])
 
     def test_jump_table_cfi(self):
         w, E, log = load_entry("aarch64-jtcfi", "ARM", ".elf")

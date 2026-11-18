@@ -769,12 +769,27 @@ def _after_preamble(func, disps):
     return out
 
 
+NO_TYPE_HASH = ("No kCFI type hash in front of this function: a function whose address is never taken (a static one) "
+                "has none.")
+
+
+def _starts_function(t, disps):
+    """Does t start a function of the database: IDA's function starts there or, on x86-64, at a __cfi_ preamble in
+    front of t (_after_preamble())?"""
+    func = ida_funcs.get_func(t)
+    if func is None:
+        return False
+    return func.start_ea == t or (current_arch() == "x86_64" and t in _after_preamble(func, disps))
+
+
 def type_entry(sites, ea):
-    """(entry, kCFI hash) of the function at ea, for Functions of this type: the hash in front of the start of IDA's
-    function holding ea (or of ea, outside a function), when core.function_hash() takes the word there (a call site
-    checks it, BTF names it, or its form); else, only when a call site checks it or BTF names it, the hash in front of
-    ea itself, of a scanned candidate inside the function or, on x86-64, of the entry after a __cfi_ preamble that IDA
-    made the function's start. None if there is none: a static function whose address is never taken has no hash."""
+    """(entry, kCFI hash, functions) for Functions of this type at ea, or the warning to show instead (a str). The hash
+    is the one in front of the start of IDA's function holding ea (or of ea, outside a function), when
+    core.function_hash() takes the word there (a call site checks it, BTF names it, or its form); else, only when a
+    call site checks it or BTF names it, the one in front of ea itself, of a scanned candidate inside the function or,
+    on x86-64, of the entry after a __cfi_ preamble that IDA made the function's start. A hash by its form only is
+    refused when one of its functions (type_functions()) starts no function of the database: an instruction word or a
+    literal had that form (review s201). A static function whose address is never taken has no hash."""
     arch, disps = current_arch(), _type_disps()
     checked = {s.hash for s in sites if s.kind == "kcfi"}
     named = KCFI["names"].by_hash if KCFI["names"] is not None else ()
@@ -785,11 +800,29 @@ def type_entry(sites, ea):
         later += sorted({t for s in sites for t in s.targets if func.start_ea < t < func.end_ea})
         if arch == "x86_64":
             later += _after_preamble(func, disps)
+    refused = None
     for e, form in [(first, True)] + [(e, False) for e in later]:
         got = core.function_hash(_window(e), arch, e, disps, checked, named, form)
-        if got is not None:
-            return e, got[0]
-    return None
+        if got is None:
+            continue
+        functions = type_functions(sites, got[0])
+        bad = [t for t in functions if not _starts_function(t, disps)] if got[1] == "preamble" else []
+        if not bad:
+            return e, got[0], functions
+        refused = refused or ("The word in front of %s, 0x%08X, is no type hash that a check or BTF knows, and %d of "
+                              "the %d places it stands in front of do not start a function in this database (such as "
+                              "%s): it is taken for an instruction or data, not a kCFI hash. If auto-analysis has not "
+                              "finished, try again after it." % (target_name(e), got[0], len(bad), len(functions),
+                                                                 target_name(bad[0])))
+    if refused:
+        return refused
+    why = core.why_no_hash(_window(first), arch, first, disps)
+    if why is None:
+        return NO_TYPE_HASH
+    return ("No kCFI type hash that a check or BTF knows in front of %s: the word there, 0x%08X, %s. %s"
+            % (target_name(first), why[0], why[1], "A function whose address is never taken (a static one) has none."
+               if KCFI["names"] is not None else "With no BTF type names in this database a real kCFI hash of that "
+               "form is missed too (the command line's --implements with --btf reads it)."))
 
 
 def type_functions(sites, h):

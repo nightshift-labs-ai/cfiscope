@@ -509,12 +509,11 @@ class TypeAction(ida_kernwin.action_handler_t):
         vu = pseudocode_view(ctx)
         ea = vu.cfunc.entry_ea if vu is not None else ida_kernwin.get_screen_ea()   # pseudocode: the decompiled function
         found = idalayer.type_entry(sites, ea)
-        if found is None:
-            ida_kernwin.warning("No kCFI type hash in front of this function: a function whose address is never taken "
-                                "(a static one) has none.")
+        if isinstance(found, str):          # why there is no hash
+            ida_kernwin.warning(found)
             return 0
-        entry, h = found
-        rows = idalayer.type_rows(entry, idalayer.type_functions(sites, h))
+        entry, h, functions = found
+        rows = idalayer.type_rows(entry, functions)
         idalayer.Chooser(idalayer.type_title(entry, h, len(rows)), rows).Show()
         return 1
 
